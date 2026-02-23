@@ -88,9 +88,9 @@ Note: this repository currently does not include a `gradlew` wrapper script.
 
 Gradle source roots are configured as:
 
-- `src/server/java`
-- `src/client/java`
-- `src/shared/java`
+- `src/server`
+- `src/client`
+- `src/shared`
 - `src/test/java`
 
 ## 8. Local Setup, Build, and Test
@@ -137,8 +137,8 @@ Before execution, ensure:
 
 ## 10. Recommended Implementation Roadmap
 
-1. Implement shared models and serialization in `src/shared/java`.
-2. Implement UDP networking plus authenticated/reliable link abstraction in `src/server/java`.
+1. Implement shared models and serialization in `src/shared`.
+2. Implement UDP networking plus authenticated/reliable link abstraction in `src/server`.
 3. Implement Basic HotStuff happy path (`prepare -> pre-commit -> commit -> decide`).
 4. Add crash-fault handling (timeouts and view change).
 5. Add Byzantine protections (signature checks, QC validation, equivocation detection).

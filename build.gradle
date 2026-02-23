@@ -16,7 +16,7 @@ java {
 sourceSets {
   main {
     java {
-      srcDirs = ['src/server/java', 'src/client/java', 'src/shared/java']
+      srcDirs = ['src/server', 'src/client', 'src/shared']
     }
   }
   test {
@@ -33,6 +33,6 @@ tasks.withType(Test).configureEach {
   useJUnitPlatform()
 }
 application {
-  mainClass = 'pt.ulisboa.depchain.replica.ReplicaMain'
+  mainClass = 'pt.ulisboa.depchain.server.Main'
   applicationDefaultJvmArgs = ['-Ddepchain.config=config/replicas.yaml']
 }

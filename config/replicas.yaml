@@ -1,5 +1,5 @@
 system:
-  name: depchain-dev-local
+  name: depchain
   environment: local
   n: 4
   f: 1
@@ -43,3 +43,6 @@ timeouts:
   viewChangeMs: 1500
   retransmitMs: 250
   maxBackoffMs: 10000
+
+network:
+  maxPacketSize: 8192
