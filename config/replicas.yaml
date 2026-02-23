@@ -1,0 +1,45 @@
+system:
+  name: depchain-dev-local
+  environment: local
+  n: 4
+  f: 1
+  leaderElection: round-robin
+  baseView: 1
+
+replicas:
+  - id: server1
+    host: 127.0.0.1
+    consensusPort: 10001
+    clientPort: 11001
+    publicKeyPath: config/keys/server1/public/replica.pem
+  - id: server2
+    host: 127.0.0.1
+    consensusPort: 10002
+    clientPort: 11002
+    publicKeyPath: config/keys/server2/public/replica.pem
+  - id: server3
+    host: 127.0.0.1
+    consensusPort: 10003
+    clientPort: 11003
+    publicKeyPath: config/keys/server3/public/replica.pem
+  - id: server4
+    host: 127.0.0.1
+    consensusPort: 10004
+    clientPort: 11004
+    publicKeyPath: config/keys/server4/public/replica.pem
+
+client:
+  id: client
+  host: 127.0.0.1
+  port: 12000
+  requestTimeoutMs: 3000
+  knownReplicas:
+    - server1
+    - server2
+    - server3
+    - server4
+
+timeouts:
+  viewChangeMs: 1500
+  retransmitMs: 250
+  maxBackoffMs: 10000

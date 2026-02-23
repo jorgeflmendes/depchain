@@ -1,0 +1,38 @@
+﻿plugins {
+  id 'java'
+  id 'application'
+}
+group = 'pt.ulisboa.depchain'
+version = '0.1.0-SNAPSHOT'
+repositories {
+  mavenCentral()
+}
+java {
+  toolchain {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
+}
+
+sourceSets {
+  main {
+    java {
+      srcDirs = ['src/server/java', 'src/client/java', 'src/shared/java']
+    }
+  }
+  test {
+    java {
+      srcDirs = ['src/test/java']
+    }
+  }
+}
+
+dependencies {
+  testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+}
+tasks.withType(Test).configureEach {
+  useJUnitPlatform()
+}
+application {
+  mainClass = 'pt.ulisboa.depchain.replica.ReplicaMain'
+  applicationDefaultJvmArgs = ['-Ddepchain.config=config/replicas.yaml']
+}
