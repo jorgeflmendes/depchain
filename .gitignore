@@ -25,6 +25,7 @@ replay_pid*
 
 # Gradle
 .gradle/
+.gradle-user-home/
 build/
 **/build/
 out/

@@ -1,4 +1,4 @@
-﻿plugins {
+plugins {
   id 'java'
   id 'application'
 }
@@ -27,12 +27,36 @@ sourceSets {
 }
 
 dependencies {
-  testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+  testImplementation platform('org.junit:junit-bom:5.11.4')
+  testImplementation 'org.junit.jupiter:junit-jupiter'
+  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 tasks.withType(Test).configureEach {
   useJUnitPlatform()
 }
+
+tasks.named('test', Test) {
+  useJUnitPlatform {
+    excludeTags 'integration'
+  }
+}
+
+tasks.register('integrationTest', Test) {
+  description = 'Runs integration tests.'
+  group = 'verification'
+
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+
+  useJUnitPlatform {
+    includeTags 'integration'
+  }
+
+  shouldRunAfter tasks.named('test')
+}
+
 application {
   mainClass = 'pt.ulisboa.depchain.server.Main'
   applicationDefaultJvmArgs = ['-Ddepchain.config=config/replicas.yaml']
 }
+
