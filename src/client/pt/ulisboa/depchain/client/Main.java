@@ -1,10 +1,13 @@
 package pt.ulisboa.depchain.client;
 
-import java.nio.charset.StandardCharsets;
+import java.net.InetAddress;
 import java.nio.file.Path;
+import java.util.UUID;
 
 import pt.ulisboa.depchain.shared.config.ConfigFile;
-import pt.ulisboa.depchain.shared.udp.DatagramTransport;
+import pt.ulisboa.depchain.shared.udp.UdpRequestResponseTransport;
+import pt.ulisboa.depchain.shared.udp.messages.MessageRequest;
+import pt.ulisboa.depchain.shared.udp.messages.MessageResponse;
 
 public final class Main {
   private Main() {
@@ -22,16 +25,19 @@ public final class Main {
 
     ConfigFile config = ConfigFile.load(Path.of(configPath));
     ConfigFile.ReplicaSection targetReplica = config.requireReplica(targetReplicaId);
+    InetAddress targetAddress = InetAddress.getByName(targetReplica.host());
 
-    try (DatagramTransport transport = DatagramTransport.unbound(config.client().requestTimeoutMs())) {
-      byte[] requestBytes = value.getBytes(StandardCharsets.UTF_8);
-      transport.send(targetReplica.host(), targetReplica.clientPort(), requestBytes);
+    try (UdpRequestResponseTransport transport = UdpRequestResponseTransport.unbound(config.client().requestTimeoutMs(), config.network().maxPacketSize())) {
+      // send a request to the target replica and wait for the response
+      MessageRequest request = new MessageRequest(UUID.randomUUID(), value);
+      MessageResponse response = transport.sendRequest(request, targetAddress, targetReplica.clientPort());
 
-      DatagramTransport.ReceivedDatagram responseDatagram =
-          transport.receive(config.network().maxPacketSize());
+      if (!response.success()) {
+        System.err.println("request failed = " + response.payload());
+        System.exit(2);
+      }
 
-      String response = new String(responseDatagram.payload(), StandardCharsets.UTF_8);
-      System.out.println("response = " + response);
+      System.out.println("response = " + String.valueOf(response.payload()));
     }
   }
 }

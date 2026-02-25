@@ -2,12 +2,13 @@ package pt.ulisboa.depchain.server;
 
 import java.net.InetAddress;
 import java.nio.file.Path;
-import java.net.SocketTimeoutException;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 import pt.ulisboa.depchain.shared.config.ConfigFile;
-import pt.ulisboa.depchain.shared.udp.DatagramTransport;
+import pt.ulisboa.depchain.shared.udp.UdpRequestResponseTransport;
+import pt.ulisboa.depchain.shared.udp.messages.MessageRequest;
+import pt.ulisboa.depchain.shared.udp.messages.MessageResponse;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -23,23 +24,27 @@ public final class Main {
     ConfigFile.ReplicaSection replica = config.requireReplica(serverId);
     InetAddress bindAddress = InetAddress.getByName(replica.host());
 
-    try (DatagramTransport transport = DatagramTransport.bind(
-        bindAddress, replica.clientPort(), config.timeouts().retransmitMs())) {
-      System.out.printf("Replica %s listening for client UDP requests on %s:%d (config: %s)%n", replica.id(),
-          replica.host(), replica.clientPort(), configPath);
+    ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor(); // use virtual threads to handle each request concurrently without blocking OS threads
+    try (workers; UdpRequestResponseTransport transport = UdpRequestResponseTransport.bind(bindAddress, replica.clientPort(), config.timeouts().retransmitMs(), config.network().maxPacketSize())) {
+      System.out.printf("Replica %s listening for client UDP requests on %s:%d (config: %s)%n", replica.id(), replica.host(), replica.clientPort(), configPath);
 
       while (true) {
-        try {
-          DatagramTransport.ReceivedDatagram datagram = transport.receive(config.network().maxPacketSize());
-          String value = new String(datagram.payload(), StandardCharsets.UTF_8);
-          String response = "Received " + value;
-          transport.send(datagram.address(), datagram.port(), response.getBytes(StandardCharsets.UTF_8));
-        } catch (SocketTimeoutException ignored) {
-          // keep waiting for UDP packets
-        } catch (Exception ignored) {
-          // ignore malformed messages
-        }
+        MessageRequest request = transport.receiveRequest();
+        workers.submit(() -> handleRequest(transport, request));
       }
+    }
+  }
+
+  // request handler that just echoes back the received value
+  private static void handleRequest(UdpRequestResponseTransport transport, MessageRequest request) {
+    try {
+      // TODO: implement actual request handling 
+
+      String value = String.valueOf(request.payload());
+      MessageResponse response = new MessageResponse(request.requestId(), true, "Received " + value);
+      transport.sendResponse(response, request.senderIp(), request.senderPort());
+    } catch (Exception ignored) {
+      // Keep serving other clients if one response fails.
     }
   }
 }

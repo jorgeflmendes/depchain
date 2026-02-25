@@ -34,6 +34,7 @@ out/
 # IDE
 .idea/
 .vscode/
+.vscode-test/
 *.iml
 *.ipr
 *.iws

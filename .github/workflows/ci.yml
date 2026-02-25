@@ -26,13 +26,29 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build and run tests
-        run: ./gradlew --no-daemon clean test integrationTest
+        run: ./gradlew --no-daemon clean test integrationTest --continue
+
+      - name: Collect test reports
+        if: always()
+        run: |
+          mkdir -p reports/test-reports
+
+          if [ -d build/reports/tests ]; then
+            cp -R build/reports/tests reports/test-reports/
+          fi
+
+          if [ -d build/test-results ]; then
+            cp -R build/test-results reports/test-reports/
+          fi
+
+          if [ ! -d reports/test-reports/tests ] && [ ! -d reports/test-reports/test-results ]; then
+            echo "No test reports were generated in this run." > reports/test-reports/README.txt
+          fi
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: |
-            build/reports/tests/
-            build/test-results/
+          path: reports/test-reports/
+          if-no-files-found: error
