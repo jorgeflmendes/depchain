@@ -599,11 +599,14 @@ public final class ConfigFile {
     private String publicKeyPath;
 
     private ReplicaSection toRecord(Path path) {
-      if (id == null || host == null || consensusPort == null || clientPort == null) {
+      if (id == null
+          || host == null
+          || consensusPort == null
+          || clientPort == null
+          || publicKeyPath == null) {
         throw new IllegalArgumentException("Replica entry is incomplete in " + path);
       }
-      String keyPath = publicKeyPath == null ? "" : publicKeyPath;
-      return new ReplicaSection(id, host, consensusPort, clientPort, keyPath);
+      return new ReplicaSection(id, host, consensusPort, clientPort, publicKeyPath);
     }
   }
 

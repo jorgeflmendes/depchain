@@ -55,9 +55,17 @@ Current status:
 
 - project structure is created;
 - `build.gradle` is configured with Java 21 toolchain and source sets;
-- membership configuration exists in `config/replicas.yaml`;
+- membership configuration exists in `config/config.yaml`;
 - key directory structure exists in `config/keys/` (key files are not currently versioned);
-- Java implementation under `src/` is still pending.
+- Java code exists for:
+  - Fair Loss Links stack over UDP organized in:
+    - `src/shared/.../links/fairloss/transport` (`FairLossLink`);
+    - `src/shared/.../links/fairloss/codec` (`FairLossPacketCodec`, `FairLossMessageCodec`);
+    - `src/shared/.../links/fairloss/message` (`FairLossRequestMessage`, `FairLossResponseMessage`, `FairLossLinkMessage`);
+  - strict membership config parser/validator;
+  - basic client/replica connectivity flow (echo-style handler);
+  - unit and integration tests for config and fair-loss UDP communication.
+- Basic HotStuff consensus and append-only blockchain state machine are still pending.
 
 Project layout:
 
@@ -70,21 +78,38 @@ Project layout:
 |   |-- hot-stuff-paper.pdf
 |   `-- project.pdf
 |-- config/
-|   |-- replicas.yaml
+|   |-- config.yaml
 |   `-- keys/
 `-- src/
-    |-- client/
-    |-- server/
-    |-- shared/
-    `-- test/
+    |-- client/pt/ulisboa/depchain/client/Main.java
+    |-- server/pt/ulisboa/depchain/server/Main.java
+    |-- shared/pt/ulisboa/depchain/shared/
+    |   |-- config/ConfigFile.java
+    |   `-- links/fairloss/
+    |       |-- transport/FairLossLink.java
+    |       |-- codec/
+    |       |   |-- FairLossPacketCodec.java
+    |       |   |-- FairLossMessageCodec.java
+    |       |   `-- BinaryFieldIO.java
+    |       `-- message/
+    |           |-- FairLossLinkMessage.java
+    |           |-- FairLossRequestMessage.java
+    |           `-- FairLossResponseMessage.java
+    `-- test/java/pt/ulisboa/depchain/
+        |-- integration/ReplicaConnectivityTest.java
+        `-- shared/
+            |-- config/ConfigFileTest.java
+            `-- links/fairloss/
+                |-- codec/FairLossPacketCodecTest.java
+                `-- transport/FairLossLinkTest.java
 ```
 
 ## 7. Prerequisites
 
 - Java 21
-- Gradle
+- Gradle (optional if using the included wrapper)
 
-Note: this repository currently does not include a `gradlew` wrapper script.
+This repository includes Gradle wrapper scripts (`gradlew` / `gradlew.bat`).
 
 Gradle source roots are configured as:
 
@@ -101,29 +126,29 @@ Check Java:
 java -version
 ```
 
-Optional: generate Gradle wrapper once for team consistency:
-
-```powershell
-gradle wrapper
-```
-
 Build and test:
-
-```powershell
-gradle clean build
-gradle test
-```
-
-If wrapper exists after generation:
 
 ```powershell
 .\gradlew.bat clean build
 .\gradlew.bat test
+.\gradlew.bat integrationTest
+```
+
+Run one replica locally (defaults to `server1` and `config/config.yaml`):
+
+```powershell
+.\gradlew.bat run
+```
+
+Run a specific replica/config:
+
+```powershell
+.\gradlew.bat run -PreplicaId=server2 -PconfigPath=config/config.yaml
 ```
 
 ## 9. Membership Configuration
 
-`config/replicas.yaml` currently defines:
+`config/config.yaml` currently defines:
 
 - `n = 4` replicas, `f = 1`;
 - localhost addresses and per-replica consensus/client ports;

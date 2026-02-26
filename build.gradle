@@ -57,6 +57,13 @@ tasks.register('integrationTest', Test) {
 
 application {
   mainClass = 'pt.ulisboa.depchain.server.Main'
-  applicationDefaultJvmArgs = ['-Ddepchain.config=config/replicas.yaml']
+  applicationDefaultJvmArgs = ['-Ddepchain.config=config/config.yaml']
+}
+
+tasks.named('run', JavaExec) {
+  args(
+      providers.gradleProperty('replicaId').orElse('server1').get(),
+      providers.gradleProperty('configPath').orElse('config/config.yaml').get()
+  )
 }
 

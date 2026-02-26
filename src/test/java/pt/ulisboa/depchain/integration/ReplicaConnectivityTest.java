@@ -23,11 +23,11 @@ class ReplicaConnectivityTest {
   @Test
   @Timeout(60)
   void clientCanReachAllReplicas() throws Exception {
-    // loads the integration config used by server and client processes.
-    Path configPath = Path.of(System.getProperty("user.dir"), "config", "replicas.yaml").toAbsolutePath();
+    // Loads the integration config used by server and client processes.
+    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
     assertTrue(Files.exists(configPath), "Missing config file: " + configPath);
 
-    // starts all replica processes before sending client requests.
+    // Starts all replica processes before sending client requests.
     List<Process> serverProcesses = new ArrayList<>();
     try {
       for (String replicaId : REPLICA_IDS) {
@@ -37,7 +37,7 @@ class ReplicaConnectivityTest {
       // Give processes a moment to bind sockets before first client request.
       Thread.sleep(1200);
 
-      // sends one request to each replica and validates the returned response text.
+      // Sends one request to each replica and validates the returned response text.
       for (String replicaId : REPLICA_IDS) {
         String message = "smoke-" + replicaId;
         ProcessResult result = runClient(message, replicaId, configPath);
@@ -48,13 +48,13 @@ class ReplicaConnectivityTest {
             "Unexpected client output for " + replicaId + ": " + result.output());
       }
     } finally {
-      // stops all spawned server processes even if assertions fail.
+      // Stops all spawned server processes even if assertions fail.
       stopProcesses(serverProcesses);
     }
   }
 
   private static Process startServer(String replicaId, Path configPath) throws IOException {
-    // launches a replica JVM process bound to the configured replica id.
+    // Launches a replica JVM process bound to the configured replica id.
     ProcessBuilder pb = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.server.Main", replicaId, configPath.toString());
     pb.redirectErrorStream(true);
     
@@ -62,13 +62,13 @@ class ReplicaConnectivityTest {
   }
 
   private static ProcessResult runClient(String value, String targetReplicaId, Path configPath) throws IOException, InterruptedException {
-    // launches a client JVM process that sends a value to one target replica.
+    // Launches a client JVM process that sends a value to one target replica.
     ProcessBuilder pb = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.client.Main", value, targetReplicaId, configPath.toString());
     pb.redirectErrorStream(true);
 
     Process process = pb.start();
 
-    // waits for the client process to finish within a fixed timeout.
+    // Waits for the client process to finish within a fixed timeout.
     boolean finished = process.waitFor(Duration.ofSeconds(10).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
     
     if (!finished) {
@@ -76,13 +76,13 @@ class ReplicaConnectivityTest {
       return new ProcessResult(124, "Client timeout");
     }
 
-    // captures client stdout/stderr for assertion and diagnostics.
+    // Captures client stdout/stderr for assertion and diagnostics.
     String output = readAll(process.getInputStream());
     return new ProcessResult(process.exitValue(), output);
   }
 
   private static void stopProcesses(List<Process> processes) {
-    // requests graceful shutdown for all still-running processes.
+    // Requests graceful shutdown for all still-running processes.
     for (Process process : processes) {
       if (!process.isAlive()) {
         continue;
@@ -91,7 +91,7 @@ class ReplicaConnectivityTest {
       process.destroy();
     }
 
-    // force-kills any process that did not exit after a short grace period.
+    // Force-kills any process that did not exit after a short grace period.
     for (Process process : processes) {
       if (!process.isAlive()) {
         continue;
@@ -108,14 +108,14 @@ class ReplicaConnectivityTest {
   }
 
   private static String javaExecutable() {
-    // resolves the current Java binary path across OSes.
+    // Resolves the current Java binary path across OSes.
     String javaHome = System.getProperty("java.home");
     String suffix = System.getProperty("os.name").toLowerCase().contains("win") ? ".exe" : "";
     return Path.of(javaHome, "bin", "java" + suffix).toString();
   }
 
   private static String readAll(InputStream inputStream) throws IOException {
-    // reads the full process output stream as UTF-8 text.
+    // Reads the full process output stream as UTF-8 text.
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     inputStream.transferTo(output);
     return output.toString(StandardCharsets.UTF_8);

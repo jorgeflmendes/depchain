@@ -5,14 +5,11 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 import pt.ulisboa.depchain.shared.config.ConfigFile;
-import pt.ulisboa.depchain.shared.udp.UdpRequestResponseTransport;
-import pt.ulisboa.depchain.shared.udp.messages.MessageRequest;
-import pt.ulisboa.depchain.shared.udp.messages.MessageResponse;
+import pt.ulisboa.depchain.shared.links.fairloss.message.FairLossRequestMessage;
+import pt.ulisboa.depchain.shared.links.fairloss.message.FairLossResponseMessage;
+import pt.ulisboa.depchain.shared.links.fairloss.transport.FairLossLink;
 
 public final class Main {
-  private Main() {
-  }
-
   public static void main(String[] args) throws Exception {
     if (args.length < 3) {
       System.err.println("Usage: Main <value> <targetReplicaId> <configPath>");
@@ -27,10 +24,13 @@ public final class Main {
     ConfigFile.ReplicaSection targetReplica = config.requireReplica(targetReplicaId);
     InetAddress targetAddress = InetAddress.getByName(targetReplica.host());
 
-    try (UdpRequestResponseTransport transport = UdpRequestResponseTransport.unbound(config.client().requestTimeoutMs(), config.network().maxPacketSize())) {
+    try (FairLossLink transport =
+        FairLossLink.unbound(config.client().requestTimeoutMs(), config.network().maxPacketSize())) {
+      // TODO: implement actual client logic to send requests to the target replica and process responses
+      
       // send a request to the target replica and wait for the response
-      MessageRequest request = new MessageRequest(UUID.randomUUID(), value);
-      MessageResponse response = transport.sendRequest(request, targetAddress, targetReplica.clientPort());
+      FairLossRequestMessage request = new FairLossRequestMessage(UUID.randomUUID(), value);
+      FairLossResponseMessage response = transport.sendRequest(request, targetAddress, targetReplica.clientPort());
 
       if (!response.success()) {
         System.err.println("request failed = " + response.payload());

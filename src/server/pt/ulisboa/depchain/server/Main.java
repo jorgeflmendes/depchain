@@ -6,9 +6,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import pt.ulisboa.depchain.shared.config.ConfigFile;
-import pt.ulisboa.depchain.shared.udp.UdpRequestResponseTransport;
-import pt.ulisboa.depchain.shared.udp.messages.MessageRequest;
-import pt.ulisboa.depchain.shared.udp.messages.MessageResponse;
+import pt.ulisboa.depchain.shared.links.fairloss.message.FairLossRequestMessage;
+import pt.ulisboa.depchain.shared.links.fairloss.message.FairLossResponseMessage;
+import pt.ulisboa.depchain.shared.links.fairloss.transport.FairLossLink;
+import pt.ulisboa.depchain.shared.links.fairloss.transport.InboundRequest;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -24,27 +25,38 @@ public final class Main {
     ConfigFile.ReplicaSection replica = config.requireReplica(serverId);
     InetAddress bindAddress = InetAddress.getByName(replica.host());
 
-    ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor(); // use virtual threads to handle each request concurrently without blocking OS threads
-    try (workers; UdpRequestResponseTransport transport = UdpRequestResponseTransport.bind(bindAddress, replica.clientPort(), config.timeouts().retransmitMs(), config.network().maxPacketSize())) {
+    // Use virtual threads to handle each request concurrently without blocking OS threads
+    ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
+    try (workers;
+        FairLossLink transport =
+            FairLossLink.bind(
+                bindAddress,
+                replica.clientPort(),
+                config.timeouts().retransmitMs(),
+                config.network().maxPacketSize())) {
       System.out.printf("Replica %s listening for client UDP requests on %s:%d (config: %s)%n", replica.id(), replica.host(), replica.clientPort(), configPath);
 
+      // Main server loop that receives requests and dispatches them to worker threads
       while (true) {
-        MessageRequest request = transport.receiveRequest();
+        InboundRequest request = transport.receiveRequest();
         workers.submit(() -> handleRequest(transport, request));
       }
     }
   }
 
-  // request handler that just echoes back the received value
-  private static void handleRequest(UdpRequestResponseTransport transport, MessageRequest request) {
+  // Request handler that just echoes back the received value
+  private static void handleRequest(FairLossLink transport, InboundRequest request) {
     try {
       // TODO: implement actual request handling 
 
-      String value = String.valueOf(request.payload());
-      MessageResponse response = new MessageResponse(request.requestId(), true, "Received " + value);
+      FairLossRequestMessage message = request.request();
+      FairLossResponseMessage response = new FairLossResponseMessage(message.requestId(), true, "Received " + message.payload());
       transport.sendResponse(response, request.senderIp(), request.senderPort());
-    } catch (Exception ignored) {
-      // Keep serving other clients if one response fails.
+    } catch (Exception exception) {
+    
+      String sender = request.senderIp().getHostAddress() + ":" + request.senderPort();
+      System.err.printf("Failed to handle request %s from %s: %s%n", request.request().requestId(), sender, exception.getMessage());
+      exception.printStackTrace(System.err);
     }
   }
 }
