@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.links.fairloss.codec;
+package pt.ulisboa.depchain.shared.utils;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;

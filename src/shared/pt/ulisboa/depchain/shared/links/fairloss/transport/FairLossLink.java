@@ -9,10 +9,8 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.Objects;
 
-import pt.ulisboa.depchain.shared.links.fairloss.codec.FairLossPacketCodec;
-import pt.ulisboa.depchain.shared.links.fairloss.message.FairLossLinkMessage;
-import pt.ulisboa.depchain.shared.links.fairloss.message.FairLossRequestMessage;
-import pt.ulisboa.depchain.shared.links.fairloss.message.FairLossResponseMessage;
+import pt.ulisboa.depchain.shared.links.fairloss.codec.DpchCodec;
+import pt.ulisboa.depchain.shared.links.fairloss.message.Dpch;
 
 public final class FairLossLink implements AutoCloseable {
   // The underlying DatagramSocket used for sending and receiving packets.
@@ -55,13 +53,14 @@ public final class FairLossLink implements AutoCloseable {
     return new FairLossLink(socket, responseTimeoutMs, maxPacketSize);
   }
 
-  // Send one request and wait for its matching response.
-  public FairLossResponseMessage sendRequest(FairLossRequestMessage request, InetAddress targetIp, int targetPort) throws IOException {
+  // Send one packet and wait for a reply with matching connection/sequence numbers.
+  public Dpch sendRequest(Dpch request, InetAddress targetIp, int targetPort)
+      throws IOException {
     Objects.requireNonNull(request, "request cannot be null");
     Objects.requireNonNull(targetIp, "targetIp cannot be null");
 
     // Send the request message to the target address and port.
-    sendObject(request, targetIp, targetPort);
+    sendPacket(request, targetIp, targetPort);
     long deadlineMillis = System.currentTimeMillis() + responseTimeoutMs;
 
     try {
@@ -69,24 +68,25 @@ public final class FairLossLink implements AutoCloseable {
       while (true) {
         long remainingMillis = deadlineMillis - System.currentTimeMillis();
         if (remainingMillis <= 0) {
-          return new FairLossResponseMessage(
-              request.requestId(), false, "Timeout waiting for response");
+          throw timeoutExceptionFor(request);
         }
 
         socket.setSoTimeout((int) Math.min(Integer.MAX_VALUE, remainingMillis));
         
         try {
           DatagramPacket packet = receivePacket();
-          FairLossLinkMessage decoded = decodePacketOrNull(packet);
-          if (!(decoded instanceof FairLossResponseMessage candidate)) {
+          Dpch decoded = decodePacketOrNull(packet);
+          if (decoded == null) {
             continue;
           }
 
-          if (request.requestId().equals(candidate.requestId())) {
-            return candidate;
+          boolean sameConnectionId = decoded.connectionId() == request.connectionId();
+          boolean sameSequence = decoded.sequenceNumber() == request.sequenceNumber();
+          if (sameConnectionId && sameSequence) {
+            return decoded;
           }
         } catch (SocketTimeoutException timeout) {
-          return new FairLossResponseMessage(request.requestId(), false, "Timeout waiting for response");
+          throw timeoutExceptionFor(request);
         }
       }
     } finally {
@@ -98,23 +98,24 @@ public final class FairLossLink implements AutoCloseable {
   public InboundRequest receiveRequest() throws IOException {
     while (true) {
       DatagramPacket packet = receivePacket();
-      FairLossLinkMessage decoded = decodePacketOrNull(packet);
-      if (decoded instanceof FairLossRequestMessage request) {
-        return new InboundRequest(request, packet.getAddress(), packet.getPort());
+      Dpch decoded = decodePacketOrNull(packet);
+      if (decoded != null) {
+        return new InboundRequest(decoded, packet.getAddress(), packet.getPort());
       }
     }
   }
 
   // Send a response to the given target address and port.
-  public void sendResponse(FairLossResponseMessage response, InetAddress targetIp, int targetPort) throws IOException {
+  public void sendResponse(Dpch response, InetAddress targetIp, int targetPort)
+      throws IOException {
     Objects.requireNonNull(response, "response cannot be null");
     Objects.requireNonNull(targetIp, "targetIp cannot be null");
-    sendObject(response, targetIp, targetPort);
+    sendPacket(response, targetIp, targetPort);
   }
 
-  // Helper method to serialize and send a FairLossLinkMessage to the given target address and port.
-  private void sendObject(FairLossLinkMessage value, InetAddress targetIp, int targetPort) throws IOException {
-    byte[] payload = FairLossPacketCodec.toBytes(value);
+  // Helper method to serialize and send a Dpch to the given target address and port.
+  private void sendPacket(Dpch value, InetAddress targetIp, int targetPort) throws IOException {
+    byte[] payload = DpchCodec.toBytes(value);
 
     if (payload.length > maxPacketSize) {
       throw new IOException(
@@ -134,13 +135,19 @@ public final class FairLossLink implements AutoCloseable {
     return packet;
   }
 
-  // Helper method to decode a DatagramPacket into a FairLossLinkMessage, or return null if decoding fails.
-  private FairLossLinkMessage decodePacketOrNull(DatagramPacket packet) {
+  // Helper method to decode a DatagramPacket into a Dpch, or return null if decoding fails.
+  private Dpch decodePacketOrNull(DatagramPacket packet) {
     try {
-      return FairLossPacketCodec.fromBytes(packet.getData(), packet.getOffset(), packet.getLength());
+      return DpchCodec.fromBytes(packet.getData(), packet.getOffset(), packet.getLength());
     } catch (IOException ignored) {
       return null;
     }
+  }
+
+  private static SocketTimeoutException timeoutExceptionFor(Dpch request) {
+    return new SocketTimeoutException(
+        "Timeout waiting for reply conn=%d seq=%d"
+            .formatted(request.connectionId(), request.sequenceNumber()));
   }
 
   @Override
@@ -148,3 +155,4 @@ public final class FairLossLink implements AutoCloseable {
     socket.close();
   }
 }
+

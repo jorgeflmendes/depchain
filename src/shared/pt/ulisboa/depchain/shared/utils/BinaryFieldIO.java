@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.links.fairloss.codec;
+package pt.ulisboa.depchain.shared.utils;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;

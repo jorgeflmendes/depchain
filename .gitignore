@@ -42,3 +42,7 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local debug artifacts
+artifacts/debug-diagrams/
+scripts/udp_pingpong_trace.py

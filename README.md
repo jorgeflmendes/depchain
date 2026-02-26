@@ -79,7 +79,7 @@ Current status:
 - project structure is created and builds with Java 21;
 - membership and network configuration is centralized in `config/config.yaml`;
 - key directory structure exists in `config/keys/` (key files are not currently versioned);
-- a full Fair Loss Links communication baseline over UDP is implemented;
+- a full Fair Loss Links communication baseline over UDP is implemented using a single universal `Dpch` envelope;
 - strict configuration parsing/validation and automated tests are in place.
 - Basic HotStuff consensus and append-only blockchain state machine are still pending.
 
@@ -101,25 +101,23 @@ Project layout:
     |-- server/pt/ulisboa/depchain/server/Main.java
     |-- shared/pt/ulisboa/depchain/shared/
     |   |-- config/ConfigFile.java
-    |   `-- links/fairloss/
-    |       |-- transport/FairLossLink.java
-    |       |-- transport/InboundRequest.java
-    |       |-- codec/
-    |       |   |-- FairLossPacketCodec.java
-    |       |   |-- FairLossMessageCodec.java
-    |       |   `-- BinaryFieldIO.java
-    |       `-- message/
-    |           |-- FairLossLinkMessage.java
-    |           |-- FairLossRequestMessage.java
-    |           `-- FairLossResponseMessage.java
+    |   |-- links/fairloss/
+    |   |   |-- transport/FairLossLink.java
+    |   |   |-- transport/InboundRequest.java
+    |   |   |-- codec/DpchCodec.java
+    |   |   `-- message/
+    |   |       |-- Dpch.java
+    |   |       `-- DpchType.java
+    |   `-- utils/BinaryFieldIO.java
     `-- test/java/pt/ulisboa/depchain/
         |-- integration/ReplicaConnectivityTest.java
         `-- shared/
             |-- config/ConfigFileTest.java
-            `-- links/fairloss/
-                |-- codec/FairLossPacketCodecTest.java
-                |-- codec/BinaryFieldIOTest.java
-                `-- transport/FairLossLinkTest.java
+            |-- links/fairloss/
+            |   |-- codec/DpchCodecTest.java
+            |   |-- transport/FairLossLinkTest.java
+            |   `-- transport/InboundRequestTest.java
+            `-- utils/BinaryFieldIOTest.java
 ```
 
 What each file does:
@@ -139,23 +137,55 @@ What each file does:
 - `src/shared/pt/ulisboa/depchain/shared/config/ConfigFile.java`: Strict parser/validator for `config/config.yaml` with consistency checks (ports, replica IDs, thresholds, packet size).
 
 - `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLink.java`: Low-level UDP request/reply link (fair-loss semantics). Handles send, receive, timeout waiting, and packet decoding.
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequest.java`: Immutable envelope for an inbound request plus sender endpoint metadata (`senderIp`, `senderPort`).
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequest.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
 
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/FairLossPacketCodec.java`: Packet framing/unframing (`magic`, `version`, `messageType`) and dispatch to message codecs.
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/FairLossMessageCodec.java`: Codec interface implemented by each message type.
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/BinaryFieldIO.java`: Reusable binary read/write helpers for primitive types, UUID, strings, and byte arrays.
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/DpchCodec.java`: Binary framing/unframing for the universal DPCH wire format (`magic`, `version`, `conn_id`, `type`, `seq_num`, `payload_len`, `payload`).
+- `src/shared/pt/ulisboa/depchain/shared/utils/BinaryFieldIO.java`: Reusable binary read/write helpers for primitive types, UUID, strings, and byte arrays.
 
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/FairLossLinkMessage.java`: Base message contract (`messageTypeId`).
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/FairLossRequestMessage.java`: Request message model + serialization logic.
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/FairLossResponseMessage.java`: Response message model + serialization logic.
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/Dpch.java`: Universal communication envelope used for all message semantics (`request`, `response`, `ack`, `nack`, `syn`, `fin`).
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/DpchType.java`: Enum that defines supported DPCH message types and their wire codes.
 
 - `src/test/java/pt/ulisboa/depchain/shared/config/ConfigFileTest.java`: Unit tests for config parsing/validation.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/codec/FairLossPacketCodecTest.java`: Unit tests for packet codec round-trip and invalid packet handling.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/codec/BinaryFieldIOTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLinkTest.java`: Unit tests for UDP request/reply behavior (including requestId matching).
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/codec/DpchCodecTest.java`: Unit tests for packet codec round-trip, malformed headers, invalid slices, and payload boundary checks.
+- `src/test/java/pt/ulisboa/depchain/shared/utils/BinaryFieldIOTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLinkTest.java`: Unit tests for UDP request/reply behavior, timeout handling, malformed packets, and concurrent multi-client scenarios.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequestTest.java`: Unit tests for `InboundRequest` field preservation and constructor validation.
 - `src/test/java/pt/ulisboa/depchain/integration/ReplicaConnectivityTest.java`: Integration test that boots replicas as processes and verifies client connectivity to all of them.
 
-## 7. Prerequisites
+## 7. Universal DPCH Communication Packet
+
+All network communication uses the same envelope: `Dpch`.
+
+- `request`, `response`, `ack`, `nack`, `syn`, `fin`, and other future control messages share the same binary structure.
+- `FairLossLink` only sends/receives this envelope; higher layers decide payload meaning.
+- Supported types are centralized in `DpchType`.
+
+Wire format:
+
+```text
+DPCH Frame
+| magic(4) | version(1) | conn_id(4) | type(1) | seq_num(4) | payload_len(2) | payload(N) |
+```
+
+Field details:
+
+- `magic` (`4 bytes`): ASCII signature `DPCH` for protocol identification.
+- `version` (`1 byte`): frame format version.
+- `conn_id` (`4 bytes`): logical session/request flow identifier.
+- `type` (`1 byte`): semantic class of message (`0=DATA`, `1=ACK`, `2=NACK`, `3=SYN`, `4=FIN`).
+- `seq_num` (`4 bytes`): sequence number inside the connection flow.
+- `payload_len` (`2 bytes`, uint16): payload size.
+- `payload` (`N bytes`): application/protocol-specific data.
+
+Practical use today:
+
+- Client request: currently encoded as `Dpch.data(...)`.
+- Server response: currently encoded as `Dpch.data(...)`.
+- Client/server payload content is currently plain UTF-8 text (no nested status envelope).
+- Timeouts in `FairLossLink.sendRequest(...)` are surfaced as packet-exchange errors (exception), not as synthetic response packets.
+- ACK/NACK/SYN/FIN: already supported at the envelope level via `Dpch.ack(...)`, `Dpch.nack(...)`, `Dpch.syn(...)`, `Dpch.fin(...)` (not used yet in the current client/server flow; reserved for future perfect-link logic).
+
+## 8. Prerequisites
 
 - Java 21
 - Gradle (optional if using the included wrapper)
@@ -169,7 +199,7 @@ Gradle source roots are configured as:
 - `src/shared`
 - `src/test/java`
 
-## 8. Local Setup, Build, and Test
+## 9. Local Setup, Build, and Test
 
 Check Java:
 
@@ -197,7 +227,7 @@ Run a specific replica/config:
 .\gradlew.bat run -PreplicaId=server2 -PconfigPath=config/config.yaml
 ```
 
-## 9. Membership Configuration
+## 10. Membership Configuration
 
 `config/config.yaml` currently defines:
 
@@ -211,7 +241,7 @@ Before execution, ensure:
 - required ports are free;
 - all replicas use the same membership and timeout configuration.
 
-## 10. Recommended Implementation Roadmap
+## 11. Recommended Implementation Roadmap
 
 1. Implement shared models and serialization in `src/shared`.
 2. Implement UDP networking plus authenticated/reliable link abstraction in `src/server`.
@@ -221,7 +251,7 @@ Before execution, ensure:
 6. Implement client library flow and append service integration.
 7. Add intrusive tests in `src/test/java`.
 
-## 11. Testing and Validation Requirements
+## 12. Testing and Validation Requirements
 
 Black-box tests are not enough. Test infrastructure should support fault injection, including:
 
@@ -230,7 +260,7 @@ Black-box tests are not enough. Test infrastructure should support fault injecti
 - invalid signatures and forged messages;
 - conflicting proposals in the same view.
 
-## 12. Submission and Evaluation (From the Project Brief)
+## 13. Submission and Evaluation (From the Project Brief)
 
 - Deadline: **March 10 at 23:59** via Fenix.
 - Team ethics: work must be original to the group.
@@ -248,3 +278,4 @@ Black-box tests are not enough. Test infrastructure should support fault injecti
 1. HotStuff paper: <https://arxiv.org/pdf/1803.05069>
 2. Springer LNCS guidelines: <https://www.springer.com/gp/computer-science/lncs/conference-proceedings-guidelines>
 3. Threshold signatures (optional): <https://github.com/weavechain/threshold-sig>
+
