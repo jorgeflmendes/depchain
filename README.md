@@ -42,6 +42,29 @@ The Stage 1 blockchain state is an append-only array/list of strings in memory.
 - Secure channels such as TLS are not allowed for this stage.
 - Reliability/authentication abstractions should be built on top of UDP (for example, Authenticated Perfect Links).
 
+Networking layering roadmap:
+
+```text
+                 /\
+                /  \
+               / App\             Client + consensus logic
+              /------\
+             /  APL   \           Authenticated Perfect Links (to implement)
+            /----------\
+           /   PL       \         Perfect Links semantics (to implement over APL)
+          /--------------\
+         / UDP FairLoss   \       FairLossLink over UDP (already implemented)
+        /------------------\
+       /   UDP Datagram     \     Unreliable network baseline
+      /______________________\
+```
+
+Interpretation:
+
+- The current base is `FairLossLink` in `src/shared/.../links/fairloss/transport`.
+- Next, this base should be extended to add authentication (APL).
+- On top of authenticated communication, enforce perfect-link guarantees used by upper layers.
+
 ## 5. Technical Stack
 
 - Language: **Java**.
@@ -53,18 +76,11 @@ The Stage 1 blockchain state is an append-only array/list of strings in memory.
 
 Current status:
 
-- project structure is created;
-- `build.gradle` is configured with Java 21 toolchain and source sets;
-- membership configuration exists in `config/config.yaml`;
+- project structure is created and builds with Java 21;
+- membership and network configuration is centralized in `config/config.yaml`;
 - key directory structure exists in `config/keys/` (key files are not currently versioned);
-- Java code exists for:
-  - Fair Loss Links stack over UDP organized in:
-    - `src/shared/.../links/fairloss/transport` (`FairLossLink`);
-    - `src/shared/.../links/fairloss/codec` (`FairLossPacketCodec`, `FairLossMessageCodec`);
-    - `src/shared/.../links/fairloss/message` (`FairLossRequestMessage`, `FairLossResponseMessage`, `FairLossLinkMessage`);
-  - strict membership config parser/validator;
-  - basic client/replica connectivity flow (echo-style handler);
-  - unit and integration tests for config and fair-loss UDP communication.
+- a full Fair Loss Links communication baseline over UDP is implemented;
+- strict configuration parsing/validation and automated tests are in place.
 - Basic HotStuff consensus and append-only blockchain state machine are still pending.
 
 Project layout:
@@ -87,6 +103,7 @@ Project layout:
     |   |-- config/ConfigFile.java
     |   `-- links/fairloss/
     |       |-- transport/FairLossLink.java
+    |       |-- transport/InboundRequest.java
     |       |-- codec/
     |       |   |-- FairLossPacketCodec.java
     |       |   |-- FairLossMessageCodec.java
@@ -101,8 +118,42 @@ Project layout:
             |-- config/ConfigFileTest.java
             `-- links/fairloss/
                 |-- codec/FairLossPacketCodecTest.java
+                |-- codec/BinaryFieldIOTest.java
                 `-- transport/FairLossLinkTest.java
 ```
+
+What each file does:
+
+- `build.gradle`: Gradle setup (plugins, Java 21 toolchain, source sets, test tasks, and run defaults).
+- `settings.gradle`: Defines the Gradle root project name (`depchain`).
+- `config/config.yaml`: Static system configuration:
+  - system parameters (`n`, `f`, leader election, base view);
+  - replica endpoints (consensus/client ports and key paths);
+  - client settings (known replicas and timeout);
+  - network limits (max packet size).
+- `config/keys/`: Key material directory structure (files are expected at runtime, but not versioned here).
+
+- `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, builds one request, sends it to a target replica, and prints the response.
+- `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Loads config, binds UDP socket, receives requests in a loop, and handles them using virtual threads.
+
+- `src/shared/pt/ulisboa/depchain/shared/config/ConfigFile.java`: Strict parser/validator for `config/config.yaml` with consistency checks (ports, replica IDs, thresholds, packet size).
+
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLink.java`: Low-level UDP request/reply link (fair-loss semantics). Handles send, receive, timeout waiting, and packet decoding.
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequest.java`: Immutable envelope for an inbound request plus sender endpoint metadata (`senderIp`, `senderPort`).
+
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/FairLossPacketCodec.java`: Packet framing/unframing (`magic`, `version`, `messageType`) and dispatch to message codecs.
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/FairLossMessageCodec.java`: Codec interface implemented by each message type.
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/BinaryFieldIO.java`: Reusable binary read/write helpers for primitive types, UUID, strings, and byte arrays.
+
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/FairLossLinkMessage.java`: Base message contract (`messageTypeId`).
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/FairLossRequestMessage.java`: Request message model + serialization logic.
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/FairLossResponseMessage.java`: Response message model + serialization logic.
+
+- `src/test/java/pt/ulisboa/depchain/shared/config/ConfigFileTest.java`: Unit tests for config parsing/validation.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/codec/FairLossPacketCodecTest.java`: Unit tests for packet codec round-trip and invalid packet handling.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/codec/BinaryFieldIOTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLinkTest.java`: Unit tests for UDP request/reply behavior (including requestId matching).
+- `src/test/java/pt/ulisboa/depchain/integration/ReplicaConnectivityTest.java`: Integration test that boots replicas as processes and verifies client connectivity to all of them.
 
 ## 7. Prerequisites
 
