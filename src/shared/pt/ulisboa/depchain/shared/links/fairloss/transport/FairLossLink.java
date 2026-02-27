@@ -54,8 +54,7 @@ public final class FairLossLink implements AutoCloseable {
   }
 
   // Send one packet and wait for a reply with matching connection/sequence numbers.
-  public Dpch sendRequest(Dpch request, InetAddress targetIp, int targetPort)
-      throws IOException {
+  public Dpch sendRequest(Dpch request, InetAddress targetIp, int targetPort) throws IOException {
     Objects.requireNonNull(request, "request cannot be null");
     Objects.requireNonNull(targetIp, "targetIp cannot be null");
 

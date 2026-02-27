@@ -24,7 +24,6 @@ public enum DpchType {
       }
     }
 
-    throw new IllegalArgumentException(
-        "Unsupported DPCH packet type: " + Byte.toUnsignedInt(code));
+    throw new IllegalArgumentException("Unsupported DPCH packet type: " + Byte.toUnsignedInt(code));
   }
 }

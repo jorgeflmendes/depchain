@@ -45,18 +45,20 @@ The Stage 1 blockchain state is an append-only array/list of strings in memory.
 Networking layering roadmap:
 
 ```text
-                 /\
-                /  \
-               / App\             Client + consensus logic
-              /------\
-             /  APL   \           Authenticated Perfect Links (to implement)
-            /----------\
-           /   PL       \         Perfect Links semantics (to implement over APL)
-          /--------------\
-         / UDP FairLoss   \       FairLossLink over UDP (already implemented)
-        /------------------\
-       /   UDP Datagram     \     Unreliable network baseline
-      /______________________\
+             /\
+            /  \
+           / App\               Client + consensus logic (to implement)
+          /------\
+         /   APL  \             Authenticated Perfect Links (to implement)
+        /----------\
+       /     PL     \           Perfect Links semantics (to implement)
+      /--------------\
+     /       SL       \         Stubborn Links (to implement)
+    /------------------\
+   /      FairLoss      \       FairLossLink over UDP (already implemented)
+  /----------------------\
+ /      UDP Datagram      \     Unreliable network baseline
+/__________________________\
 ```
 
 Interpretation:
