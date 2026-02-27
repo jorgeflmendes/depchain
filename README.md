@@ -138,7 +138,7 @@ What each file does:
 
 - `src/shared/pt/ulisboa/depchain/shared/config/ConfigFile.java`: Strict parser/validator for `config/config.yaml` with consistency checks (ports, replica IDs, thresholds, packet size).
 
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLink.java`: Low-level UDP request/reply link (fair-loss semantics). Handles send, receive, timeout waiting, and packet decoding.
+- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLink.java`: Low-level UDP fair-loss transport. Handles best-effort send/receive and packet decoding only.
 - `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequest.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
 
 - `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/DpchCodec.java`: Binary framing/unframing for the universal DPCH wire format (`magic`, `version`, `conn_id`, `type`, `seq_num`, `payload_len`, `payload`).
@@ -150,7 +150,7 @@ What each file does:
 - `src/test/java/pt/ulisboa/depchain/shared/config/ConfigFileTest.java`: Unit tests for config parsing/validation.
 - `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/codec/DpchCodecTest.java`: Unit tests for packet codec round-trip, malformed headers, invalid slices, and payload boundary checks.
 - `src/test/java/pt/ulisboa/depchain/shared/utils/BinaryFieldIOTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLinkTest.java`: Unit tests for UDP request/reply behavior, timeout handling, malformed packets, and concurrent multi-client scenarios.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLinkTest.java`: Unit tests for fair-loss send/receive behavior, malformed packet handling, and concurrent multi-client scenarios.
 - `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequestTest.java`: Unit tests for `InboundRequest` field preservation and constructor validation.
 - `src/test/java/pt/ulisboa/depchain/integration/ReplicaConnectivityTest.java`: Integration test that boots replicas as processes and verifies client connectivity to all of them.
 
@@ -184,7 +184,7 @@ Practical use today:
 - Client request: currently encoded as `Dpch.data(...)`.
 - Server response: currently encoded as `Dpch.data(...)`.
 - Client/server payload content is currently plain UTF-8 text (no nested status envelope).
-- Timeouts in `FairLossLink.sendRequest(...)` are surfaced as packet-exchange errors (exception), not as synthetic response packets.
+- `FairLossLink` does not implement retries, acks, deduplication, or request-reply timeouts; these belong to upper layers (stubborn/perfect links or application logic).
 - ACK/NACK/SYN/FIN: already supported at the envelope level via `Dpch.ack(...)`, `Dpch.nack(...)`, `Dpch.syn(...)`, `Dpch.fin(...)` (not used yet in the current client/server flow; reserved for future perfect-link logic).
 
 ## 8. Prerequisites

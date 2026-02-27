@@ -8,6 +8,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import pt.ulisboa.depchain.shared.config.ConfigFile;
 import pt.ulisboa.depchain.shared.links.fairloss.message.Dpch;
 import pt.ulisboa.depchain.shared.links.fairloss.transport.FairLossLink;
+import pt.ulisboa.depchain.shared.links.fairloss.transport.InboundRequest;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -25,13 +26,26 @@ public final class Main {
       ConfigFile.ReplicaSection targetReplica = config.requireReplica(targetReplicaId);
       InetAddress targetAddress = InetAddress.getByName(targetReplica.host());
 
-      try (FairLossLink transport = FairLossLink.unbound(config.client().requestTimeoutMs(), config.network().maxPacketSize())) {
+      try (FairLossLink transport = FairLossLink.unbound(config.network().maxPacketSize())) {
         int connectionId = ThreadLocalRandom.current().nextInt(); // TODO: it should be an uuid or something else, but for now let's just use a random int, maybe it wont be needed
         int sequenceNumber = 0;
 
-        // Create and send request, and wait for response
+        // Create and send one packet over the fair-loss link.
         Dpch request = Dpch.data(connectionId, sequenceNumber, value.getBytes(StandardCharsets.UTF_8));
-        Dpch response = transport.sendRequest(request, targetAddress, targetReplica.clientPort());
+        transport.send(request, targetAddress, targetReplica.clientPort());
+
+        // Application-level request/reply matching, intentionally above fair-loss semantics.
+        Dpch response;
+        while (true) {
+          InboundRequest inbound = transport.receive();
+          Dpch candidate = inbound.packet();
+          boolean sameConnectionId = candidate.connectionId() == request.connectionId();
+          boolean sameSequence = candidate.sequenceNumber() == request.sequenceNumber();
+          if (sameConnectionId && sameSequence) {
+            response = candidate;
+            break;
+          }
+        }
 
         String responsePayload = new String(response.payload(), StandardCharsets.UTF_8);
         System.out.println("response = " + responsePayload);

@@ -27,14 +27,14 @@ public final class Main {
 
     // Use virtual threads to handle each request concurrently without blocking OS threads.
     ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
-    try (workers; FairLossLink transport = FairLossLink.bind(bindAddress, replica.clientPort(), config.timeouts().retransmitMs(), config.network().maxPacketSize())) {
+    try (workers; FairLossLink transport = FairLossLink.bind(bindAddress, replica.clientPort(), config.network().maxPacketSize())) {
       System.out.printf("Replica %s listening for client UDP requests on %s:%d (config: %s)%n", replica.id(), replica.host(), replica.clientPort(), configPath);
 
       // Main server loop that receives requests and dispatches them to worker threads.
       while (true) {
         try {
           // Receive one request packet from the UDP fair-loss transport.
-          InboundRequest request = transport.receiveRequest();
+          InboundRequest request = transport.receive();
           workers.submit(() -> handleRequest(transport, request));
         } catch (Exception exception) {
           System.out.printf("Packet exchange error while receiving = %s%n", exception.getMessage());
@@ -53,7 +53,7 @@ public final class Main {
       Dpch response = Dpch.data(inbound.connectionId(), inbound.sequenceNumber(), responsePayload);
 
       // Send the response packet back to the original sender (IP + port).
-      transport.sendResponse(response, request.senderIp(), request.senderPort());
+      transport.send(response, request.senderIp(), request.senderPort());
     } catch (Exception exception) {
     
       String sender = request.senderIp().getHostAddress() + ":" + request.senderPort();

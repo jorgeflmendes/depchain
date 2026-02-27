@@ -10,7 +10,6 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
-import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,94 +29,42 @@ import pt.ulisboa.depchain.shared.links.fairloss.message.Dpch;
 class FairLossLinkTest {
   @Test
   @Timeout(5)
-  void sendRequestWaitsForMatchingConnectionAndSequence() throws Exception {
-    InetAddress loopback = InetAddress.getLoopbackAddress();
-
-    try (DatagramSocket replicaSocket = new DatagramSocket(0, loopback);
-         FairLossLink clientTransport = FairLossLink.unbound(1_000, 4096)) {
-      ExecutorService executor = Executors.newSingleThreadExecutor();
-      try {
-        Future<?> worker =
-            executor.submit(
-                () -> {
-                  try {
-                    DatagramPacket requestPacket = new DatagramPacket(new byte[4096], 4096);
-                    replicaSocket.receive(requestPacket);
-
-                    Dpch request =
-                        DpchCodec.fromBytes(
-                            requestPacket.getData(), requestPacket.getOffset(), requestPacket.getLength());
-
-                    Dpch mismatched =
-                        Dpch.data(
-                            request.connectionId() + 1,
-                            request.sequenceNumber(),
-                            "wrong".getBytes(StandardCharsets.UTF_8));
-                    byte[] mismatchedBytes = DpchCodec.toBytes(mismatched);
-                    replicaSocket.send(
-                        new DatagramPacket(
-                            mismatchedBytes,
-                            mismatchedBytes.length,
-                            requestPacket.getAddress(),
-                            requestPacket.getPort()));
-
-                    Dpch matched =
-                        Dpch.data(
-                            request.connectionId(),
-                            request.sequenceNumber(),
-                            "matched".getBytes(StandardCharsets.UTF_8));
-                    byte[] matchedBytes = DpchCodec.toBytes(matched);
-                    replicaSocket.send(
-                        new DatagramPacket(
-                            matchedBytes,
-                            matchedBytes.length,
-                            requestPacket.getAddress(),
-                            requestPacket.getPort()));
-                  } catch (Exception e) {
-                    throw new RuntimeException(e);
-                  }
-                });
-
-        Dpch outbound =
-            Dpch.data(101, 7, "hello".getBytes(StandardCharsets.UTF_8));
-        Dpch response =
-            clientTransport.sendRequest(outbound, loopback, replicaSocket.getLocalPort());
-
-        assertEquals("matched", new String(response.payload(), StandardCharsets.UTF_8));
-        assertEquals(outbound.connectionId(), response.connectionId());
-        assertEquals(outbound.sequenceNumber(), response.sequenceNumber());
-
-        worker.get(2, TimeUnit.SECONDS);
-      } finally {
-        executor.shutdownNow();
-      }
-    }
-  }
-
-  @Test
-  @Timeout(5)
-  void sendRequestThrowsTimeoutWhenNoReplyArrives() throws Exception {
-    InetAddress loopback = InetAddress.getLoopbackAddress();
-
-    try (DatagramSocket blackhole = new DatagramSocket(0, loopback);
-         FairLossLink clientTransport = FairLossLink.unbound(200, 4096)) {
-      Dpch outbound =
-          Dpch.data(50, 1, "no-reply".getBytes(StandardCharsets.UTF_8));
-      SocketTimeoutException timeout =
-          assertThrows(
-              SocketTimeoutException.class,
-              () -> clientTransport.sendRequest(outbound, loopback, blackhole.getLocalPort()));
-      assertTrue(timeout.getMessage().contains("Timeout waiting for reply"));
-    }
-  }
-
-  @Test
-  @Timeout(5)
-  void receiveRequestSkipsMalformedPacketAndReturnsNextValidOne() throws Exception {
+  void sendAndReceivePacketBetweenClientAndServer() throws Exception {
     InetAddress loopback = InetAddress.getLoopbackAddress();
     int port = pickFreeUdpPort(loopback);
 
-    try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 1_000, 4096);
+    try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
+         FairLossLink clientTransport = FairLossLink.unbound(4096)) {
+      Dpch outbound = Dpch.data(101, 7, "hello".getBytes(StandardCharsets.UTF_8));
+      clientTransport.send(outbound, loopback, port);
+
+      InboundRequest inbound = serverTransport.receive();
+      assertEquals(outbound.connectionId(), inbound.packet().connectionId());
+      assertEquals(outbound.sequenceNumber(), inbound.packet().sequenceNumber());
+      assertEquals("hello", new String(inbound.packet().payload(), StandardCharsets.UTF_8));
+      assertNotNull(inbound.senderIp());
+
+      Dpch response =
+          Dpch.data(
+              inbound.packet().connectionId(),
+              inbound.packet().sequenceNumber(),
+              "matched".getBytes(StandardCharsets.UTF_8));
+      serverTransport.send(response, inbound.senderIp(), inbound.senderPort());
+
+      InboundRequest reply = clientTransport.receive();
+      assertEquals("matched", new String(reply.packet().payload(), StandardCharsets.UTF_8));
+      assertEquals(outbound.connectionId(), reply.packet().connectionId());
+      assertEquals(outbound.sequenceNumber(), reply.packet().sequenceNumber());
+    }
+  }
+
+  @Test
+  @Timeout(5)
+  void receiveSkipsMalformedPacketAndReturnsNextValidOne() throws Exception {
+    InetAddress loopback = InetAddress.getLoopbackAddress();
+    int port = pickFreeUdpPort(loopback);
+
+    try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
          DatagramSocket sender = new DatagramSocket(0, loopback)) {
       byte[] malformed = new byte[] {0x01, 0x02, 0x03};
       sender.send(new DatagramPacket(malformed, malformed.length, loopback, port));
@@ -126,7 +73,7 @@ class FairLossLinkTest {
       byte[] validBytes = DpchCodec.toBytes(valid);
       sender.send(new DatagramPacket(validBytes, validBytes.length, loopback, port));
 
-      InboundRequest inbound = serverTransport.receiveRequest();
+      InboundRequest inbound = serverTransport.receive();
       assertEquals(valid.connectionId(), inbound.packet().connectionId());
       assertEquals(valid.sequenceNumber(), inbound.packet().sequenceNumber());
       assertEquals(sender.getLocalPort(), inbound.senderPort());
@@ -135,15 +82,15 @@ class FairLossLinkTest {
   }
 
   @Test
-  void sendRequestFailsWhenPacketExceedsConfiguredMaxPacketSize() throws Exception {
+  void sendFailsWhenPacketExceedsConfiguredMaxPacketSize() throws Exception {
     InetAddress loopback = InetAddress.getLoopbackAddress();
 
-    try (FairLossLink clientTransport = FairLossLink.unbound(1_000, 64)) {
+    try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
       Dpch oversized = Dpch.data(1, 1, new byte[8_192]);
       IOException error =
           assertThrows(
               IOException.class,
-              () -> clientTransport.sendRequest(oversized, loopback, 9999));
+              () -> clientTransport.send(oversized, loopback, 9999));
       assertTrue(error.getMessage().contains("exceeds maxPacketSize"));
     }
   }
@@ -161,10 +108,10 @@ class FairLossLinkTest {
     Future<?> serverWorker =
         serverExecutor.submit(
             () -> {
-              try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 2_000, 4096)) {
+              try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096)) {
                 serverReady.countDown();
                 for (int i = 0; i < clientCount; i++) {
-                  InboundRequest inbound = serverTransport.receiveRequest();
+                  InboundRequest inbound = serverTransport.receive();
                   String text = new String(inbound.packet().payload(), StandardCharsets.UTF_8);
                   String key = inbound.packet().connectionId() + ":" + inbound.packet().sequenceNumber();
                   received.put(key, text);
@@ -174,7 +121,7 @@ class FairLossLinkTest {
                           inbound.packet().connectionId(),
                           inbound.packet().sequenceNumber(),
                           ("ack:" + text).getBytes(StandardCharsets.UTF_8));
-                  serverTransport.sendResponse(response, inbound.senderIp(), inbound.senderPort());
+                  serverTransport.send(response, inbound.senderIp(), inbound.senderPort());
                 }
               } catch (Exception exception) {
                 throw new RuntimeException(exception);
@@ -194,8 +141,17 @@ class FairLossLinkTest {
         outboundPackets.add(outbound);
         tasks.add(
             () -> {
-              try (FairLossLink clientTransport = FairLossLink.unbound(2_000, 4096)) {
-                return clientTransport.sendRequest(outbound, loopback, port);
+              try (FairLossLink clientTransport = FairLossLink.unbound(4096)) {
+                clientTransport.send(outbound, loopback, port);
+                while (true) {
+                  InboundRequest inbound = clientTransport.receive();
+                  Dpch candidate = inbound.packet();
+                  boolean sameConnectionId = candidate.connectionId() == outbound.connectionId();
+                  boolean sameSequence = candidate.sequenceNumber() == outbound.sequenceNumber();
+                  if (sameConnectionId && sameSequence) {
+                    return candidate;
+                  }
+                }
               }
             });
       }
