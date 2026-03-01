@@ -12,7 +12,7 @@ import java.util.Set;
 
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public final class ConfigFile {
+public final class ConfigParser {
   private final SystemSection system;
   private final List<ReplicaSection> replicas;
   private final ClientSection client;
@@ -20,13 +20,7 @@ public final class ConfigFile {
   private final StubbornSection stubborn;
   private final NetworkSection network;
 
-  private ConfigFile(
-      SystemSection system,
-      List<ReplicaSection> replicas,
-      ClientSection client,
-      TimeoutsSection timeouts,
-      StubbornSection stubborn,
-      NetworkSection network) {
+  private ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, NetworkSection network) {
     this.system = system;
     this.replicas = List.copyOf(replicas);
     this.client = client;
@@ -34,7 +28,7 @@ public final class ConfigFile {
     this.stubborn = stubborn;
     this.network = network;
   }
-
+  
   public SystemSection system() {
     return system;
   }
@@ -64,11 +58,9 @@ public final class ConfigFile {
         .filter(r -> r.id().equals(replicaId))
         .findFirst()
         .orElseThrow(
-            () ->
-                new IllegalArgumentException(
-                    "Replica '%s' not found in config".formatted(replicaId)));
+            () -> new IllegalArgumentException("Replica '%s' not found in config".formatted(replicaId)));
   }
-
+  
   public ReplicaSection firstKnownReplicaForClient() {
     if (client.knownReplicas().isEmpty()) {
       throw new IllegalArgumentException("No knownReplicas configured in client section");
@@ -76,12 +68,14 @@ public final class ConfigFile {
     return requireReplica(client.knownReplicas().getFirst());
   }
 
-  public static ConfigFile load(Path path) throws IOException {
+  // Static loader for YAML config files
+  public static ConfigParser load(Path path) throws IOException {
     Objects.requireNonNull(path, "path must not be null");
     List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
     return new Parser(path, lines).parse();
   }
 
+  // YAML parser
   private static final class Parser {
     private final Path path;
     private final List<String> lines;
@@ -92,7 +86,7 @@ public final class ConfigFile {
       this.lines = lines;
     }
 
-    private ConfigFile parse() {
+    private ConfigParser parse() {
       MutableSystemSection system = null;
       List<ReplicaSection> replicas = null;
       MutableClientSection client = null;
@@ -160,9 +154,10 @@ public final class ConfigFile {
       NetworkSection parsedNetwork = network.toRecord(path);
 
       validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedNetwork, path);
-      return new ConfigFile(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedNetwork);
+      return new ConfigParser(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedNetwork);
     }
 
+    // YAML section: system-
     private MutableSystemSection parseSystemSection() {
       MutableSystemSection result = new MutableSystemSection();
       while (hasMoreLines()) {
@@ -186,8 +181,7 @@ public final class ConfigFile {
           case "environment" -> result.environment = requireNonBlank(kv.value(), "system.environment");
           case "n" -> result.n = parsePositiveInt(kv.value(), "system.n");
           case "f" -> result.f = parseNonNegativeInt(kv.value(), "system.f");
-          case "leaderElection" ->
-              result.leaderElection = requireNonBlank(kv.value(), "system.leaderElection");
+          case "leaderElection" -> result.leaderElection = requireNonBlank(kv.value(), "system.leaderElection");
           case "baseView" -> result.baseView = parsePositiveInt(kv.value(), "system.baseView");
           default -> fail("Unknown key in 'system' section: '%s'".formatted(kv.key()));
         }
@@ -196,6 +190,7 @@ public final class ConfigFile {
       return result;
     }
 
+    // YAML section: replicas
     private List<ReplicaSection> parseReplicasSection() {
       List<ReplicaSection> result = new ArrayList<>();
 
@@ -256,6 +251,7 @@ public final class ConfigFile {
       return List.copyOf(result);
     }
 
+    // YAML section: client 
     private MutableClientSection parseClientSection() {
       MutableClientSection result = new MutableClientSection();
 
@@ -322,6 +318,7 @@ public final class ConfigFile {
       return result;
     }
 
+    // YAML section: timeouts
     private MutableTimeoutsSection parseTimeoutsSection() {
       MutableTimeoutsSection result = new MutableTimeoutsSection();
 
@@ -353,35 +350,7 @@ public final class ConfigFile {
       return result;
     }
 
-    private MutableNetworkSection parseNetworkSection() {
-      MutableNetworkSection result = new MutableNetworkSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'network' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "maxPacketSize" -> result.maxPacketSize = parsePositiveInt(kv.value(), "network.maxPacketSize");
-          default -> fail("Unknown key in 'network' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
+    // YAML section: stubborn
     private MutableStubbornSection parseStubbornSection() {
       MutableStubbornSection result = new MutableStubbornSection();
 
@@ -416,6 +385,37 @@ public final class ConfigFile {
       return result;
     }
 
+    // YAML section: network
+    private MutableNetworkSection parseNetworkSection() {
+      MutableNetworkSection result = new MutableNetworkSection();
+
+      while (hasMoreLines()) {
+        String line = normalizeLine(currentRawLine(), currentLineNumber());
+        if (line.isBlank()) {
+          index++;
+          continue;
+        }
+
+        int indent = indentationOf(line, currentLineNumber());
+        if (indent == 0) {
+          break;
+        }
+        if (indent != 2) {
+          fail("Invalid indentation in 'network' section (expected 2 spaces)");
+        }
+
+        KeyValue kv = parseKeyValue(line.trim());
+        switch (kv.key()) {
+          case "maxPacketSize" -> result.maxPacketSize = parsePositiveInt(kv.value(), "network.maxPacketSize");
+          default -> fail("Unknown key in 'network' section: '%s'".formatted(kv.key()));
+        }
+        index++;
+      }
+
+      return result;
+    }
+
+    // Common parser helpers-
     private void assignReplicaKey(MutableReplicaSection replica, KeyValue kv) {
       switch (kv.key()) {
         case "id" -> replica.id = requireNonBlank(kv.value(), "replicas.id");
@@ -445,44 +445,31 @@ public final class ConfigFile {
     }
   }
 
-  private static void validateConsistency(
-      SystemSection system,
-      List<ReplicaSection> replicas,
-      ClientSection client,
-      TimeoutsSection timeouts,
-      StubbornSection stubborn,
-      NetworkSection network,
-      Path path) {
+  // Cross-section validation
+  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, NetworkSection network, Path path) {
     if (system.n() != replicas.size()) {
-      throw new IllegalArgumentException(
-          "system.n (%d) must match number of replicas (%d) in %s"
-              .formatted(system.n(), replicas.size(), path));
+      throw new IllegalArgumentException("system.n (%d) must match number of replicas (%d) in %s".formatted(system.n(), replicas.size(), path));
     }
 
     if (system.n() < (3 * system.f()) + 1) {
-      throw new IllegalArgumentException(
-          "Invalid Byzantine threshold in %s: require n >= 3f + 1 (got n=%d, f=%d)"
-              .formatted(path, system.n(), system.f()));
+      throw new IllegalArgumentException("Invalid Byzantine threshold in %s: require n >= 3f + 1 (got n=%d, f=%d)".formatted(path, system.n(), system.f()));
     }
 
     Set<String> replicaIds = new HashSet<>();
     Set<String> endpoints = new HashSet<>();
     for (ReplicaSection replica : replicas) {
       if (!replicaIds.add(replica.id())) {
-        throw new IllegalArgumentException(
-            "Duplicate replica id '%s' in %s".formatted(replica.id(), path));
+        throw new IllegalArgumentException("Duplicate replica id '%s' in %s".formatted(replica.id(), path));
       }
 
       String consensusEndpoint = replica.host() + ":" + replica.consensusPort();
       if (!endpoints.add(consensusEndpoint)) {
-        throw new IllegalArgumentException(
-            "Duplicate replica consensus endpoint '%s' in %s".formatted(consensusEndpoint, path));
+        throw new IllegalArgumentException("Duplicate replica consensus endpoint '%s' in %s".formatted(consensusEndpoint, path));
       }
 
       String clientEndpoint = replica.host() + ":" + replica.clientPort();
       if (!endpoints.add(clientEndpoint)) {
-        throw new IllegalArgumentException(
-            "Duplicate replica client endpoint '%s' in %s".formatted(clientEndpoint, path));
+        throw new IllegalArgumentException("Duplicate replica client endpoint '%s' in %s".formatted(clientEndpoint, path));
       }
     }
 
@@ -493,37 +480,31 @@ public final class ConfigFile {
     Set<String> uniqueKnownReplicas = new HashSet<>();
     for (String replicaId : client.knownReplicas()) {
       if (!replicaIds.contains(replicaId)) {
-        throw new IllegalArgumentException(
-            "client.knownReplicas contains unknown replica '%s' in %s"
-                .formatted(replicaId, path));
+        throw new IllegalArgumentException("client.knownReplicas contains unknown replica '%s' in %s".formatted(replicaId, path));
       }
       if (!uniqueKnownReplicas.add(replicaId)) {
-        throw new IllegalArgumentException(
-            "Duplicate id '%s' in client.knownReplicas in %s".formatted(replicaId, path));
+        throw new IllegalArgumentException("Duplicate id '%s' in client.knownReplicas in %s".formatted(replicaId, path));
       }
     }
 
     if (timeouts.maxBackoffMs() < timeouts.retransmitMs()) {
-      throw new IllegalArgumentException(
-          "timeouts.maxBackoffMs must be >= timeouts.retransmitMs in " + path);
+      throw new IllegalArgumentException("timeouts.maxBackoffMs must be >= timeouts.retransmitMs in " + path);
     }
 
     if (stubborn.maxDelayMs() < stubborn.baseDelayMs()) {
-      throw new IllegalArgumentException(
-          "stubborn.maxDelayMs must be >= stubborn.baseDelayMs in " + path);
+      throw new IllegalArgumentException("stubborn.maxDelayMs must be >= stubborn.baseDelayMs in " + path);
     }
 
     if (stubborn.jitterRatio() >= 1.0d) {
-      throw new IllegalArgumentException(
-          "stubborn.jitterRatio must be < 1.0 in " + path);
+      throw new IllegalArgumentException("stubborn.jitterRatio must be < 1.0 in " + path);
     }
 
     if (network.maxPacketSize() > 65507) {
-      throw new IllegalArgumentException(
-          "network.maxPacketSize must be <= 65507 for UDP payloads in " + path);
+      throw new IllegalArgumentException("network.maxPacketSize must be <= 65507 for UDP payloads in " + path);
     }
   }
 
+  // Parsing helpers
   private static String normalizeLine(String rawLine, int lineNumber) {
     if (rawLine.indexOf('\t') >= 0) {
       throw new IllegalArgumentException("Invalid config at line " + lineNumber + ": tabs are not allowed");
@@ -537,8 +518,7 @@ public final class ConfigFile {
       spaces++;
     }
     if (spaces % 2 != 0) {
-      throw new IllegalArgumentException(
-          "Invalid config at line " + lineNumber + ": indentation must use multiples of 2 spaces");
+      throw new IllegalArgumentException("Invalid config at line " + lineNumber + ": indentation must use multiples of 2 spaces");
     }
     return spaces;
   }
@@ -573,8 +553,7 @@ public final class ConfigFile {
 
   private static String unquote(String value) {
     if (value.length() >= 2) {
-      if ((value.startsWith("\"") && value.endsWith("\""))
-          || (value.startsWith("'") && value.endsWith("'"))) {
+      if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
         return value.substring(1, value.length() - 1);
       }
     }
@@ -645,6 +624,7 @@ public final class ConfigFile {
 
   private record KeyValue(String key, String value) {}
 
+  // Mutable section builders
   private static final class MutableSystemSection {
     private String name;
     private String environment;
@@ -654,12 +634,7 @@ public final class ConfigFile {
     private Integer baseView;
 
     private SystemSection toRecord(Path path) {
-      if (name == null
-          || environment == null
-          || n == null
-          || f == null
-          || leaderElection == null
-          || baseView == null) {
+      if (name == null || environment == null || n == null || f == null || leaderElection == null || baseView == null) {
         throw new IllegalArgumentException("Section 'system' is incomplete in " + path);
       }
       return new SystemSection(name, environment, n, f, leaderElection, baseView);
@@ -674,11 +649,7 @@ public final class ConfigFile {
     private String publicKeyPath;
 
     private ReplicaSection toRecord(Path path) {
-      if (id == null
-          || host == null
-          || consensusPort == null
-          || clientPort == null
-          || publicKeyPath == null) {
+      if (id == null || host == null || consensusPort == null || clientPort == null || publicKeyPath == null) {
         throw new IllegalArgumentException("Replica entry is incomplete in " + path);
       }
       return new ReplicaSection(id, host, consensusPort, clientPort, publicKeyPath);
@@ -712,6 +683,21 @@ public final class ConfigFile {
     }
   }
 
+  private static final class MutableStubbornSection {
+    private Long baseDelayMs;
+    private Long maxDelayMs;
+    private Double jitterRatio;
+    private Integer maxPending;
+    private Integer heapCompactMinSize;
+
+    private StubbornSection toRecord(Path path) {
+      if (baseDelayMs == null || maxDelayMs == null || jitterRatio == null || maxPending == null || heapCompactMinSize == null) {
+        throw new IllegalArgumentException("Section 'stubborn' is incomplete in " + path);
+      }
+      return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize);
+    }
+  }
+
   private static final class MutableNetworkSection {
     private Integer maxPacketSize;
 
@@ -723,38 +709,16 @@ public final class ConfigFile {
     }
   }
 
-  private static final class MutableStubbornSection {
-    private Long baseDelayMs;
-    private Long maxDelayMs;
-    private Double jitterRatio;
-    private Integer maxPending;
-    private Integer heapCompactMinSize;
+  // Immutable parsed sections
+  public record SystemSection(String name, String environment, int n, int f, String leaderElection, int baseView) {}
 
-    private StubbornSection toRecord(Path path) {
-      if (baseDelayMs == null
-          || maxDelayMs == null
-          || jitterRatio == null
-          || maxPending == null
-          || heapCompactMinSize == null) {
-        throw new IllegalArgumentException("Section 'stubborn' is incomplete in " + path);
-      }
-      return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize);
-    }
-  }
+  public record ReplicaSection(String id, String host, int consensusPort, int clientPort, String publicKeyPath) {}
 
-  public record SystemSection(
-      String name, String environment, int n, int f, String leaderElection, int baseView) {}
-
-  public record ReplicaSection(
-      String id, String host, int consensusPort, int clientPort, String publicKeyPath) {}
-
-  public record ClientSection(
-      String id, String host, int requestTimeoutMs, List<String> knownReplicas) {}
+  public record ClientSection(String id, String host, int requestTimeoutMs, List<String> knownReplicas) {}
 
   public record TimeoutsSection(int viewChangeMs, int retransmitMs, int maxBackoffMs) {}
 
-  public record StubbornSection(
-      long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize) {}
+  public record StubbornSection(long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize) {}
 
   public record NetworkSection(int maxPacketSize) {}
 }

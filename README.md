@@ -105,7 +105,7 @@ Project layout:
     |-- client/pt/ulisboa/depchain/client/Main.java
     |-- server/pt/ulisboa/depchain/server/Main.java
     |-- shared/pt/ulisboa/depchain/shared/
-    |   |-- config/ConfigFile.java
+    |   |-- config/ConfigParser.java
     |   |-- network/
     |   |   |-- dpch/
     |   |   |   |-- Dpch.java
@@ -149,7 +149,7 @@ What each file does:
 - `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, sends a tracked request through `StubbornLink`, waits for matching response, then cancels retries.
 - `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Binds `StubbornLink` on `clientPort`, receives requests in a loop, and dispatches handlers on virtual threads.
 
-- `src/shared/pt/ulisboa/depchain/shared/config/ConfigFile.java`: Strict parser/validator for `config/config.yaml` with consistency checks (IDs, ports, thresholds, stubborn limits, packet size). Supports YAML comments with `#`.
+- `src/shared/pt/ulisboa/depchain/shared/config/ConfigParser.java`: Strict parser/validator for `config/config.yaml` with consistency checks (IDs, ports, thresholds, stubborn limits, packet size). Supports YAML comments with `#`.
 
 - `src/shared/pt/ulisboa/depchain/shared/network/links/fairloss/FairLossLink.java`: Low-level UDP fair-loss transport over `DatagramSocket` with thread-safe send/receive paths.
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/StubbornLink.java`: Retry-capable link with tracked send/cancel/force-resend, exponential backoff + jitter, and retry-heap compaction.

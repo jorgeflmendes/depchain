@@ -10,7 +10,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class ConfigFileTest {
+class ConfigParserTest {
   @TempDir
   Path tempDir;
 
@@ -20,7 +20,7 @@ class ConfigFileTest {
     Files.writeString(configPath, configWithoutPublicKeyPath(), StandardCharsets.UTF_8);
 
     IllegalArgumentException error =
-        assertThrows(IllegalArgumentException.class, () -> ConfigFile.load(configPath));
+        assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
 
     assertTrue(error.getMessage().contains("Replica entry is incomplete"));
   }
@@ -30,7 +30,7 @@ class ConfigFileTest {
     Path configPath = tempDir.resolve("config.yaml");
     Files.writeString(configPath, validConfig(), StandardCharsets.UTF_8);
 
-    ConfigFile config = ConfigFile.load(configPath);
+    ConfigParser config = ConfigParser.load(configPath);
 
     assertEquals(4, config.system().n());
     assertEquals(4, config.replicas().size());

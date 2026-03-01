@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.concurrent.ThreadLocalRandom;
 
-import pt.ulisboa.depchain.shared.config.ConfigFile;
+import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
@@ -22,9 +22,9 @@ public final class Main {
     String configPath = args[2];
 
     // Load the client configuration from the specified file path.
-    ConfigFile config = ConfigFile.load(Path.of(configPath));
-    ConfigFile.ReplicaSection targetReplicaConfig = config.requireReplica(targetReplicaId);
-    ConfigFile.StubbornSection stubbornConfig = config.stubborn();
+    ConfigParser config = ConfigParser.load(Path.of(configPath));
+    ConfigParser.ReplicaSection targetReplicaConfig = config.requireReplica(targetReplicaId);
+    ConfigParser.StubbornSection stubbornConfig = config.stubborn();
     InetAddress targetAddress = InetAddress.getByName(targetReplicaConfig.host());
 
     try {
