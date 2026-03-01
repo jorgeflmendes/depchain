@@ -19,6 +19,7 @@ public final class FairLossLink implements AutoCloseable {
 
   // Lock object to synchronize send operations, since DatagramSocket is not thread-safe for concurrent sends.
   private final Object sendLock = new Object();
+
   // Lock object to serialize receive operations on the same socket instance.
   private final Object receiveLock = new Object();
 
@@ -37,7 +38,7 @@ public final class FairLossLink implements AutoCloseable {
     return new FairLossLink(socket, maxPacketSize);
   }
 
-  // Create a socket that is not bound to any local port.
+  // Create a socket that is not bound to any local port (client mode).
   public static FairLossLink unbound(int maxPacketSize) throws IOException {
     DatagramSocket socket = new DatagramSocket();
     return new FairLossLink(socket, maxPacketSize);
@@ -71,7 +72,7 @@ public final class FairLossLink implements AutoCloseable {
     }
   }
 
-  // Helper method to receive a packet from the socket.
+  // Receive a packet from the socket.
   private DatagramPacket receivePacket() throws IOException {
     DatagramPacket packet = new DatagramPacket(new byte[maxPacketSize], maxPacketSize);
     synchronized (receiveLock) {
@@ -80,7 +81,7 @@ public final class FairLossLink implements AutoCloseable {
     return packet;
   }
 
-  // Helper method to decode a DatagramPacket into a Dpch.
+  // Decode a DatagramPacket into a Dpch.
   private Dpch decodePacket(DatagramPacket packet) throws IOException {
     return DpchSerialization.fromBytes(packet.getData(), packet.getOffset(), packet.getLength());
   }

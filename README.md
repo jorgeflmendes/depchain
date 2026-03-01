@@ -259,7 +259,21 @@ Before execution, ensure:
 - required ports are free;
 - all replicas use the same membership/network/stubborn configuration.
 
-## 11. Recommended Implementation Roadmap
+## 11. Stubborn Ping-Pong Diagram
+
+The current stubborn-link ping-pong flow is documented here:
+
+![Stubborn ping-pong diagram](artifacts/debug-diagrams/stubborn.svg)
+
+What this diagram reflects as already implemented:
+
+- client request over `StubbornLink.sendTracked(...)`;
+- server reply over shared UDP socket (`sendOnce(...)`);
+- client-side retry cancellation via `cancelTracked(...)` on matching response;
+- retry scheduling with exponential backoff + jitter;
+- retry-heap compaction strategy for stale scheduled entries.
+
+## 12. Recommended Implementation Roadmap
 
 1. Implement shared models and serialization in `src/shared`.
 2. Implement UDP networking plus authenticated/reliable link abstraction in `src/server`.
@@ -269,7 +283,7 @@ Before execution, ensure:
 6. Implement client library flow and append service integration.
 7. Add intrusive tests in `src/test/java`.
 
-## 12. Testing and Validation Requirements
+## 13. Testing and Validation Requirements
 
 Black-box tests are not enough. Test infrastructure should support fault injection, including:
 
@@ -278,7 +292,7 @@ Black-box tests are not enough. Test infrastructure should support fault injecti
 - invalid signatures and forged messages;
 - conflicting proposals in the same view.
 
-## 13. Submission and Evaluation (From the Project Brief)
+## 14. Submission and Evaluation (From the Project Brief)
 
 - Deadline: **March 10 at 23:59** via Fenix.
 - Team ethics: work must be original to the group.
