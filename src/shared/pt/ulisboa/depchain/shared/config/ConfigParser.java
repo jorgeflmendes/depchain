@@ -487,12 +487,16 @@ public final class ConfigParser {
       }
     }
 
-    if (timeouts.maxBackoffMs() < timeouts.retransmitMs()) {
-      throw new IllegalArgumentException("timeouts.maxBackoffMs must be >= timeouts.retransmitMs in " + path);
+    try {
+      ValidationUtils.requireAtLeast(timeouts.maxBackoffMs(), timeouts.retransmitMs(), "timeouts.maxBackoffMs", "timeouts.retransmitMs");
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException(exception.getMessage() + " in " + path, exception);
     }
 
-    if (stubborn.maxDelayMs() < stubborn.baseDelayMs()) {
-      throw new IllegalArgumentException("stubborn.maxDelayMs must be >= stubborn.baseDelayMs in " + path);
+    try {
+      ValidationUtils.requireAtLeast(stubborn.maxDelayMs(), stubborn.baseDelayMs(), "stubborn.maxDelayMs", "stubborn.baseDelayMs");
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException(exception.getMessage() + " in " + path, exception);
     }
 
     if (stubborn.jitterRatio() >= 1.0d) {
@@ -584,10 +588,7 @@ public final class ConfigParser {
 
   private static long parsePositiveLong(String value, String field) {
     long parsed = parseLong(value, field);
-    if (parsed <= 0L) {
-      throw new IllegalArgumentException("Field '%s' must be > 0".formatted(field));
-    }
-    return parsed;
+    return ValidationUtils.requirePositiveLong(parsed, "Field '%s'".formatted(field));
   }
 
   private static double parseNonNegativeDouble(String value, String field) {
