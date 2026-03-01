@@ -35,6 +35,11 @@ class ConfigFileTest {
     assertEquals(4, config.system().n());
     assertEquals(4, config.replicas().size());
     assertEquals("server1", config.replicas().getFirst().id());
+    assertEquals(100L, config.stubborn().baseDelayMs());
+    assertEquals(5_000L, config.stubborn().maxDelayMs());
+    assertEquals(0.20d, config.stubborn().jitterRatio());
+    assertEquals(50_000, config.stubborn().maxPending());
+    assertEquals(1_024, config.stubborn().heapCompactMinSize());
   }
 
   private static String configWithoutPublicKeyPath() {
@@ -71,7 +76,6 @@ class ConfigFileTest {
         client:
           id: client
           host: 127.0.0.1
-          port: 12000
           requestTimeoutMs: 3000
           knownReplicas:
             - server1
@@ -83,6 +87,13 @@ class ConfigFileTest {
           viewChangeMs: 1500
           retransmitMs: 250
           maxBackoffMs: 10000
+
+        stubborn:
+          baseDelayMs: 100
+          maxDelayMs: 5000
+          jitterRatio: 0.20
+          maxPending: 50000
+          heapCompactMinSize: 1024
 
         network:
           maxPacketSize: 8192
@@ -124,7 +135,6 @@ class ConfigFileTest {
         client:
           id: client
           host: 127.0.0.1
-          port: 12000
           requestTimeoutMs: 3000
           knownReplicas:
             - server1
@@ -136,6 +146,13 @@ class ConfigFileTest {
           viewChangeMs: 1500
           retransmitMs: 250
           maxBackoffMs: 10000
+
+        stubborn:
+          baseDelayMs: 100
+          maxDelayMs: 5000
+          jitterRatio: 0.20
+          maxPending: 50000
+          heapCompactMinSize: 1024
 
         network:
           maxPacketSize: 8192

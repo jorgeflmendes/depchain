@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.links.fairloss.transport;
+package pt.ulisboa.depchain.shared.messages;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -6,14 +6,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
-import pt.ulisboa.depchain.shared.links.fairloss.message.Dpch;
 
-class InboundRequestTest {
+import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
+
+class InboundMessageTest {
   @Test
   void constructorPreservesFields() throws Exception {
     Dpch packet = Dpch.data(1, 2, "payload".getBytes(StandardCharsets.UTF_8));
     InetAddress senderIp = InetAddress.getLoopbackAddress();
-    InboundRequest inbound = new InboundRequest(packet, senderIp, 12000);
+    InboundMessage inbound = new InboundMessage(packet, senderIp, 12000);
 
     assertEquals(packet, inbound.packet());
     assertEquals(senderIp, inbound.senderIp());
@@ -25,10 +27,9 @@ class InboundRequestTest {
     Dpch packet = Dpch.data(1, 2, "payload".getBytes(StandardCharsets.UTF_8));
     InetAddress senderIp = InetAddress.getLoopbackAddress();
 
-    assertThrows(NullPointerException.class, () -> new InboundRequest(null, senderIp, 12000));
-    assertThrows(NullPointerException.class, () -> new InboundRequest(packet, null, 12000));
-    assertThrows(IllegalArgumentException.class, () -> new InboundRequest(packet, senderIp, 0));
-    assertThrows(IllegalArgumentException.class, () -> new InboundRequest(packet, senderIp, 65536));
+    assertThrows(NullPointerException.class, () -> new InboundMessage(null, senderIp, 12000));
+    assertThrows(NullPointerException.class, () -> new InboundMessage(packet, null, 12000));
+    assertThrows(IllegalArgumentException.class, () -> new InboundMessage(packet, senderIp, 0));
+    assertThrows(IllegalArgumentException.class, () -> new InboundMessage(packet, senderIp, 65536));
   }
 }
-

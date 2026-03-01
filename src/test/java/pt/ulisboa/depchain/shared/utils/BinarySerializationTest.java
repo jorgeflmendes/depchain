@@ -12,30 +12,30 @@ import java.io.IOException;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-class BinaryFieldIOTest {
+class BinarySerializationTest {
   @Test
   void primitiveRoundTripPreservesValues() throws Exception {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(buffer)) {
-      BinaryFieldIO.writeBoolean(out, true);
-      BinaryFieldIO.writeByte(out, (byte) 7);
-      BinaryFieldIO.writeShort(out, (short) 32000);
-      BinaryFieldIO.writeInt(out, 123456789);
-      BinaryFieldIO.writeLong(out, 9876543210L);
-      BinaryFieldIO.writeFloat(out, 1.25f);
-      BinaryFieldIO.writeDouble(out, 9.5d);
-      BinaryFieldIO.writeChar(out, 'Z');
+      BinarySerialization.writeBoolean(out, true);
+      BinarySerialization.writeByte(out, (byte) 7);
+      BinarySerialization.writeShort(out, (short) 32000);
+      BinarySerialization.writeInt(out, 123456789);
+      BinarySerialization.writeLong(out, 9876543210L);
+      BinarySerialization.writeFloat(out, 1.25f);
+      BinarySerialization.writeDouble(out, 9.5d);
+      BinarySerialization.writeChar(out, 'Z');
     }
 
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(buffer.toByteArray()))) {
-      assertEquals(true, BinaryFieldIO.readBoolean(in));
-      assertEquals((byte) 7, BinaryFieldIO.readByte(in));
-      assertEquals((short) 32000, BinaryFieldIO.readShort(in));
-      assertEquals(123456789, BinaryFieldIO.readInt(in));
-      assertEquals(9876543210L, BinaryFieldIO.readLong(in));
-      assertEquals(1.25f, BinaryFieldIO.readFloat(in));
-      assertEquals(9.5d, BinaryFieldIO.readDouble(in));
-      assertEquals('Z', BinaryFieldIO.readChar(in));
+      assertEquals(true, BinarySerialization.readBoolean(in));
+      assertEquals((byte) 7, BinarySerialization.readByte(in));
+      assertEquals((short) 32000, BinarySerialization.readShort(in));
+      assertEquals(123456789, BinarySerialization.readInt(in));
+      assertEquals(9876543210L, BinarySerialization.readLong(in));
+      assertEquals(1.25f, BinarySerialization.readFloat(in));
+      assertEquals(9.5d, BinarySerialization.readDouble(in));
+      assertEquals('Z', BinarySerialization.readChar(in));
     }
   }
 
@@ -47,15 +47,15 @@ class BinaryFieldIOTest {
 
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(buffer)) {
-      BinaryFieldIO.writeUuid(out, id);
-      BinaryFieldIO.writeBytes(out, raw);
-      BinaryFieldIO.writeString(out, text);
+      BinarySerialization.writeUuid(out, id);
+      BinarySerialization.writeBytes(out, raw);
+      BinarySerialization.writeString(out, text);
     }
 
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(buffer.toByteArray()))) {
-      assertEquals(id, BinaryFieldIO.readUuid(in));
-      assertArrayEquals(raw, BinaryFieldIO.readBytes(in));
-      assertEquals(text, BinaryFieldIO.readString(in));
+      assertEquals(id, BinarySerialization.readUuid(in));
+      assertArrayEquals(raw, BinarySerialization.readBytes(in));
+      assertEquals(text, BinarySerialization.readString(in));
     }
   }
 
@@ -67,7 +67,7 @@ class BinaryFieldIOTest {
     }
 
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(buffer.toByteArray()))) {
-      assertThrows(IOException.class, () -> BinaryFieldIO.readBytes(in));
+      assertThrows(IOException.class, () -> BinarySerialization.readBytes(in));
     }
   }
 
@@ -80,7 +80,7 @@ class BinaryFieldIOTest {
     }
 
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(buffer.toByteArray()))) {
-      assertThrows(IOException.class, () -> BinaryFieldIO.readBytes(in));
+      assertThrows(IOException.class, () -> BinarySerialization.readBytes(in));
     }
   }
 }

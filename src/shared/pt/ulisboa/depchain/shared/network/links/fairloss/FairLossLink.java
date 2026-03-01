@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.links.fairloss.transport;
+package pt.ulisboa.depchain.shared.network.links.fairloss;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -8,8 +8,10 @@ import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.util.Objects;
 
-import pt.ulisboa.depchain.shared.links.fairloss.codec.DpchCodec;
-import pt.ulisboa.depchain.shared.links.fairloss.message.Dpch;
+import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
+import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class FairLossLink implements AutoCloseable {
   // The underlying DatagramSocket used for sending and receiving packets.
@@ -17,18 +19,15 @@ public final class FairLossLink implements AutoCloseable {
 
   // Lock object to synchronize send operations, since DatagramSocket is not thread-safe for concurrent sends.
   private final Object sendLock = new Object();
+  // Lock object to serialize receive operations on the same socket instance.
+  private final Object receiveLock = new Object();
 
   // The maximum allowed size of the serialized packet payload (excluding UDP/IP headers).
   private final int maxPacketSize;
 
   private FairLossLink(DatagramSocket socket, int maxPacketSize) throws SocketException {
     this.socket = Objects.requireNonNull(socket, "socket cannot be null");
-
-    if (maxPacketSize <= 0) {
-      throw new IllegalArgumentException("maxPacketSize must be > 0");
-    }
-
-    this.maxPacketSize = maxPacketSize;
+    this.maxPacketSize = ValidationUtils.requirePositiveInt(maxPacketSize, "maxPacketSize");
     this.socket.setSoTimeout(0);
   }
 
@@ -52,23 +51,18 @@ public final class FairLossLink implements AutoCloseable {
   }
 
   // Wait until a packet is received (blocking call).
-  public InboundRequest receive() throws IOException {
-    while (true) {
-      DatagramPacket packet = receivePacket();
-      Dpch decoded = decodePacketOrNull(packet);
-      if (decoded != null) {
-        return new InboundRequest(decoded, packet.getAddress(), packet.getPort());
-      }
-    }
+  public InboundMessage receive() throws IOException {
+    DatagramPacket packet = receivePacket();
+    Dpch decoded = decodePacket(packet);
+    return new InboundMessage(decoded, packet.getAddress(), packet.getPort());
   }
 
   // Helper method to serialize and send a Dpch to the given target address and port.
   private void sendPacket(Dpch value, InetAddress targetIp, int targetPort) throws IOException {
-    byte[] payload = DpchCodec.toBytes(value);
+    byte[] payload = DpchSerialization.toBytes(value);
 
     if (payload.length > maxPacketSize) {
-      throw new IOException(
-          "Serialized payload exceeds maxPacketSize (%d > %d)".formatted(payload.length, maxPacketSize));
+      throw new IOException("Serialized payload exceeds maxPacketSize (%d > %d)".formatted(payload.length, maxPacketSize));
     }
 
     DatagramPacket packet = new DatagramPacket(payload, payload.length, targetIp, targetPort);
@@ -80,17 +74,15 @@ public final class FairLossLink implements AutoCloseable {
   // Helper method to receive a packet from the socket.
   private DatagramPacket receivePacket() throws IOException {
     DatagramPacket packet = new DatagramPacket(new byte[maxPacketSize], maxPacketSize);
-    socket.receive(packet);
+    synchronized (receiveLock) {
+      socket.receive(packet);
+    }
     return packet;
   }
 
-  // Helper method to decode a DatagramPacket into a Dpch, or return null if decoding fails.
-  private Dpch decodePacketOrNull(DatagramPacket packet) {
-    try {
-      return DpchCodec.fromBytes(packet.getData(), packet.getOffset(), packet.getLength());
-    } catch (IOException ignored) {
-      return null;
-    }
+  // Helper method to decode a DatagramPacket into a Dpch.
+  private Dpch decodePacket(DatagramPacket packet) throws IOException {
+    return DpchSerialization.fromBytes(packet.getData(), packet.getOffset(), packet.getLength());
   }
 
   @Override

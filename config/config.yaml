@@ -1,3 +1,4 @@
+# Configuration file for the DepChain consensus protocol implementation, specifying system parameters, replica details, client settings, timeouts, and network configurations.
 system:
   name: depchain
   environment: local
@@ -6,6 +7,7 @@ system:
   leaderElection: round-robin
   baseView: 1
 
+# Configuration for the replicas that participate in the consensus protocol, including their network addresses and public key paths
 replicas:
   - id: server1
     host: 127.0.0.1
@@ -28,10 +30,10 @@ replicas:
     clientPort: 11004
     publicKeyPath: config/keys/server4/public/replica.pem
 
+# Configuration for the client that interacts with the replicas to send requests and receive responses
 client:
   id: client
   host: 127.0.0.1
-  port: 12000
   requestTimeoutMs: 3000
   knownReplicas:
     - server1
@@ -39,10 +41,20 @@ client:
     - server3
     - server4
 
+# Timeouts for various operations in the consensus protocol, in milliseconds
 timeouts:
   viewChangeMs: 1500
   retransmitMs: 250
   maxBackoffMs: 10000
 
+# Parameters for the stubborn retransmission mechanism used by replicas to resend messages to peers
+stubborn:
+  baseDelayMs: 100
+  maxDelayMs: 5000
+  jitterRatio: 0.20
+  maxPending: 50000
+  heapCompactMinSize: 1024
+
+# Network configuration parameters, including the maximum packet size for messages sent between replicas and clients
 network:
   maxPacketSize: 8192

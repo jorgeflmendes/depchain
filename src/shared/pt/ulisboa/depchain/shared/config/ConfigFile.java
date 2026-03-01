@@ -10,11 +10,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+
 public final class ConfigFile {
   private final SystemSection system;
   private final List<ReplicaSection> replicas;
   private final ClientSection client;
   private final TimeoutsSection timeouts;
+  private final StubbornSection stubborn;
   private final NetworkSection network;
 
   private ConfigFile(
@@ -22,11 +25,13 @@ public final class ConfigFile {
       List<ReplicaSection> replicas,
       ClientSection client,
       TimeoutsSection timeouts,
+      StubbornSection stubborn,
       NetworkSection network) {
     this.system = system;
     this.replicas = List.copyOf(replicas);
     this.client = client;
     this.timeouts = timeouts;
+    this.stubborn = stubborn;
     this.network = network;
   }
 
@@ -44,6 +49,10 @@ public final class ConfigFile {
 
   public TimeoutsSection timeouts() {
     return timeouts;
+  }
+
+  public StubbornSection stubborn() {
+    return stubborn;
   }
 
   public NetworkSection network() {
@@ -88,6 +97,7 @@ public final class ConfigFile {
       List<ReplicaSection> replicas = null;
       MutableClientSection client = null;
       MutableTimeoutsSection timeouts = null;
+      MutableStubbornSection stubborn = null;
       MutableNetworkSection network = null;
       Set<String> seenTopLevelSections = new HashSet<>();
 
@@ -118,6 +128,7 @@ public final class ConfigFile {
           case "replicas" -> replicas = parseReplicasSection();
           case "client" -> client = parseClientSection();
           case "timeouts" -> timeouts = parseTimeoutsSection();
+          case "stubborn" -> stubborn = parseStubbornSection();
           case "network" -> network = parseNetworkSection();
           default -> fail("Unknown top-level section '%s'".formatted(sectionName));
         }
@@ -135,6 +146,9 @@ public final class ConfigFile {
       if (timeouts == null) {
         throw new IllegalArgumentException("Missing required section 'timeouts' in " + path);
       }
+      if (stubborn == null) {
+        throw new IllegalArgumentException("Missing required section 'stubborn' in " + path);
+      }
       if (network == null) {
         throw new IllegalArgumentException("Missing required section 'network' in " + path);
       }
@@ -142,10 +156,11 @@ public final class ConfigFile {
       SystemSection parsedSystem = system.toRecord(path);
       ClientSection parsedClient = client.toRecord(path);
       TimeoutsSection parsedTimeouts = timeouts.toRecord(path);
+      StubbornSection parsedStubborn = stubborn.toRecord(path);
       NetworkSection parsedNetwork = network.toRecord(path);
 
-      validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedNetwork, path);
-      return new ConfigFile(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedNetwork);
+      validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedNetwork, path);
+      return new ConfigFile(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedNetwork);
     }
 
     private MutableSystemSection parseSystemSection() {
@@ -297,7 +312,6 @@ public final class ConfigFile {
         switch (kv.key()) {
           case "id" -> result.id = requireNonBlank(kv.value(), "client.id");
           case "host" -> result.host = requireNonBlank(kv.value(), "client.host");
-          case "port" -> result.port = parsePort(kv.value(), "client.port");
           case "requestTimeoutMs" ->
               result.requestTimeoutMs = parsePositiveInt(kv.value(), "client.requestTimeoutMs");
           default -> fail("Unknown key in 'client' section: '%s'".formatted(kv.key()));
@@ -368,6 +382,40 @@ public final class ConfigFile {
       return result;
     }
 
+    private MutableStubbornSection parseStubbornSection() {
+      MutableStubbornSection result = new MutableStubbornSection();
+
+      while (hasMoreLines()) {
+        String line = normalizeLine(currentRawLine(), currentLineNumber());
+        if (line.isBlank()) {
+          index++;
+          continue;
+        }
+
+        int indent = indentationOf(line, currentLineNumber());
+        if (indent == 0) {
+          break;
+        }
+        if (indent != 2) {
+          fail("Invalid indentation in 'stubborn' section (expected 2 spaces)");
+        }
+
+        KeyValue kv = parseKeyValue(line.trim());
+        switch (kv.key()) {
+          case "baseDelayMs" -> result.baseDelayMs = parsePositiveLong(kv.value(), "stubborn.baseDelayMs");
+          case "maxDelayMs" -> result.maxDelayMs = parsePositiveLong(kv.value(), "stubborn.maxDelayMs");
+          case "jitterRatio" -> result.jitterRatio = parseNonNegativeDouble(kv.value(), "stubborn.jitterRatio");
+          case "maxPending" -> result.maxPending = parsePositiveInt(kv.value(), "stubborn.maxPending");
+          case "heapCompactMinSize" ->
+              result.heapCompactMinSize = parsePositiveInt(kv.value(), "stubborn.heapCompactMinSize");
+          default -> fail("Unknown key in 'stubborn' section: '%s'".formatted(kv.key()));
+        }
+        index++;
+      }
+
+      return result;
+    }
+
     private void assignReplicaKey(MutableReplicaSection replica, KeyValue kv) {
       switch (kv.key()) {
         case "id" -> replica.id = requireNonBlank(kv.value(), "replicas.id");
@@ -402,6 +450,7 @@ public final class ConfigFile {
       List<ReplicaSection> replicas,
       ClientSection client,
       TimeoutsSection timeouts,
+      StubbornSection stubborn,
       NetworkSection network,
       Path path) {
     if (system.n() != replicas.size()) {
@@ -437,13 +486,6 @@ public final class ConfigFile {
       }
     }
 
-    String clientEndpoint = client.host() + ":" + client.port();
-    if (!endpoints.add(clientEndpoint)) {
-      throw new IllegalArgumentException(
-          "Client endpoint '%s' collides with a replica endpoint in %s"
-              .formatted(clientEndpoint, path));
-    }
-
     if (client.knownReplicas().isEmpty()) {
       throw new IllegalArgumentException("client.knownReplicas must not be empty in " + path);
     }
@@ -464,6 +506,16 @@ public final class ConfigFile {
     if (timeouts.maxBackoffMs() < timeouts.retransmitMs()) {
       throw new IllegalArgumentException(
           "timeouts.maxBackoffMs must be >= timeouts.retransmitMs in " + path);
+    }
+
+    if (stubborn.maxDelayMs() < stubborn.baseDelayMs()) {
+      throw new IllegalArgumentException(
+          "stubborn.maxDelayMs must be >= stubborn.baseDelayMs in " + path);
+    }
+
+    if (stubborn.jitterRatio() >= 1.0d) {
+      throw new IllegalArgumentException(
+          "stubborn.jitterRatio must be < 1.0 in " + path);
     }
 
     if (network.maxPacketSize() > 65507) {
@@ -538,26 +590,33 @@ public final class ConfigFile {
 
   private static int parseNonNegativeInt(String value, String field) {
     int parsed = parseInteger(value, field);
-    if (parsed < 0) {
-      throw new IllegalArgumentException("Field '%s' must be >= 0".formatted(field));
-    }
-    return parsed;
+    return ValidationUtils.requireNonNegativeInt(parsed, "Field '%s'".formatted(field));
   }
 
   private static int parsePositiveInt(String value, String field) {
     int parsed = parseInteger(value, field);
-    if (parsed <= 0) {
+    return ValidationUtils.requirePositiveInt(parsed, "Field '%s'".formatted(field));
+  }
+
+  private static int parsePort(String value, String field) {
+    int port = parseInteger(value, field);
+    return ValidationUtils.requireValidPort(port, "Field '%s'".formatted(field));
+  }
+
+  private static long parsePositiveLong(String value, String field) {
+    long parsed = parseLong(value, field);
+    if (parsed <= 0L) {
       throw new IllegalArgumentException("Field '%s' must be > 0".formatted(field));
     }
     return parsed;
   }
 
-  private static int parsePort(String value, String field) {
-    int port = parseInteger(value, field);
-    if (port < 1 || port > 65535) {
-      throw new IllegalArgumentException("Field '%s' must be in range [1, 65535]".formatted(field));
+  private static double parseNonNegativeDouble(String value, String field) {
+    double parsed = parseDouble(value, field);
+    if (parsed < 0.0d) {
+      throw new IllegalArgumentException("Field '%s' must be >= 0".formatted(field));
     }
-    return port;
+    return parsed;
   }
 
   private static int parseInteger(String value, String field) {
@@ -565,6 +624,22 @@ public final class ConfigFile {
       return Integer.parseInt(value);
     } catch (NumberFormatException e) {
       throw new IllegalArgumentException("Field '%s' is not a valid integer: %s".formatted(field, value), e);
+    }
+  }
+
+  private static long parseLong(String value, String field) {
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Field '%s' is not a valid long: %s".formatted(field, value), e);
+    }
+  }
+
+  private static double parseDouble(String value, String field) {
+    try {
+      return Double.parseDouble(value);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Field '%s' is not a valid decimal number: %s".formatted(field, value), e);
     }
   }
 
@@ -613,15 +688,14 @@ public final class ConfigFile {
   private static final class MutableClientSection {
     private String id;
     private String host;
-    private Integer port;
     private Integer requestTimeoutMs;
     private final List<String> knownReplicas = new ArrayList<>();
 
     private ClientSection toRecord(Path path) {
-      if (id == null || host == null || port == null || requestTimeoutMs == null) {
+      if (id == null || host == null || requestTimeoutMs == null) {
         throw new IllegalArgumentException("Section 'client' is incomplete in " + path);
       }
-      return new ClientSection(id, host, port, requestTimeoutMs, List.copyOf(knownReplicas));
+      return new ClientSection(id, host, requestTimeoutMs, List.copyOf(knownReplicas));
     }
   }
 
@@ -649,6 +723,25 @@ public final class ConfigFile {
     }
   }
 
+  private static final class MutableStubbornSection {
+    private Long baseDelayMs;
+    private Long maxDelayMs;
+    private Double jitterRatio;
+    private Integer maxPending;
+    private Integer heapCompactMinSize;
+
+    private StubbornSection toRecord(Path path) {
+      if (baseDelayMs == null
+          || maxDelayMs == null
+          || jitterRatio == null
+          || maxPending == null
+          || heapCompactMinSize == null) {
+        throw new IllegalArgumentException("Section 'stubborn' is incomplete in " + path);
+      }
+      return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize);
+    }
+  }
+
   public record SystemSection(
       String name, String environment, int n, int f, String leaderElection, int baseView) {}
 
@@ -656,9 +749,12 @@ public final class ConfigFile {
       String id, String host, int consensusPort, int clientPort, String publicKeyPath) {}
 
   public record ClientSection(
-      String id, String host, int port, int requestTimeoutMs, List<String> knownReplicas) {}
+      String id, String host, int requestTimeoutMs, List<String> knownReplicas) {}
 
   public record TimeoutsSection(int viewChangeMs, int retransmitMs, int maxBackoffMs) {}
+
+  public record StubbornSection(
+      long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize) {}
 
   public record NetworkSection(int maxPacketSize) {}
 }

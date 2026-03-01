@@ -53,7 +53,7 @@ Networking layering roadmap:
         /----------\
        /     PL     \           Perfect Links semantics (to implement)
       /--------------\
-     /       SL       \         Stubborn Links (to implement)
+     /       SL       \         Stubborn Links (already implemented)
     /------------------\
    /      FairLoss      \       FairLossLink over UDP (already implemented)
   /----------------------\
@@ -63,9 +63,9 @@ Networking layering roadmap:
 
 Interpretation:
 
-- The current base is `FairLossLink` in `src/shared/.../links/fairloss/transport`.
-- Next, this base should be extended to add authentication (APL).
-- On top of authenticated communication, enforce perfect-link guarantees used by upper layers.
+- Current UDP stack in code: `FairLossLink` + `StubbornLink` in `src/shared/.../network/links/`.
+- `StubbornLink` provides tracked retries with exponential backoff + jitter and retry-heap compaction.
+- Next layers to implement are authenticated and perfect-link semantics on top of this stack.
 
 ## 5. Technical Stack
 
@@ -78,11 +78,12 @@ Interpretation:
 
 Current status:
 
-- project structure is created and builds with Java 21;
-- membership and network configuration is centralized in `config/config.yaml`;
+- project structure builds with Java 21 and Gradle;
+- membership, client, timeout, stubborn-link, and network settings are centralized in `config/config.yaml`;
 - key directory structure exists in `config/keys/` (key files are not currently versioned);
-- a full Fair Loss Links communication baseline over UDP is implemented using a single universal `Dpch` envelope;
-- strict configuration parsing/validation and automated tests are in place.
+- universal `Dpch` envelope + serialization is implemented;
+- `FairLossLink` and `StubbornLink` are implemented and used by client/server mains;
+- strict configuration parsing/validation and automated tests are in place;
 - Basic HotStuff consensus and append-only blockchain state machine are still pending.
 
 Project layout:
@@ -92,6 +93,8 @@ Project layout:
 |-- build.gradle
 |-- settings.gradle
 |-- README.md
+|-- scripts/
+|   `-- udp_pingpong_trace.py
 |-- docs/
 |   |-- hot-stuff-paper.pdf
 |   `-- project.pdf
@@ -103,23 +106,31 @@ Project layout:
     |-- server/pt/ulisboa/depchain/server/Main.java
     |-- shared/pt/ulisboa/depchain/shared/
     |   |-- config/ConfigFile.java
-    |   |-- links/fairloss/
-    |   |   |-- transport/FairLossLink.java
-    |   |   |-- transport/InboundRequest.java
-    |   |   |-- codec/DpchCodec.java
-    |   |   `-- message/
-    |   |       |-- Dpch.java
-    |   |       `-- DpchType.java
-    |   `-- utils/BinaryFieldIO.java
+    |   |-- network/
+    |   |   |-- dpch/
+    |   |   |   |-- Dpch.java
+    |   |   |   |-- DpchSerialization.java
+    |   |   |   `-- DpchType.java
+    |   |   |-- links/
+    |   |   |   |-- fairloss/FairLossLink.java
+    |   |   |   `-- stubborn/
+    |   |   |       |-- Event.java
+    |   |   |       |-- ScheduledRetry.java
+    |   |   |       |-- StubbornLink.java
+    |   |   |       `-- TrackedMessage.java
+    |   |   `-- messages/InboundMessage.java
+    |   `-- utils/
+    |       |-- BinarySerialization.java
+    |       `-- ValidationUtils.java
     `-- test/java/pt/ulisboa/depchain/
         |-- integration/ReplicaConnectivityTest.java
         `-- shared/
             |-- config/ConfigFileTest.java
             |-- links/fairloss/
-            |   |-- codec/DpchCodecTest.java
-            |   |-- transport/FairLossLinkTest.java
-            |   `-- transport/InboundRequestTest.java
-            `-- utils/BinaryFieldIOTest.java
+            |   |-- DpchSerializationTest.java
+            |   `-- FairLossLinkTest.java
+            |-- messages/InboundMessageTest.java
+            `-- utils/BinarySerializationTest.java
 ```
 
 What each file does:
@@ -129,29 +140,31 @@ What each file does:
 - `config/config.yaml`: Static system configuration:
   - system parameters (`n`, `f`, leader election, base view);
   - replica endpoints (consensus/client ports and key paths);
-  - client settings (known replicas and timeout);
+  - client settings (host, known replicas, request timeout);
+  - stubborn-link retry parameters (`baseDelayMs`, `maxDelayMs`, `jitterRatio`, `maxPending`, `heapCompactMinSize`);
   - network limits (max packet size).
 - `config/keys/`: Key material directory structure (files are expected at runtime, but not versioned here).
+- `scripts/udp_pingpong_trace.py`: Runs client/server through a UDP proxy and generates a packet-level SVG trace with automatic per-connection failure scenarios.
 
-- `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, builds one request, sends it to a target replica, and prints the response.
-- `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Loads config, binds UDP socket, receives requests in a loop, and handles them using virtual threads.
+- `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, sends a tracked request through `StubbornLink`, waits for matching response, then cancels retries.
+- `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Binds `StubbornLink` on `clientPort`, receives requests in a loop, and dispatches handlers on virtual threads.
 
-- `src/shared/pt/ulisboa/depchain/shared/config/ConfigFile.java`: Strict parser/validator for `config/config.yaml` with consistency checks (ports, replica IDs, thresholds, packet size).
+- `src/shared/pt/ulisboa/depchain/shared/config/ConfigFile.java`: Strict parser/validator for `config/config.yaml` with consistency checks (IDs, ports, thresholds, stubborn limits, packet size). Supports YAML comments with `#`.
 
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLink.java`: Low-level UDP fair-loss transport. Handles best-effort send/receive and packet decoding only.
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequest.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
-
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/codec/DpchCodec.java`: Binary framing/unframing for the universal DPCH wire format (`magic`, `version`, `conn_id`, `type`, `seq_num`, `payload_len`, `payload`).
-- `src/shared/pt/ulisboa/depchain/shared/utils/BinaryFieldIO.java`: Reusable binary read/write helpers for primitive types, UUID, strings, and byte arrays.
-
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/Dpch.java`: Universal communication envelope used for all message semantics (`request`, `response`, `ack`, `nack`, `syn`, `fin`).
-- `src/shared/pt/ulisboa/depchain/shared/links/fairloss/message/DpchType.java`: Enum that defines supported DPCH message types and their wire codes.
+- `src/shared/pt/ulisboa/depchain/shared/network/links/fairloss/FairLossLink.java`: Low-level UDP fair-loss transport over `DatagramSocket` with thread-safe send/receive paths.
+- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/StubbornLink.java`: Retry-capable link with tracked send/cancel/force-resend, exponential backoff + jitter, and retry-heap compaction.
+- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/TrackedMessage.java`: Tracked message state and identity key used by `StubbornLink`.
+- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/ScheduledRetry.java`: Retry scheduling item (`endpoint`, `key`, `dueAtMs`) used in the retry heap.
+- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/Event.java`: Sealed event model for the stubborn event loop (`SendTracked`, `CancelTracked`, `ForceResend`, `Shutdown`).
+- `src/shared/pt/ulisboa/depchain/shared/network/dpch/DpchSerialization.java`: Binary framing/unframing for the universal DPCH wire format (`magic`, `version`, `conn_id`, `type`, `seq_num`, `payload_len`, `payload`).
+- `src/shared/pt/ulisboa/depchain/shared/network/messages/InboundMessage.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
+- `src/shared/pt/ulisboa/depchain/shared/utils/BinarySerialization.java`: Reusable binary read/write helpers for primitive types, UUID, strings, and byte arrays.
 
 - `src/test/java/pt/ulisboa/depchain/shared/config/ConfigFileTest.java`: Unit tests for config parsing/validation.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/codec/DpchCodecTest.java`: Unit tests for packet codec round-trip, malformed headers, invalid slices, and payload boundary checks.
-- `src/test/java/pt/ulisboa/depchain/shared/utils/BinaryFieldIOTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/FairLossLinkTest.java`: Unit tests for fair-loss send/receive behavior, malformed packet handling, and concurrent multi-client scenarios.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/transport/InboundRequestTest.java`: Unit tests for `InboundRequest` field preservation and constructor validation.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/DpchSerializationTest.java`: Unit tests for packet codec round-trip, malformed headers, invalid slices, and payload boundary checks.
+- `src/test/java/pt/ulisboa/depchain/shared/utils/BinarySerializationTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
+- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/FairLossLinkTest.java`: Unit tests for fair-loss send/receive behavior, malformed packet handling, and concurrent multi-client scenarios.
+- `src/test/java/pt/ulisboa/depchain/shared/messages/InboundMessageTest.java`: Unit tests for `InboundMessage` field preservation and constructor validation.
 - `src/test/java/pt/ulisboa/depchain/integration/ReplicaConnectivityTest.java`: Integration test that boots replicas as processes and verifies client connectivity to all of them.
 
 ## 7. Universal DPCH Communication Packet
@@ -184,7 +197,8 @@ Practical use today:
 - Client request: currently encoded as `Dpch.data(...)`.
 - Server response: currently encoded as `Dpch.data(...)`.
 - Client/server payload content is currently plain UTF-8 text (no nested status envelope).
-- `FairLossLink` does not implement retries, acks, deduplication, or request-reply timeouts; these belong to upper layers (stubborn/perfect links or application logic).
+- Current request path uses `StubbornLink.sendTracked(...)` on client and `cancelTracked(...)` when the response is received.
+- `FairLossLink` remains a best-effort UDP primitive (no retries/deduplication) and is wrapped by `StubbornLink`.
 - ACK/NACK/SYN/FIN: already supported at the envelope level via `Dpch.ack(...)`, `Dpch.nack(...)`, `Dpch.syn(...)`, `Dpch.fin(...)` (not used yet in the current client/server flow; reserved for future perfect-link logic).
 
 ## 8. Prerequisites
@@ -235,13 +249,15 @@ Run a specific replica/config:
 
 - `n = 4` replicas, `f = 1`;
 - localhost addresses and per-replica consensus/client ports;
-- timeout values for view changes and retransmissions.
+- client identity, host, request timeout, and known replica IDs (no dedicated client port);
+- timeout values for view changes and retransmissions;
+- stubborn retry parameters and network max packet size.
 
 Before execution, ensure:
 
 - key files exist at the configured paths;
 - required ports are free;
-- all replicas use the same membership and timeout configuration.
+- all replicas use the same membership/network/stubborn configuration.
 
 ## 11. Recommended Implementation Roadmap
 

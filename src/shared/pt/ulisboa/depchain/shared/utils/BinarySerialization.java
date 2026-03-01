@@ -7,7 +7,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 
-public final class BinaryFieldIO {
+// Utility class for binary serialization and deserialization of various data types.
+public final class BinarySerialization {
   // Write a boolean value to the output stream.
   public static void writeBoolean(DataOutputStream output, boolean value) throws IOException {
     output.writeBoolean(value);

@@ -7,9 +7,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import pt.ulisboa.depchain.shared.config.ConfigFile;
-import pt.ulisboa.depchain.shared.links.fairloss.message.Dpch;
-import pt.ulisboa.depchain.shared.links.fairloss.transport.FairLossLink;
-import pt.ulisboa.depchain.shared.links.fairloss.transport.InboundRequest;
+import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
+import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -21,49 +21,38 @@ public final class Main {
     String serverId = args[0];
     String configPath = args[1];
 
+    // Load the server configuration from the specified file path.
     ConfigFile config = ConfigFile.load(Path.of(configPath));
-    ConfigFile.ReplicaSection replica = config.requireReplica(serverId);
-    InetAddress bindAddress = InetAddress.getByName(replica.host());
+    ConfigFile.ReplicaSection replicaConfig = config.requireReplica(serverId);
+    InetAddress bindAddress = InetAddress.getByName(replicaConfig.host());
+    ConfigFile.StubbornSection stubbornConfig = config.stubborn();
 
     // Use virtual threads to handle each request concurrently without blocking OS threads.
     ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
-    try (workers; FairLossLink transport = FairLossLink.bind(bindAddress, replica.clientPort(), config.network().maxPacketSize())) {
-      System.out.printf("Replica %s listening for client UDP requests on %s:%d (config: %s)%n", replica.id(), replica.host(), replica.clientPort(), configPath);
+    try (workers; StubbornLink transport = StubbornLink.bind(bindAddress, replicaConfig.clientPort(), config.network().maxPacketSize(), stubbornConfig.baseDelayMs(), stubbornConfig.maxDelayMs(), stubbornConfig.jitterRatio(), stubbornConfig.maxPending(), stubbornConfig.heapCompactMinSize())) {
+      System.out.printf("Replica %s listening for client UDP requests on %s:%d (config: %s)%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort(), configPath);
 
       // Main server loop that receives requests and dispatches them to worker threads.
       while (true) {
-        try {
-          // Receive one request packet from the UDP fair-loss transport.
-          InboundRequest request = transport.receive();
-          workers.submit(() -> handleRequest(transport, request));
-        } catch (Exception exception) {
-          System.out.printf("Packet exchange error while receiving = %s%n", exception.getMessage());
-          exception.printStackTrace(System.out);
-        }
+        // Receive one request packet from the UDP stubbornConfig transport.
+        InboundMessage request = transport.receive();
+        workers.submit(() -> handleRequest(transport, request.packet(), request.senderIp(), request.senderPort()));
       }
     }
   }
 
   // Request handler that just echoes back the received value
-  private static void handleRequest(FairLossLink transport, InboundRequest request) {
+  private static void handleRequest(StubbornLink transport, Dpch inbound, InetAddress senderIp, int senderPort) {
     try {
-      Dpch inbound = request.packet();
       String payloadText = new String(inbound.payload(), StandardCharsets.UTF_8);
       byte[] responsePayload = ("Received " + payloadText).getBytes(StandardCharsets.UTF_8);
       Dpch response = Dpch.data(inbound.connectionId(), inbound.sequenceNumber(), responsePayload);
 
-      // Send the response packet back to the original sender (IP + port).
-      transport.send(response, request.senderIp(), request.senderPort());
+      // Send one response packet back to the original sender (IP + port).
+      transport.sendOnce(response, senderIp, senderPort);
     } catch (Exception exception) {
-    
-      String sender = request.senderIp().getHostAddress() + ":" + request.senderPort();
-      System.out.printf(
-          "Packet exchange error while handling conn=%d seq=%d from %s = %s%n",
-          request.packet().connectionId(),
-          request.packet().sequenceNumber(),
-          sender,
-          exception.getMessage());
-      exception.printStackTrace(System.out);
+      String sender = senderIp.getHostAddress() + ":" + senderPort;
+      System.out.printf("Packet exchange error while handling conn=%d seq=%d from %s = %s%n", inbound.connectionId(), inbound.sequenceNumber(), sender, exception.getMessage());
     }
   }
 }

@@ -6,9 +6,9 @@ import java.nio.file.Path;
 import java.util.concurrent.ThreadLocalRandom;
 
 import pt.ulisboa.depchain.shared.config.ConfigFile;
-import pt.ulisboa.depchain.shared.links.fairloss.message.Dpch;
-import pt.ulisboa.depchain.shared.links.fairloss.transport.FairLossLink;
-import pt.ulisboa.depchain.shared.links.fairloss.transport.InboundRequest;
+import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
+import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -21,38 +21,41 @@ public final class Main {
     String targetReplicaId = args[1];
     String configPath = args[2];
 
-    try {
-      ConfigFile config = ConfigFile.load(Path.of(configPath));
-      ConfigFile.ReplicaSection targetReplica = config.requireReplica(targetReplicaId);
-      InetAddress targetAddress = InetAddress.getByName(targetReplica.host());
+    // Load the client configuration from the specified file path.
+    ConfigFile config = ConfigFile.load(Path.of(configPath));
+    ConfigFile.ReplicaSection targetReplicaConfig = config.requireReplica(targetReplicaId);
+    ConfigFile.StubbornSection stubbornConfig = config.stubborn();
+    InetAddress targetAddress = InetAddress.getByName(targetReplicaConfig.host());
 
-      try (FairLossLink transport = FairLossLink.unbound(config.network().maxPacketSize())) {
+    try {
+      try (StubbornLink transport = StubbornLink.unbound(config.network().maxPacketSize(), stubbornConfig.baseDelayMs(), stubbornConfig.maxDelayMs(), stubbornConfig.jitterRatio(), stubbornConfig.maxPending(), stubbornConfig.heapCompactMinSize())) {
         int connectionId = ThreadLocalRandom.current().nextInt(); // TODO: it should be an uuid or something else, but for now let's just use a random int, maybe it wont be needed
         int sequenceNumber = 0;
 
-        // Create and send one packet over the fair-loss link.
+        // Create and send one packet over the stubborn link.
         Dpch request = Dpch.data(connectionId, sequenceNumber, value.getBytes(StandardCharsets.UTF_8));
-        transport.send(request, targetAddress, targetReplica.clientPort());
+        var trackedKey = transport.sendTracked(request, targetAddress, targetReplicaConfig.clientPort());
 
-        // Application-level request/reply matching, intentionally above fair-loss semantics.
+        // Wait for the response packet with the same connectionId and sequenceNumber as the original request.
         Dpch response;
         while (true) {
-          InboundRequest inbound = transport.receive();
+          InboundMessage inbound = transport.receive();
           Dpch candidate = inbound.packet();
-          boolean sameConnectionId = candidate.connectionId() == request.connectionId();
-          boolean sameSequence = candidate.sequenceNumber() == request.sequenceNumber();
-          if (sameConnectionId && sameSequence) {
+          
+          if (candidate.connectionId() == request.connectionId() && candidate.sequenceNumber() == request.sequenceNumber()) {
             response = candidate;
             break;
           }
         }
+
+        // Response arrived: stop retrying this request.
+        transport.cancelTracked(trackedKey, targetAddress, targetReplicaConfig.clientPort());
 
         String responsePayload = new String(response.payload(), StandardCharsets.UTF_8);
         System.out.println("response = " + responsePayload);
       }
     } catch (Exception exception) {
       System.out.printf("Packet exchange error = %s%n", exception.getMessage());
-      exception.printStackTrace(System.out);
       System.exit(2);
     }
   }

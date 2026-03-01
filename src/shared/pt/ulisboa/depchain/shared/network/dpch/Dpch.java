@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.links.fairloss.message;
+package pt.ulisboa.depchain.shared.network.dpch;
 
 import java.util.Arrays;
 import java.util.Objects;

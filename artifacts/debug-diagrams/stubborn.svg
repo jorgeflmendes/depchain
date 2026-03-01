@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="822" viewBox="0 0 1180 822" font-family="Consolas, Menlo, monospace">
+<defs>
+<marker id="arrowBlue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#1d4ed8"/></marker>
+<marker id="arrowGreen" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#059669"/></marker>
+<marker id="arrowRed" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#dc2626"/></marker>
+</defs>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+<text x="30" y="38" font-size="22" fill="#0f172a" font-weight="700">Java UDP Trace via Proxy (3 connections, auto failure scenarios, server1)</text>
+<text x="30" y="62" font-size="13" fill="#334155">Blue=DATA, Green=ACK, Red=errors/drops</text>
+<rect x="200" y="76" width="160" height="30" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="280" y="96" text-anchor="middle" font-size="13" fill="#0f172a">Client</text>
+<line x1="280" y1="110" x2="280" y2="798" stroke="#94a3b8" stroke-dasharray="6,6"/>
+<rect x="510" y="76" width="160" height="30" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="590" y="96" text-anchor="middle" font-size="13" fill="#0f172a">Proxy</text>
+<line x1="590" y1="110" x2="590" y2="798" stroke="#94a3b8" stroke-dasharray="6,6"/>
+<rect x="820" y="76" width="160" height="30" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="900" y="96" text-anchor="middle" font-size="13" fill="#0f172a">Server</text>
+<line x1="900" y1="110" x2="900" y2="798" stroke="#94a3b8" stroke-dasharray="6,6"/>
+<rect x="120" y="124" width="1010" height="118" fill="#f8fafc" stroke="none"/>
+<text x="130" y="138" font-size="12" fill="#334155">Connection 1 [no failure] (conn_id=485503616)</text>
+<rect x="120" y="264" width="1010" height="192" fill="#f1f5f9" stroke="none"/>
+<text x="130" y="278" font-size="12" fill="#334155">Connection 2 [drop C->S #1] (conn_id=-343059230)</text>
+<line x1="120" y1="264" x2="1130" y2="264" stroke="#94a3b8" stroke-width="1.4"/>
+<rect x="120" y="478" width="1010" height="254" fill="#f8fafc" stroke="none"/>
+<text x="130" y="492" font-size="12" fill="#334155">Connection 3 [drop S->C #1] (conn_id=-1219563854)</text>
+<line x1="120" y1="478" x2="1130" y2="478" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="30" y="151" font-size="12" fill="#64748b">141.5ms</text>
+<line x1="280" y1="146" x2="900" y2="146" stroke="#1d4ed8" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="590" y="138" text-anchor="middle" font-size="12" fill="#0f172a">#1 DATA conn=485503616 seq=0 payload=&quot;trace-0&quot; (23B)</text>
+<text x="30" y="213" font-size="12" fill="#64748b">146.0ms</text>
+<line x1="900" y1="208" x2="280" y2="208" stroke="#1d4ed8" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="590" y="200" text-anchor="middle" font-size="12" fill="#0f172a">#2 DATA conn=485503616 seq=0 payload=&quot;Received trace-0&quot; (32B)</text>
+<text x="30" y="303" font-size="12" fill="#64748b">319.0ms</text>
+<line x1="280" y1="298" x2="590" y2="298" stroke="#dc2626" stroke-width="2.2" marker-end="url(#arrowRed)"/>
+<line x1="584" y1="292" x2="596" y2="304" stroke="#b91c1c" stroke-width="2"/>
+<line x1="584" y1="304" x2="596" y2="292" stroke="#b91c1c" stroke-width="2"/>
+<text x="435" y="318" text-anchor="middle" font-size="12" fill="#991b1b">#1 DROP DATA conn=-343059230 seq=0 payload=&quot;trace-1&quot; (23B)</text>
+<text x="30" y="365" font-size="12" fill="#64748b">439.6ms</text>
+<line x1="280" y1="360" x2="900" y2="360" stroke="#1d4ed8" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="590" y="352" text-anchor="middle" font-size="12" fill="#0f172a">#2 DATA conn=-343059230 seq=0 payload=&quot;trace-1&quot; (23B)</text>
+<text x="30" y="427" font-size="12" fill="#64748b">440.0ms</text>
+<line x1="900" y1="422" x2="280" y2="422" stroke="#1d4ed8" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="590" y="414" text-anchor="middle" font-size="12" fill="#0f172a">#3 DATA conn=-343059230 seq=0 payload=&quot;Received trace-1&quot; (32B)</text>
+<text x="30" y="517" font-size="12" fill="#64748b">590.3ms</text>
+<line x1="280" y1="512" x2="900" y2="512" stroke="#1d4ed8" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="590" y="504" text-anchor="middle" font-size="12" fill="#0f172a">#1 DATA conn=-1219563854 seq=0 payload=&quot;trace-2&quot; (23B)</text>
+<text x="30" y="579" font-size="12" fill="#64748b">590.6ms</text>
+<line x1="900" y1="574" x2="590" y2="574" stroke="#dc2626" stroke-width="2.2" marker-end="url(#arrowRed)"/>
+<line x1="584" y1="568" x2="596" y2="580" stroke="#b91c1c" stroke-width="2"/>
+<line x1="584" y1="580" x2="596" y2="568" stroke="#b91c1c" stroke-width="2"/>
+<text x="745" y="594" text-anchor="middle" font-size="12" fill="#991b1b">#2 DROP DATA conn=-1219563854 seq=0 payload=&quot;Received trace-2&quot; (32B)</text>
+<text x="30" y="641" font-size="12" fill="#64748b">707.8ms</text>
+<line x1="280" y1="636" x2="900" y2="636" stroke="#1d4ed8" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="590" y="628" text-anchor="middle" font-size="12" fill="#0f172a">#3 DATA conn=-1219563854 seq=0 payload=&quot;trace-2&quot; (23B)</text>
+<text x="30" y="703" font-size="12" fill="#64748b">708.2ms</text>
+<line x1="900" y1="698" x2="280" y2="698" stroke="#1d4ed8" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="590" y="690" text-anchor="middle" font-size="12" fill="#0f172a">#4 DATA conn=-1219563854 seq=0 payload=&quot;Received trace-2&quot; (32B)</text>
+</svg>
