@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.network.model;
+package pt.ulisboa.depchain.shared.network.links.fairloss;
 
 import java.net.InetAddress;
 import java.util.Objects;

@@ -24,10 +24,10 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import pt.ulisboa.depchain.shared.network.model.InboundDatagram;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
+import pt.ulisboa.depchain.shared.network.links.fairloss.InboundDatagram;
 
 class FairLossLinkTest {
   @Test

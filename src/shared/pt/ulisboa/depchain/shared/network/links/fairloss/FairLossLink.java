@@ -9,7 +9,6 @@ import java.net.SocketException;
 import java.util.Arrays;
 import java.util.Objects;
 
-import pt.ulisboa.depchain.shared.network.model.InboundDatagram;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class FairLossLink implements AutoCloseable {
