@@ -2,22 +2,24 @@ package pt.ulisboa.depchain.shared.network.dpch;
 
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class Dpch {
   // DPCH packet payload length is encoded as uint16, so the maximum length is 0xFFFF (65535)
-  public static final int MAX_PAYLOAD_LENGTH = 0xFFFF; // TODO: consider using a smaller max payload length to avoid fragmentation at the IP layer
+  public static final int MAX_PAYLOAD_LENGTH = 0xFFFF;
 
   // DPCH packet structure:
-  private final int connectionId;
+  private final UUID connectionId;
   private final DpchType type;
   private final int sequenceNumber;
   private final byte[] payload;
 
-  public Dpch(int connectionId, DpchType type, int sequenceNumber, byte[] payload) {
+  public Dpch(UUID connectionId, DpchType type, int sequenceNumber, byte[] payload) {
     this(connectionId, type, sequenceNumber, payload, true);
   }
 
-  private Dpch(int connectionId, DpchType type, int sequenceNumber, byte[] payload, boolean copyPayload) {
+  private Dpch(UUID connectionId, DpchType type, int sequenceNumber, byte[] payload, boolean copyPayload) {
+    Objects.requireNonNull(connectionId, "connectionId cannot be null");
     Objects.requireNonNull(type, "type cannot be null");
     Objects.requireNonNull(payload, "payload cannot be null");
     if (payload.length > MAX_PAYLOAD_LENGTH) {
@@ -30,28 +32,28 @@ public final class Dpch {
     this.payload = copyPayload ? Arrays.copyOf(payload, payload.length) : payload;
   }
 
-  public static Dpch data(int connectionId, int sequenceNumber, byte[] payload) {
+  public static Dpch data(UUID connectionId, int sequenceNumber, byte[] payload) {
     return new Dpch(connectionId, DpchType.DATA, sequenceNumber, payload);
   }
 
-  public static Dpch ack(int connectionId, int sequenceNumber, byte[] payload) {
+  public static Dpch ack(UUID connectionId, int sequenceNumber, byte[] payload) {
     return new Dpch(connectionId, DpchType.ACK, sequenceNumber, payload);
   }
 
-  public static Dpch syn(int connectionId, int sequenceNumber, byte[] payload) {
+  public static Dpch syn(UUID connectionId, int sequenceNumber, byte[] payload) {
     return new Dpch(connectionId, DpchType.SYN, sequenceNumber, payload);
   }
 
-  public static Dpch fin(int connectionId, int sequenceNumber, byte[] payload) {
+  public static Dpch fin(UUID connectionId, int sequenceNumber, byte[] payload) {
     return new Dpch(connectionId, DpchType.FIN, sequenceNumber, payload);
   }
 
   // Fast path for decoder: payload already belongs exclusively to this packet instance.
-  static Dpch decoded(int connectionId, DpchType type, int sequenceNumber, byte[] payload) {
+  static Dpch decoded(UUID connectionId, DpchType type, int sequenceNumber, byte[] payload) {
     return new Dpch(connectionId, type, sequenceNumber, payload, false);
   }
 
-  public int connectionId() {
+  public UUID connectionId() {
     return connectionId;
   }
 

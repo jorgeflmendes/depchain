@@ -122,7 +122,6 @@ Project layout:
     |   |   |   |   |-- ReceiverState.java
     |   |   |   |   `-- SenderState.java
     |   |   |   `-- stubborn/
-    |   |   |       |-- Event.java
     |   |   |       |-- ScheduledRetry.java
     |   |   |       |-- StubbornLink.java
     |   |   |       `-- TrackedMessage.java
@@ -169,7 +168,6 @@ What each file does:
 - `src/shared/pt/ulisboa/depchain/shared/network/links/handshaked/HandshakedPerfectLink.java`: Connection lifecycle (`SYN`/`FIN`) on top of `PerfectLink`.
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/TrackedMessage.java`: Tracked message state and identity key used by `StubbornLink`.
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/ScheduledRetry.java`: Retry scheduling item (`endpoint`, `key`, `dueAtMs`) used in the retry heap.
-- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/Event.java`: Sealed event model for the stubborn event loop (`SendTracked`, `CancelTracked`, `Shutdown`).
 - `src/shared/pt/ulisboa/depchain/shared/network/dpch/DpchSerialization.java`: Binary framing/unframing for the universal DPCH wire format (`magic`, `version`, `conn_id`, `type`, `seq_num`, `payload_len`, `payload`).
 - `src/shared/pt/ulisboa/depchain/shared/network/model/EndpointConnectionKey.java`: Shared key for stream identity by remote endpoint + connection ID.
 - `src/shared/pt/ulisboa/depchain/shared/network/model/InboundMessage.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
@@ -194,14 +192,14 @@ Wire format:
 
 ```text
 DPCH Frame
-| magic(4) | version(1) | conn_id(4) | type(1) | seq_num(4) | payload_len(2) | payload(N) |
+| magic(4) | version(1) | conn_id(16) | type(1) | seq_num(4) | payload_len(2) | payload(N) |
 ```
 
 Field details:
 
 - `magic` (`4 bytes`): ASCII signature `DPCH` for protocol identification.
 - `version` (`1 byte`): frame format version.
-- `conn_id` (`4 bytes`): logical session/request flow identifier.
+- `conn_id` (`16 bytes`): logical session/request flow identifier (UUID binary).
 - `type` (`1 byte`): semantic class of message (`0=DATA`, `1=ACK`, `3=SYN`, `4=FIN`).
 - `seq_num` (`4 bytes`): sequence number inside the connection flow.
 - `payload_len` (`2 bytes`, uint16): payload size.

@@ -53,7 +53,7 @@ public final class Main {
       transport.closeConnection(inbound.connectionId(), senderIp, senderPort);
     } catch (Exception exception) {
       String sender = senderIp.getHostAddress() + ":" + senderPort;
-      System.out.printf("Packet exchange error while handling conn=%d seq=%d from %s = %s%n", inbound.connectionId(), inbound.sequenceNumber(), sender, exception.getMessage());
+      System.out.printf("Packet exchange error while handling conn=%s seq=%d from %s = %s%n", inbound.connectionId(), inbound.sequenceNumber(), sender, exception.getMessage());
     }
   }
 }

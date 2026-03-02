@@ -5,6 +5,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -18,13 +19,10 @@ import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class HandshakedPerfectLink implements AutoCloseable {
-  // Just to prevent allocation of new empty arrays on every SYN/FIN send.
+  // Avoid allocating a new empty array on every SYN/FIN send.
   private static final byte[] EMPTY_CONTROL_PAYLOAD = new byte[0];
 
-  // Lower-level perfect link used for actual message sending/receiving.
   private final PerfectLink perfectLink;
-
-  // Configuration for connection state management.
   private final int maxConnectionStates;
   private final long connectionIdleTtlMs;
   private final Map<EndpointConnectionKey, ConnectionState> connectionStates;
@@ -42,41 +40,21 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     this.workerThread = Thread.ofVirtual().name("handshaked-perfect-link").start(this::runReceiveLoop);
   }
 
-  // Build a HandshakedPerfectLink bound to a local address/port.
   public static HandshakedPerfectLink bind(InetAddress bindAddress, int port, PerfectLink.BuildConfig config) throws IOException {
     PerfectLink perfect = PerfectLink.bind(bindAddress, port, config);
     PerfectLink.Config perfectConfig = config.perfect();
     return new HandshakedPerfectLink(perfect, perfectConfig.maxStreamStates(), perfectConfig.streamIdleTtlMs());
   }
 
-  // Build a HandshakedPerfectLink with an ephemeral local socket.
   public static HandshakedPerfectLink unbound(PerfectLink.BuildConfig config) throws IOException {
     PerfectLink perfect = PerfectLink.unbound(config);
     PerfectLink.Config perfectConfig = config.perfect();
     return new HandshakedPerfectLink(perfect, perfectConfig.maxStreamStates(), perfectConfig.streamIdleTtlMs());
   }
 
-  // Open a connection to the specified remote endpoint, performing the SYN handshake (if not already done for this connection).
-  public void openConnection(int connectionId, InetAddress remoteIp, int remotePort) {
-    Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
-    ValidationUtils.requireValidPort(remotePort, "remotePort");
-
-    EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
-    ConnectionState state = connectionStates.computeIfAbsent(key, ignored -> new ConnectionState());
-    long now = System.currentTimeMillis();
-
-    synchronized (state) {
-      state.touch(now);
-      ensureNotClosedForSend(state);
-      ensureSynSent(state, connectionId, remoteIp, remotePort);
-    }
-    waitUntilFullyEstablished(state);
-
-    cleanStaleStatesIfNeeded();
-  }
-
-  // Send a reliable message on an open connection, performing the SYN handshake (if not already done for this connection).
-  public void sendReliable(int connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+  // Send one DATA message after strict SYN/SYN establishment.
+  public void sendReliable(UUID connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+    Objects.requireNonNull(connectionId, "connectionId cannot be null");
     Objects.requireNonNull(payload, "payload cannot be null");
     Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
     ValidationUtils.requireValidPort(remotePort, "remotePort");
@@ -91,7 +69,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
       ensureSynSent(state, connectionId, remoteIp, remotePort);
     }
 
-    // Strict handshake: do not send DATA until both sides are established.
+    // Strict handshake: DATA only after both sides are established.
     waitUntilFullyEstablished(state);
 
     synchronized (state) {
@@ -103,7 +81,8 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     cleanStaleStatesIfNeeded();
   }
 
-  public void closeConnection(int connectionId, InetAddress remoteIp, int remotePort) {
+  public void closeConnection(UUID connectionId, InetAddress remoteIp, int remotePort) {
+    Objects.requireNonNull(connectionId, "connectionId cannot be null");
     Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
     ValidationUtils.requireValidPort(remotePort, "remotePort");
 
@@ -126,12 +105,10 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     cleanStaleStatesIfNeeded();
   }
 
-  // Wait for the next DATA message from a fully established connection.
   public InboundMessage receive() throws InterruptedException {
     return deliveryQueue.take();
   }
 
-  // Wait for the next DATA message from a fully established connection.
   public InboundMessage receive(long timeoutMs) throws InterruptedException {
     long sanitizedTimeoutMs = ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs");
     return deliveryQueue.poll(sanitizedTimeoutMs, TimeUnit.MILLISECONDS);
@@ -166,7 +143,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
       return null;
     }
 
-    int connectionId = inbound.packet().connectionId();
+    UUID connectionId = inbound.packet().connectionId();
     InetAddress remoteIp = inbound.senderIp();
     int remotePort = inbound.senderPort();
     EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
@@ -179,7 +156,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
 
       if (type == DpchType.SYN) {
         state.markRemoteEstablishedIfNotFinished();
-        // Passive side of the handshake: reply with SYN once.
+        // Passive handshake side: reply with SYN once.
         if (state.shouldSendSyn() && !state.isLocalFinished()) {
           perfectLink.sendSyn(connectionId, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
           state.markLocalEstablished();
@@ -194,10 +171,10 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     }
 
     cleanStaleStatesIfNeeded();
-    return deliverData ? inbound : null; // DATA before full handshake or after FIN is ignored by design.
+    return deliverData ? inbound : null;
   }
 
-  private EndpointConnectionKey connectionKey(int connectionId, InetAddress remoteIp, int remotePort) {
+  private EndpointConnectionKey connectionKey(UUID connectionId, InetAddress remoteIp, int remotePort) {
     return new EndpointConnectionKey(new InetSocketAddress(remoteIp, remotePort), connectionId);
   }
 
@@ -207,8 +184,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     }
   }
 
-  // Ensure that a SYN message is sent for this connection if it hasn't been sent already, to establish the connection before sending any reliable messages.
-  private void ensureSynSent(ConnectionState state, int connectionId, InetAddress remoteIp, int remotePort) {
+  private void ensureSynSent(ConnectionState state, UUID connectionId, InetAddress remoteIp, int remotePort) {
     if (state.shouldSendSyn()) {
       perfectLink.sendSyn(connectionId, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
       state.markLocalEstablished();
@@ -239,7 +215,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     }
   }
 
-  // Clean up stale connection states that have been idle for too long or already finished, if the total number of tracked states exceeds the configured maximum.
+  // Keep memory bounded without dropping active states arbitrarily.
   private void cleanStaleStatesIfNeeded() {
     if (connectionStates.size() <= maxConnectionStates) {
       return;
@@ -252,16 +228,6 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     }
 
     connectionStates.entrySet().removeIf(entry -> entry.getValue().isFinished());
-    if (connectionStates.size() <= maxConnectionStates) {
-      return;
-    }
-
-    for (EndpointConnectionKey key : connectionStates.keySet()) {
-      if (connectionStates.size() <= maxConnectionStates) {
-        break;
-      }
-      connectionStates.remove(key);
-    }
   }
 
   @Override

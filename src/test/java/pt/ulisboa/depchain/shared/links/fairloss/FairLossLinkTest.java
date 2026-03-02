@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -25,7 +26,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 
 class FairLossLinkTest {
@@ -37,7 +37,7 @@ class FairLossLinkTest {
 
     try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
          FairLossLink clientTransport = FairLossLink.unbound(4096)) {
-      Dpch outbound = Dpch.data(101, 7, "hello".getBytes(StandardCharsets.UTF_8));
+      Dpch outbound = Dpch.data(UUID.randomUUID(), 7, "hello".getBytes(StandardCharsets.UTF_8));
       clientTransport.send(outbound, loopback, port);
 
       InboundMessage inbound = serverTransport.receive();
@@ -79,7 +79,7 @@ class FairLossLinkTest {
     InetAddress loopback = InetAddress.getLoopbackAddress();
 
     try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
-      Dpch oversized = Dpch.data(1, 1, new byte[8_192]);
+      Dpch oversized = Dpch.data(UUID.randomUUID(), 1, new byte[8_192]);
       IOException error =
           assertThrows(
               IOException.class,
@@ -130,7 +130,7 @@ class FairLossLinkTest {
 
       for (int i = 0; i < clientCount; i++) {
         Dpch outbound =
-            Dpch.data(1_000 + i, i, ("client-" + i).getBytes(StandardCharsets.UTF_8));
+            Dpch.data(UUID.randomUUID(), i, ("client-" + i).getBytes(StandardCharsets.UTF_8));
         outboundPackets.add(outbound);
         tasks.add(
             () -> {
@@ -139,7 +139,7 @@ class FairLossLinkTest {
                 while (true) {
                   InboundMessage inbound = clientTransport.receive();
                   Dpch candidate = inbound.packet();
-                  boolean sameConnectionId = candidate.connectionId() == outbound.connectionId();
+                  boolean sameConnectionId = candidate.connectionId().equals(outbound.connectionId());
                   boolean sameSequence = candidate.sequenceNumber() == outbound.sequenceNumber();
                   if (sameConnectionId && sameSequence) {
                     return candidate;

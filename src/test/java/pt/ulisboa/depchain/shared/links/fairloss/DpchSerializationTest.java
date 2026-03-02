@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
@@ -16,7 +17,7 @@ class DpchSerializationTest {
   @Test
   void packetRoundTripPreservesFields() throws Exception {
     byte[] payload = "append-value".getBytes(StandardCharsets.UTF_8);
-    Dpch packet = Dpch.data(123, 456, payload);
+    Dpch packet = Dpch.data(UUID.randomUUID(), 456, payload);
 
     byte[] bytes = DpchSerialization.toBytes(packet);
     Object decoded = DpchSerialization.fromBytes(bytes, 0, bytes.length);
@@ -32,10 +33,10 @@ class DpchSerializationTest {
   void packetRoundTripSupportsAllDefinedTypes() throws Exception {
     Dpch[] packets =
         new Dpch[] {
-          Dpch.data(10, 1, "d".getBytes(StandardCharsets.UTF_8)),
-          Dpch.ack(10, 2, "a".getBytes(StandardCharsets.UTF_8)),
-          Dpch.syn(10, 3, "s".getBytes(StandardCharsets.UTF_8)),
-          Dpch.fin(10, 4, "f".getBytes(StandardCharsets.UTF_8))
+          Dpch.data(UUID.randomUUID(), 1, "d".getBytes(StandardCharsets.UTF_8)),
+          Dpch.ack(UUID.randomUUID(), 2, "a".getBytes(StandardCharsets.UTF_8)),
+          Dpch.syn(UUID.randomUUID(), 3, "s".getBytes(StandardCharsets.UTF_8)),
+          Dpch.fin(UUID.randomUUID(), 4, "f".getBytes(StandardCharsets.UTF_8))
         };
 
     for (Dpch packet : packets) {
@@ -51,7 +52,7 @@ class DpchSerializationTest {
 
   @Test
   void fromBytesSupportsOffsetAndLengthSlices() throws Exception {
-    Dpch packet = Dpch.data(10, 99, "slice".getBytes(StandardCharsets.UTF_8));
+    Dpch packet = Dpch.data(UUID.randomUUID(), 99, "slice".getBytes(StandardCharsets.UTF_8));
     byte[] encoded = DpchSerialization.toBytes(packet);
     byte[] wrapped = new byte[encoded.length + 16];
     Arrays.fill(wrapped, (byte) 0x33);
@@ -65,7 +66,7 @@ class DpchSerializationTest {
 
   @Test
   void fromBytesRejectsWrongMagicVersionAndType() throws Exception {
-    Dpch base = Dpch.data(1, 2, "x".getBytes(StandardCharsets.UTF_8));
+    Dpch base = Dpch.data(UUID.randomUUID(), 2, "x".getBytes(StandardCharsets.UTF_8));
     byte[] bytes = DpchSerialization.toBytes(base);
 
     byte[] wrongMagic = Arrays.copyOf(bytes, bytes.length);
@@ -75,13 +76,13 @@ class DpchSerializationTest {
     assertTrue(magicError.getMessage().contains("Invalid message magic"));
 
     byte[] wrongVersion = Arrays.copyOf(bytes, bytes.length);
-    wrongVersion[4] = 2;
+    wrongVersion[4] = 3;
     IOException versionError =
         assertThrows(IOException.class, () -> DpchSerialization.fromBytes(wrongVersion, 0, wrongVersion.length));
     assertTrue(versionError.getMessage().contains("Unsupported message version"));
 
     byte[] wrongType = Arrays.copyOf(bytes, bytes.length);
-    wrongType[9] = 99;
+    wrongType[21] = 99;
     IOException typeError =
         assertThrows(IOException.class, () -> DpchSerialization.fromBytes(wrongType, 0, wrongType.length));
     assertTrue(typeError.getMessage().contains("Unsupported DPCH packet type"));
@@ -96,11 +97,11 @@ class DpchSerializationTest {
     assertThrows(IllegalArgumentException.class, () -> DpchSerialization.fromBytes(bytes, 4, 0));
     assertThrows(IllegalArgumentException.class, () -> DpchSerialization.fromBytes(bytes, 1, 5));
 
-    Dpch packet = Dpch.data(1, 1, "ok".getBytes(StandardCharsets.UTF_8));
+    Dpch packet = Dpch.data(UUID.randomUUID(), 1, "ok".getBytes(StandardCharsets.UTF_8));
     byte[] encoded = DpchSerialization.toBytes(packet);
     byte[] wrongLength = Arrays.copyOf(encoded, encoded.length);
-    wrongLength[14] = 0;
-    wrongLength[15] = 8;
+    wrongLength[26] = 0;
+    wrongLength[27] = 8;
     IOException lengthError =
         assertThrows(IOException.class, () -> DpchSerialization.fromBytes(wrongLength, 0, wrongLength.length));
     assertTrue(lengthError.getMessage().contains("Invalid payload length"));
@@ -108,7 +109,7 @@ class DpchSerializationTest {
 
   @Test
   void fromBytesRejectsTrailingBytes() throws Exception {
-    Dpch packet = Dpch.data(4, 5, "x".getBytes(StandardCharsets.UTF_8));
+    Dpch packet = Dpch.data(UUID.randomUUID(), 5, "x".getBytes(StandardCharsets.UTF_8));
     byte[] encoded = DpchSerialization.toBytes(packet);
     byte[] withTrailing = Arrays.copyOf(encoded, encoded.length + 2);
     withTrailing[encoded.length] = 11;

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
@@ -13,7 +14,7 @@ import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 class InboundMessageTest {
   @Test
   void constructorPreservesFields() throws Exception {
-    Dpch packet = Dpch.data(1, 2, "payload".getBytes(StandardCharsets.UTF_8));
+    Dpch packet = Dpch.data(UUID.randomUUID(), 2, "payload".getBytes(StandardCharsets.UTF_8));
     InetAddress senderIp = InetAddress.getLoopbackAddress();
     InboundMessage inbound = new InboundMessage(packet, senderIp, 12000);
 
@@ -24,7 +25,7 @@ class InboundMessageTest {
 
   @Test
   void constructorRejectsInvalidArguments() {
-    Dpch packet = Dpch.data(1, 2, "payload".getBytes(StandardCharsets.UTF_8));
+    Dpch packet = Dpch.data(UUID.randomUUID(), 2, "payload".getBytes(StandardCharsets.UTF_8));
     InetAddress senderIp = InetAddress.getLoopbackAddress();
 
     assertThrows(NullPointerException.class, () -> new InboundMessage(null, senderIp, 12000));

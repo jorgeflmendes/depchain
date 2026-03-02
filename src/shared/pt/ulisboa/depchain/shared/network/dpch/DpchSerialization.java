@@ -6,6 +6,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Objects;
+import java.util.UUID;
 
 import pt.ulisboa.depchain.shared.utils.BinarySerialization;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
@@ -43,7 +44,7 @@ public final class DpchSerialization {
       }
 
       // Remaining header fields.
-      int connectionId = BinarySerialization.readInt(dataInput);
+      UUID connectionId = BinarySerialization.readUuid(dataInput);
       byte typeCode = BinarySerialization.readByte(dataInput);
       int sequenceNumber = BinarySerialization.readInt(dataInput);
       
@@ -77,7 +78,7 @@ public final class DpchSerialization {
 
     BinarySerialization.writeInt(output, MAGIC_NUMBER);
     BinarySerialization.writeByte(output, FORMAT_VERSION);
-    BinarySerialization.writeInt(output, packet.connectionId());
+    BinarySerialization.writeUuid(output, packet.connectionId());
     BinarySerialization.writeByte(output, packet.type().code());
     BinarySerialization.writeInt(output, packet.sequenceNumber());
     BinarySerialization.writeShort(output, (short) payload.length);

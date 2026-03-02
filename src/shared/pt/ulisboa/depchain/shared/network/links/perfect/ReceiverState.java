@@ -19,10 +19,6 @@ final class ReceiverState {
   // To hold buffered messages in order of their sequence numbers
   private final PriorityQueue<InboundMessage> buffer = new PriorityQueue<>((a, b) -> Integer.compare(a.packet().sequenceNumber(), b.packet().sequenceNumber()));
 
-  ReceiverState() {
-    this(0);
-  }
-
   ReceiverState(int nextExpectedSeq) {
     this.nextExpectedSeq = Math.max(0, nextExpectedSeq);
   }

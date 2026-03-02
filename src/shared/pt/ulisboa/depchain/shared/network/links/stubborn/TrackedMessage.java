@@ -1,6 +1,7 @@
 package pt.ulisboa.depchain.shared.network.links.stubborn;
 
 import java.util.Objects;
+import java.util.UUID;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
@@ -8,8 +9,9 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class TrackedMessage {
   // Public identity handle used by callers to manage tracked sends.
-  public record Key(int connectionId, int sequenceNumber, DpchType messageType) {
+  public record Key(UUID connectionId, int sequenceNumber, DpchType messageType) {
     public Key {
+      Objects.requireNonNull(connectionId, "connectionId cannot be null");
       Objects.requireNonNull(messageType, "messageType cannot be null");
     }
 

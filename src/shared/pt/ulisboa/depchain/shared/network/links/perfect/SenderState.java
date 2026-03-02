@@ -3,8 +3,10 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
+import java.util.UUID;
 
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.links.stubborn.TrackedMessage;
@@ -31,17 +33,16 @@ final class SenderState {
   }
 
   // Translate one ACK into tracked-message keys that should be canceled in StubbornLink.
-  synchronized List<TrackedMessage.Key> acknowledge(int connectionId, int sequenceNumber, DpchType acknowledgedType, long now) {
+  synchronized List<TrackedMessage.Key> acknowledge(UUID connectionId, int sequenceNumber, DpchType acknowledgedType, long now) {
     touch(now);
     List<TrackedMessage.Key> cancellations = new ArrayList<>();
 
     if (acknowledgedType == DpchType.FIN) {
       // FIN ACK is treated as cumulative close acknowledgment for everything up to FIN sequence.
-      Iterator<Integer> iterator = inFlightBySeq.headMap(sequenceNumber, true).navigableKeySet().iterator();
+      Iterator<Map.Entry<Integer, DpchType>> iterator = inFlightBySeq.headMap(sequenceNumber, true).entrySet().iterator();
       while (iterator.hasNext()) {
-        int seq = iterator.next();
-        DpchType type = inFlightBySeq.get(seq);
-        cancellations.add(new TrackedMessage.Key(connectionId, seq, type));
+        Map.Entry<Integer, DpchType> entry = iterator.next();
+        cancellations.add(new TrackedMessage.Key(connectionId, entry.getKey(), entry.getValue()));
         iterator.remove();
       }
       return cancellations;
