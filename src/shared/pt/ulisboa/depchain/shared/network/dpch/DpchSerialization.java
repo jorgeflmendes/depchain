@@ -64,7 +64,7 @@ public final class DpchSerialization {
 
       try {
         DpchType type = DpchType.fromCode(typeCode);
-        return new Dpch(connectionId, type, sequenceNumber, payload);
+        return Dpch.decoded(connectionId, type, sequenceNumber, payload);
       } catch (IllegalArgumentException invalidPacket) {
         throw new IOException(invalidPacket.getMessage(), invalidPacket);
       }
@@ -73,7 +73,7 @@ public final class DpchSerialization {
 
   // Write full DPCH packet header and payload.
   private static void writeHeader(DataOutputStream output, Dpch packet) throws IOException {
-    byte[] payload = packet.payload();
+    byte[] payload = packet.payloadInternal();
 
     BinarySerialization.writeInt(output, MAGIC_NUMBER);
     BinarySerialization.writeByte(output, FORMAT_VERSION);

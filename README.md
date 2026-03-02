@@ -51,7 +51,7 @@ Networking layering roadmap:
           /------\
          /   APL  \             Authenticated Perfect Links (to implement)
         /----------\
-       /     PL     \           Perfect Links semantics (to implement)
+       /     PL     \           Perfect Links semantics (already implemented)
       /--------------\
      /       SL       \         Stubborn Links (already implemented)
     /------------------\
@@ -63,9 +63,9 @@ Networking layering roadmap:
 
 Interpretation:
 
-- Current UDP stack in code: `FairLossLink` + `StubbornLink` in `src/shared/.../network/links/`.
-- `StubbornLink` provides tracked retries with exponential backoff + jitter and retry-heap compaction.
-- Next layers to implement are authenticated and perfect-link semantics on top of this stack.
+- Current UDP stack in code: `FairLossLink` + `StubbornLink` + `PerfectLink` + `HandshakedPerfectLink` in `src/shared/.../network/links/`.
+- `StubbornLink` provides tracked retries with exponential backoff + jitter and retry-heap compaction; `PerfectLink` adds in-order/no-dup delivery with ACK-driven cancel; `HandshakedPerfectLink` adds connection lifecycle with `SYN/FIN`.
+- Authentication on top of this stack is still pending.
 
 ## 5. Technical Stack
 
@@ -82,7 +82,7 @@ Current status:
 - membership, client, timeout, stubborn-link, and network settings are centralized in `config/config.yaml`;
 - key directory structure exists in `config/keys/` (key files are not currently versioned);
 - universal `Dpch` envelope + serialization is implemented;
-- `FairLossLink` and `StubbornLink` are implemented and used by client/server mains;
+- `FairLossLink`, `StubbornLink`, `PerfectLink`, and `HandshakedPerfectLink` are implemented and used by client/server mains;
 - strict configuration parsing/validation and automated tests are in place;
 - Basic HotStuff consensus and append-only blockchain state machine are still pending.
 
@@ -106,6 +106,7 @@ Project layout:
     |-- server/pt/ulisboa/depchain/server/Main.java
     |-- shared/pt/ulisboa/depchain/shared/
     |   |-- config/ConfigParser.java
+    |   |-- config/LinkConfigFactory.java
     |   |-- network/
     |   |   |-- dpch/
     |   |   |   |-- Dpch.java
@@ -113,6 +114,13 @@ Project layout:
     |   |   |   `-- DpchType.java
     |   |   |-- links/
     |   |   |   |-- fairloss/FairLossLink.java
+    |   |   |   |-- handshaked/
+    |   |   |   |   |-- ConnectionState.java
+    |   |   |   |   `-- HandshakedPerfectLink.java
+    |   |   |   |-- perfect/
+    |   |   |   |   |-- PerfectLink.java
+    |   |   |   |   |-- ReceiverState.java
+    |   |   |   |   `-- SenderState.java
     |   |   |   `-- stubborn/
     |   |   |       |-- Event.java
     |   |   |       |-- ScheduledRetry.java
@@ -149,16 +157,19 @@ What each file does:
 - `config/keys/`: Key material directory structure (files are expected at runtime, but not versioned here).
 - `scripts/udp_pingpong_trace.py`: Runs client/server through a UDP proxy and generates a packet-level SVG trace with automatic per-connection failure scenarios.
 
-- `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, sends a tracked request through `StubbornLink`, waits for matching response, then cancels retries.
-- `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Binds `StubbornLink` on `clientPort`, receives requests in a loop, and dispatches handlers on virtual threads.
+- `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, sends a request through `HandshakedPerfectLink.sendReliable(...)`, waits for matching response, and closes the logical connection with `FIN`.
+- `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Binds `HandshakedPerfectLink` on `clientPort`, receives requests in a loop, and dispatches handlers on virtual threads.
 
 - `src/shared/pt/ulisboa/depchain/shared/config/ConfigParser.java`: Strict parser/validator for `config/config.yaml` with consistency checks (IDs, ports, thresholds, stubborn/perfect limits, packet size). Supports YAML comments with `#`.
+- `src/shared/pt/ulisboa/depchain/shared/config/LinkConfigFactory.java`: Maps parsed app configuration to link build configuration objects.
 
 - `src/shared/pt/ulisboa/depchain/shared/network/links/fairloss/FairLossLink.java`: Low-level UDP fair-loss transport over `DatagramSocket` with thread-safe send/receive paths.
-- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/StubbornLink.java`: Retry-capable link with tracked send/cancel/force-resend, exponential backoff + jitter, and retry-heap compaction.
+- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/StubbornLink.java`: Retry-capable link with tracked send/cancel, exponential backoff + jitter, and retry-heap compaction.
+- `src/shared/pt/ulisboa/depchain/shared/network/links/perfect/PerfectLink.java`: Perfect-link semantics on top of stubborn link (in-order delivery, deduplication, ACK-driven cancellation).
+- `src/shared/pt/ulisboa/depchain/shared/network/links/handshaked/HandshakedPerfectLink.java`: Connection lifecycle (`SYN`/`FIN`) on top of `PerfectLink`.
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/TrackedMessage.java`: Tracked message state and identity key used by `StubbornLink`.
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/ScheduledRetry.java`: Retry scheduling item (`endpoint`, `key`, `dueAtMs`) used in the retry heap.
-- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/Event.java`: Sealed event model for the stubborn event loop (`SendTracked`, `CancelTracked`, `ForceResend`, `Shutdown`).
+- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/Event.java`: Sealed event model for the stubborn event loop (`SendTracked`, `CancelTracked`, `Shutdown`).
 - `src/shared/pt/ulisboa/depchain/shared/network/dpch/DpchSerialization.java`: Binary framing/unframing for the universal DPCH wire format (`magic`, `version`, `conn_id`, `type`, `seq_num`, `payload_len`, `payload`).
 - `src/shared/pt/ulisboa/depchain/shared/network/model/EndpointConnectionKey.java`: Shared key for stream identity by remote endpoint + connection ID.
 - `src/shared/pt/ulisboa/depchain/shared/network/model/InboundMessage.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
@@ -175,7 +186,7 @@ What each file does:
 
 All network communication uses the same envelope: `Dpch`.
 
-- `request`, `response`, `ack`, `nack`, `syn`, `fin`, and other future control messages share the same binary structure.
+- `request`, `response`, `ack`, `syn`, `fin`, and other future control messages share the same binary structure.
 - `FairLossLink` only sends/receives this envelope; higher layers decide payload meaning.
 - Supported types are centralized in `DpchType`.
 
@@ -191,7 +202,7 @@ Field details:
 - `magic` (`4 bytes`): ASCII signature `DPCH` for protocol identification.
 - `version` (`1 byte`): frame format version.
 - `conn_id` (`4 bytes`): logical session/request flow identifier.
-- `type` (`1 byte`): semantic class of message (`0=DATA`, `1=ACK`, `2=NACK`, `3=SYN`, `4=FIN`).
+- `type` (`1 byte`): semantic class of message (`0=DATA`, `1=ACK`, `3=SYN`, `4=FIN`).
 - `seq_num` (`4 bytes`): sequence number inside the connection flow.
 - `payload_len` (`2 bytes`, uint16): payload size.
 - `payload` (`N bytes`): application/protocol-specific data.
@@ -201,9 +212,9 @@ Practical use today:
 - Client request: currently encoded as `Dpch.data(...)`.
 - Server response: currently encoded as `Dpch.data(...)`.
 - Client/server payload content is currently plain UTF-8 text (no nested status envelope).
-- Current request path uses `StubbornLink.sendTracked(...)` on client and `cancelTracked(...)` when the response is received.
-- `FairLossLink` remains a best-effort UDP primitive (no retries/deduplication) and is wrapped by `StubbornLink`.
-- ACK/NACK/SYN/FIN: already supported at the envelope level via `Dpch.ack(...)`, `Dpch.nack(...)`, `Dpch.syn(...)`, `Dpch.fin(...)` (not used yet in the current client/server flow; reserved for future perfect-link logic).
+- Current request path uses `HandshakedPerfectLink.sendReliable(...)` on client/server, with `SYN` on open and `FIN` on close.
+- `FairLossLink` remains a best-effort UDP primitive and is wrapped by `StubbornLink`, `PerfectLink`, and `HandshakedPerfectLink`.
+- ACK/SYN/FIN are supported by `Dpch`; current flow uses `ACK` (from perfect-link logic) plus `SYN/FIN` (from handshaked logic).
 
 ## 8. Prerequisites
 
@@ -263,19 +274,6 @@ Before execution, ensure:
 - required ports are free;
 - all replicas use the same membership/network/stubborn/perfect configuration.
 
-## 11. Stubborn Ping-Pong Diagram
-
-The current stubborn-link ping-pong flow is documented here:
-
-![Stubborn ping-pong diagram](artifacts/debug-diagrams/stubborn.svg)
-
-What this diagram reflects as already implemented:
-
-- client request over `StubbornLink.sendTracked(...)`;
-- server reply over shared UDP socket (`sendOnce(...)`);
-- client-side retry cancellation via `cancelTracked(...)` on matching response;
-- retry scheduling with exponential backoff + jitter;
-- retry-heap compaction strategy for stale scheduled entries.
 
 ## 12. Recommended Implementation Roadmap
 

@@ -5,15 +5,17 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.PriorityQueue;
-import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
@@ -22,6 +24,24 @@ import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class StubbornLink implements AutoCloseable {
+  // Retry and tracking configuration.
+  public record Config(long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize, int maxRetryAttempts, long maxTrackedLifetimeMs) {
+    public Config {
+      baseDelayMs = ValidationUtils.requirePositiveLong(baseDelayMs, "baseDelayMs");
+      maxDelayMs = ValidationUtils.requirePositiveLong(maxDelayMs, "maxDelayMs");
+      if (maxDelayMs < baseDelayMs) {
+        throw new IllegalArgumentException("maxDelayMs must be >= baseDelayMs");
+      }
+      if (jitterRatio < 0.0d || jitterRatio >= 1.0d) {
+        throw new IllegalArgumentException("jitterRatio must be in [0.0, 1.0)");
+      }
+      maxPending = ValidationUtils.requirePositiveInt(maxPending, "maxPending");
+      heapCompactMinSize = ValidationUtils.requirePositiveInt(heapCompactMinSize, "heapCompactMinSize");
+      maxRetryAttempts = ValidationUtils.requirePositiveInt(maxRetryAttempts, "maxRetryAttempts");
+      maxTrackedLifetimeMs = ValidationUtils.requirePositiveLong(maxTrackedLifetimeMs, "maxTrackedLifetimeMs");
+    }
+  }
+
   // Transport dependency.
   private final FairLossLink fairLoss;
 
@@ -33,10 +53,11 @@ public final class StubbornLink implements AutoCloseable {
   private final int minRetryHeapSizeForCompaction;
   private final int maxRetryAttempts;
   private final long maxTrackedLifetimeMs;
+  private final int maxPendingCancels;
 
   // Retry state (owned by event loop thread):
-  private final Map<EndpointTrackedKey, TrackedMessage> activeTrackedByEndpointKey; // Active tracked messages indexed by endpoint+key.
-  private final Set<EndpointTrackedKey> cancelTombstones; // Tombstones for cancel requests that arrived before the corresponding tracked send was registered.
+  private final Map<EndpointTrackedKey, TrackedMessage> activeTrackedByEndpointKey; // active tracked messages indexed by endpoint+key.
+  private final Map<EndpointTrackedKey, Long> pendingCancels; // arrived before the corresponding tracked send was registered.
   private final PriorityQueue<ScheduledRetry> retryScheduleHeap; // May contain stale entries
 
   // Event-loop coordination.
@@ -48,26 +69,21 @@ public final class StubbornLink implements AutoCloseable {
   private final Object lock;
 
   // Build one stubborn link on top of fair-loss transport.
-  private StubbornLink(FairLossLink fairLoss, long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int minRetryHeapSizeForCompaction, int maxRetryAttempts, long maxTrackedLifetimeMs) {
+  private StubbornLink(FairLossLink fairLoss, Config config) {
     this.fairLoss = Objects.requireNonNull(fairLoss, "fairLoss cannot be null");
-    this.baseDelayMs = ValidationUtils.requirePositiveLong(baseDelayMs, "baseDelayMs");
-    this.maxDelayMs = ValidationUtils.requirePositiveLong(maxDelayMs, "maxDelayMs");
-    if (this.maxDelayMs < this.baseDelayMs) {
-      throw new IllegalArgumentException("maxDelayMs must be >= baseDelayMs");
-    }
-    if (jitterRatio < 0.0d || jitterRatio >= 1.0d) {
-      throw new IllegalArgumentException("jitterRatio must be in [0.0, 1.0)");
-    }
-    this.jitterRatio = jitterRatio;
-    
-    this.maxPending = ValidationUtils.requirePositiveInt(maxPending, "maxPending");
-    this.minRetryHeapSizeForCompaction = ValidationUtils.requirePositiveInt(minRetryHeapSizeForCompaction, "heapCompactMinSize");
-    this.maxRetryAttempts = ValidationUtils.requirePositiveInt(maxRetryAttempts, "maxRetryAttempts");
-    this.maxTrackedLifetimeMs = ValidationUtils.requirePositiveLong(maxTrackedLifetimeMs, "maxTrackedLifetimeMs");
+    Objects.requireNonNull(config, "config cannot be null");
+    this.baseDelayMs = config.baseDelayMs();
+    this.maxDelayMs = config.maxDelayMs();
+    this.jitterRatio = config.jitterRatio();
+    this.maxPending = config.maxPending();
+    this.minRetryHeapSizeForCompaction = config.heapCompactMinSize();
+    this.maxRetryAttempts = config.maxRetryAttempts();
+    this.maxTrackedLifetimeMs = config.maxTrackedLifetimeMs();
+    this.maxPendingCancels = Math.max(1024, this.maxPending * 2);
     
     this.lock = new Object();
     this.activeTrackedByEndpointKey = new HashMap<>();
-    this.cancelTombstones = new HashSet<>();
+    this.pendingCancels = new HashMap<>();
     this.retryScheduleHeap = new PriorityQueue<>(Comparator.comparingLong(ScheduledRetry::dueAtMs));
     this.eventQueue = new LinkedBlockingQueue<>();
     this.running = new AtomicBoolean(true);
@@ -76,54 +92,50 @@ public final class StubbornLink implements AutoCloseable {
   }
 
   // Bind stubborn link to a local address/port.
-  public static StubbornLink bind(InetAddress bindIp, int port, int maxPacketSize, long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int minRetryHeapSizeForCompaction, int maxRetryAttempts, long maxTrackedLifetimeMs) throws IOException {
-    FairLossLink fairLoss = FairLossLink.bind(bindIp, port, maxPacketSize);
-    return new StubbornLink(fairLoss, baseDelayMs, maxDelayMs, jitterRatio, maxPending, minRetryHeapSizeForCompaction, maxRetryAttempts, maxTrackedLifetimeMs);
+  public static StubbornLink bind(InetAddress bindAddress, int port, int maxPacketSize, Config config) throws IOException {
+    FairLossLink fairLoss = FairLossLink.bind(bindAddress, port, maxPacketSize);
+    return new StubbornLink(fairLoss, config);
   }
 
   // Create stubborn link with ephemeral local socket (client mode).
-  public static StubbornLink unbound(int maxPacketSize, long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int minRetryHeapSizeForCompaction, int maxRetryAttempts, long maxTrackedLifetimeMs) throws IOException {
+  public static StubbornLink unbound(int maxPacketSize, Config config) throws IOException {
     FairLossLink fairLoss = FairLossLink.unbound(maxPacketSize);
-    return new StubbornLink(fairLoss, baseDelayMs, maxDelayMs, jitterRatio, maxPending, minRetryHeapSizeForCompaction, maxRetryAttempts, maxTrackedLifetimeMs);
+    return new StubbornLink(fairLoss, config);
   }
 
   // Send once through fair-loss without tracking.
-  public void sendOnce(Dpch packet, InetAddress targetIp, int targetPort) throws IOException {
+  public void sendOnce(Dpch packet, InetAddress remoteIp, int remotePort) throws IOException {
     ensureOpen();
     Objects.requireNonNull(packet, "packet cannot be null");
-    Objects.requireNonNull(targetIp, "targetIp cannot be null");
-    ValidationUtils.requireValidPort(targetPort, "targetPort");
-    fairLoss.send(packet, targetIp, targetPort);
+    Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
+    ValidationUtils.requireValidPort(remotePort, "remotePort");
+    fairLoss.send(packet, remoteIp, remotePort);
   }
 
   // Send now and start retry tracking for this message key.
-  public TrackedMessage.Key sendTracked(Dpch packet, InetAddress targetIp, int targetPort) {
+  public TrackedMessage.Key sendTracked(Dpch packet, InetAddress remoteIp, int remotePort) {
     Objects.requireNonNull(packet, "packet cannot be null");
-    Objects.requireNonNull(targetIp, "targetIp cannot be null");
-    ValidationUtils.requireValidPort(targetPort, "targetPort");
+    Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
+    ValidationUtils.requireValidPort(remotePort, "remotePort");
 
-    InetSocketAddress endpoint = new InetSocketAddress(targetIp, targetPort);
+    InetSocketAddress endpoint = new InetSocketAddress(remoteIp, remotePort);
     TrackedMessage.Key key = TrackedMessage.Key.fromPacket(packet);
-    enqueueEvent(new SendTrackedEvent(endpoint, key, packet));
+    CompletableFuture<Boolean> accepted = new CompletableFuture<>();
+
+    enqueueEvent(new SendTrackedEvent(endpoint, key, packet, accepted));
+    if (!awaitTrackedRegistration(accepted)) {
+      throw new IllegalStateException("StubbornLink rejected tracked send because maxPending was reached");
+    }
     return key;
   }
 
-  // Force immediate resend and re-schedule of a tracked key.
-  public void forceResend(TrackedMessage.Key key, InetAddress targetIp, int targetPort) {
-    Objects.requireNonNull(key, "key cannot be null");
-    Objects.requireNonNull(targetIp, "targetIp cannot be null");
-    ValidationUtils.requireValidPort(targetPort, "targetPort");
-    
-    enqueueEvent(new ForceResendEvent(new InetSocketAddress(targetIp, targetPort), key));
-  }
-
   // Stop retries for a tracked key at one destination.
-  public void cancelTracked(TrackedMessage.Key key, InetAddress targetIp, int targetPort) {
+  public void cancelTracked(TrackedMessage.Key key, InetAddress remoteIp, int remotePort) {
     Objects.requireNonNull(key, "key cannot be null");
-    Objects.requireNonNull(targetIp, "targetIp cannot be null");
-    ValidationUtils.requireValidPort(targetPort, "targetPort");
+    Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
+    ValidationUtils.requireValidPort(remotePort, "remotePort");
 
-    enqueueEvent(new CancelTrackedEvent(new InetSocketAddress(targetIp, targetPort), key));
+    enqueueEvent(new CancelTrackedEvent(new InetSocketAddress(remoteIp, remotePort), key));
   }
 
   // Receive one inbound packet from fair-loss.
@@ -139,6 +151,9 @@ public final class StubbornLink implements AutoCloseable {
         try {
           long now = System.currentTimeMillis();
           processDueRetries(now);
+          if (!pendingCancels.isEmpty()) {
+            prunePendingCancels(now);
+          }
 
           // Wait for next control event until the nearest retry deadline.
           long timeoutMs = millisUntilNextRetry(now);
@@ -152,11 +167,14 @@ public final class StubbornLink implements AutoCloseable {
           }
 
           if (event instanceof SendTrackedEvent sendTracked) {
-            handleSendTracked(sendTracked);
+            boolean accepted = false;
+            try {
+              accepted = handleSendTracked(sendTracked);
+            } finally {
+              sendTracked.accepted().complete(accepted);
+            }
           } else if (event instanceof CancelTrackedEvent cancelTracked) {
             handleCancelTracked(cancelTracked);
-          } else if (event instanceof ForceResendEvent forceResend) {
-            handleForceResend(forceResend);
           }
         } catch (Exception exception) {
           System.out.printf("Stubborn event loop error = %s%n", exception.getMessage());
@@ -164,7 +182,7 @@ public final class StubbornLink implements AutoCloseable {
       }
     } finally {
       activeTrackedByEndpointKey.clear();
-      cancelTombstones.clear();
+      pendingCancels.clear();
       retryScheduleHeap.clear();
     }
   }
@@ -187,54 +205,40 @@ public final class StubbornLink implements AutoCloseable {
   }
 
   // Register/update tracked message state and schedule first retry.
-  private void handleSendTracked(SendTrackedEvent event) throws IOException {
+  private boolean handleSendTracked(SendTrackedEvent event) {
     long now = System.currentTimeMillis();
-    sendIgnoringErrors(event.packet(), event.endpoint());
     EndpointTrackedKey endpointTrackedKey = new EndpointTrackedKey(event.endpoint(), event.key());
-    if (cancelTombstones.remove(endpointTrackedKey)) {
-      return;
+    Long cancelAtMs = pendingCancels.remove(endpointTrackedKey);
+    if (cancelAtMs != null && (now - cancelAtMs) <= maxTrackedLifetimeMs) {
+      return true;
     }
 
     TrackedMessage previous = activeTrackedByEndpointKey.get(endpointTrackedKey);
     if (previous == null && activeTrackedByEndpointKey.size() >= maxPending) {
-      return; // Drop, limit exceeded.
+      return false; // Reject, limit exceeded.
     }
 
-    // Start tracking with initial retry deadline.
+    // Start tracking before first send so transient send failures still keep retry state.
     long nextRetryAtMs = now + computeDelayMs(0);
     TrackedMessage tracked = new TrackedMessage(event.key(), event.packet(), 0, now, nextRetryAtMs);
     activeTrackedByEndpointKey.put(endpointTrackedKey, tracked);
+    sendIgnoringErrors(event.packet(), event.endpoint());
     scheduleRetry(event.endpoint(), tracked);
+    return true;
   }
 
   // Remove tracked message state for endpoint+key.
   private void handleCancelTracked(CancelTrackedEvent event) {
+    long now = System.currentTimeMillis();
     EndpointTrackedKey endpointTrackedKey = new EndpointTrackedKey(event.endpoint(), event.key());
     TrackedMessage removed = activeTrackedByEndpointKey.remove(endpointTrackedKey);
     if (removed == null) {
-      recordPendingCancel(endpointTrackedKey);
+      recordPendingCancel(endpointTrackedKey, now);
     }
-  }
-
-  // Resend now and push retry deadline forward.
-  private void handleForceResend(ForceResendEvent event) throws IOException {
-    long now = System.currentTimeMillis();
-    EndpointTrackedKey endpointTrackedKey = new EndpointTrackedKey(event.endpoint(), event.key());
-    TrackedMessage tracked = activeTrackedByEndpointKey.get(endpointTrackedKey);
-    if (tracked == null) {
-      return;
-    }
-
-    if (shouldStopTracking(tracked, now)) {
-      activeTrackedByEndpointKey.remove(endpointTrackedKey);
-      return;
-    }
-
-    resendAndSchedule(event.endpoint(), tracked, now);
   }
 
   // Retry every message whose deadline is due.
-  private void processDueRetries(long now) throws IOException {
+  private void processDueRetries(long now) {
     while (true) {
       ScheduledRetry scheduled = retryScheduleHeap.peek();
       if (scheduled == null || scheduled.dueAtMs() > now) {
@@ -262,12 +266,16 @@ public final class StubbornLink implements AutoCloseable {
   }
 
   // Best-effort send that keeps retry state even if send fails.
-  private void sendIgnoringErrors(Dpch packet, InetSocketAddress endpoint) throws IOException {
-    fairLoss.send(packet, endpoint.getAddress(), endpoint.getPort());
+  private void sendIgnoringErrors(Dpch packet, InetSocketAddress endpoint) {
+    try {
+      fairLoss.send(packet, endpoint.getAddress(), endpoint.getPort());
+    } catch (IOException exception) {
+      System.out.printf("Stubborn send error to %s:%d for conn=%d seq=%d type=%s = %s%n", endpoint.getAddress().getHostAddress(), endpoint.getPort(), packet.connectionId(), packet.sequenceNumber(), packet.type(), exception.getMessage());
+    }
   }
 
   // Resend one tracked message now and enqueue its next retry.
-  private void resendAndSchedule(InetSocketAddress endpoint, TrackedMessage tracked, long now) throws IOException {
+  private void resendAndSchedule(InetSocketAddress endpoint, TrackedMessage tracked, long now) {
     sendIgnoringErrors(tracked.packet(), endpoint);
     tracked.markRetried(now + computeDelayMs(tracked.retryAttempt() + 1));
     scheduleRetry(endpoint, tracked);
@@ -279,9 +287,35 @@ public final class StubbornLink implements AutoCloseable {
     compactRetryHeapIfNeeded();
   }
 
-  // Record a cancel tombstone for an endpoint+key, to be applied if a tracked send arrives later with the same key.
-  private void recordPendingCancel(EndpointTrackedKey endpointTrackedKey) {
-    cancelTombstones.add(endpointTrackedKey);
+  // Record one pending cancel for an endpoint+key, to be applied if a tracked send arrives later with the same key.
+  private void recordPendingCancel(EndpointTrackedKey endpointTrackedKey, long now) {
+    if (pendingCancels.size() >= maxPendingCancels) {
+      prunePendingCancels(now);
+    }
+
+    if (pendingCancels.size() >= maxPendingCancels) {
+      Iterator<EndpointTrackedKey> iterator = pendingCancels.keySet().iterator();
+      if (iterator.hasNext()) {
+        iterator.next();
+        iterator.remove();
+      }
+    }
+
+    pendingCancels.put(endpointTrackedKey, now);
+  }
+
+  // Drop expired pending cancels and keep map size bounded.
+  private void prunePendingCancels(long now) {
+    pendingCancels.entrySet().removeIf(entry -> (now - entry.getValue()) >= maxTrackedLifetimeMs);
+    if (pendingCancels.size() <= maxPendingCancels) {
+      return;
+    }
+
+    Iterator<EndpointTrackedKey> iterator = pendingCancels.keySet().iterator();
+    while (pendingCancels.size() > maxPendingCancels && iterator.hasNext()) {
+      iterator.next();
+      iterator.remove();
+    }
   }
 
   // Time until next retry deadline.
@@ -313,11 +347,24 @@ public final class StubbornLink implements AutoCloseable {
     return ageMs >= maxTrackedLifetimeMs;
   }
 
-  // Reject API calls after close.
   private void enqueueEvent(Event event) {
     synchronized (lock) {
       ensureOpen();
       eventQueue.offer(event);
+    }
+  }
+
+  // Wait for event-loop acknowledgement so tracked-send admission failures are visible to caller.
+  private boolean awaitTrackedRegistration(CompletableFuture<Boolean> accepted) {
+    try {
+      return accepted.get(2, TimeUnit.SECONDS);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for tracked send registration", interrupted);
+    } catch (ExecutionException executionException) {
+      throw new IllegalStateException("Failed to register tracked send", executionException.getCause());
+    } catch (TimeoutException timeoutException) {
+      throw new IllegalStateException("Timed out while waiting for tracked send registration", timeoutException);
     }
   }
 

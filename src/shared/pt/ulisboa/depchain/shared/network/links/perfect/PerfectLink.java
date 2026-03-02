@@ -3,10 +3,12 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
@@ -18,6 +20,28 @@ import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public class PerfectLink implements AutoCloseable {
+  // Perfect-link receive/reorder configuration.
+  public record Config(int maxWindowSize, int maxStreamStates, long streamIdleTtlMs) {
+    public Config {
+      maxWindowSize = ValidationUtils.requirePositiveInt(maxWindowSize, "maxWindowSize");
+      maxStreamStates = ValidationUtils.requirePositiveInt(maxStreamStates, "maxStreamStates");
+      streamIdleTtlMs = ValidationUtils.requirePositiveLong(streamIdleTtlMs, "streamIdleTtlMs");
+    }
+  }
+
+  // Full transport configuration needed to build a PerfectLink.
+  public record BuildConfig(int maxPacketSize, StubbornLink.Config stubborn, Config perfect) {
+    public BuildConfig {
+      maxPacketSize = ValidationUtils.requirePositiveInt(maxPacketSize, "maxPacketSize");
+      if (stubborn == null) {
+        throw new NullPointerException("stubborn cannot be null");
+      }
+      if (perfect == null) {
+        throw new NullPointerException("perfect cannot be null");
+      }
+    }
+  }
+
   // Lower layer link that provides best-effort delivery with tracking capabilities.
   private final StubbornLink stubbornLink;
   
@@ -31,6 +55,9 @@ public class PerfectLink implements AutoCloseable {
   // Send and receive state management for each endpoint-connection pair.
   private final Map<EndpointConnectionKey, SenderState> sendSequences;
   private final Map<EndpointConnectionKey, ReceiverState> receiverStates;
+  
+  // Backup floor per stream used only after receiver-state removal (for active streams, the authoritative floor lives in ReceiverState.nextExpectedSeq)
+  private final Map<EndpointConnectionKey, Integer> ttlEvictedReceiverDeliveredFloors;
 
   // Delivery queue for in-order messages ready to be delivered to the application layer.
   private final BlockingQueue<InboundMessage> deliveryQueue;
@@ -47,6 +74,7 @@ public class PerfectLink implements AutoCloseable {
 
     this.sendSequences = new ConcurrentHashMap<>();
     this.receiverStates = new ConcurrentHashMap<>();
+    this.ttlEvictedReceiverDeliveredFloors = new ConcurrentHashMap<>();
     this.deliveryQueue = new LinkedBlockingQueue<>();
     this.running = new AtomicBoolean(true);
 
@@ -54,38 +82,62 @@ public class PerfectLink implements AutoCloseable {
   }
 
   // Build a PerfectLink bound to a local address/port.
-  public static PerfectLink bind(InetAddress bindIp, int port, int maxPacketSize, long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize, int maxRetryAttempts, long maxTrackedLifetimeMs, int maxWindowSize, int maxStreamStates, long streamIdleTtlMs) throws IOException {
-    StubbornLink stubbornLink = StubbornLink.bind(bindIp, port, maxPacketSize, baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize, maxRetryAttempts, maxTrackedLifetimeMs);
-    return new PerfectLink(stubbornLink, maxWindowSize, maxStreamStates, streamIdleTtlMs);
+  public static PerfectLink bind(InetAddress bindAddress, int port, BuildConfig config) throws IOException {
+    StubbornLink stubbornLink = StubbornLink.bind(bindAddress, port, config.maxPacketSize(), config.stubborn());
+    Config perfect = config.perfect();
+    return new PerfectLink(stubbornLink, perfect.maxWindowSize(), perfect.maxStreamStates(), perfect.streamIdleTtlMs());
   }
 
   // Build a PerfectLink with an ephemeral local socket.
-  public static PerfectLink unbound(int maxPacketSize, long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize, int maxRetryAttempts, long maxTrackedLifetimeMs, int maxWindowSize, int maxStreamStates, long streamIdleTtlMs) throws IOException {
-    StubbornLink stubbornLink = StubbornLink.unbound(maxPacketSize, baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize, maxRetryAttempts, maxTrackedLifetimeMs);
-    return new PerfectLink(stubbornLink, maxWindowSize, maxStreamStates, streamIdleTtlMs);
+  public static PerfectLink unbound(BuildConfig config) throws IOException {
+    StubbornLink stubbornLink = StubbornLink.unbound(config.maxPacketSize(), config.stubborn());
+    Config perfect = config.perfect();
+    return new PerfectLink(stubbornLink, perfect.maxWindowSize(), perfect.maxStreamStates(), perfect.streamIdleTtlMs());
   }
 
   // Send a message reliably to the specified remote endpoint and connection ID.
-  public void sendReliable(int connectionId, byte[] payload, InetAddress ip, int port) {
-    EndpointConnectionKey key = new EndpointConnectionKey(new InetSocketAddress(ip, port), connectionId);
+  public void sendReliable(int connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+    sendByType(connectionId, DpchType.DATA, payload, remoteIp, remotePort);
+  }
+
+  // SYN message to initiate a new connection.
+  public void sendSyn(int connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+    sendByType(connectionId, DpchType.SYN, payload, remoteIp, remotePort);
+  }
+
+  // FIN message to terminate a connection.
+  public void sendFin(int connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+    sendByType(connectionId, DpchType.FIN, payload, remoteIp, remotePort);
+  }
+
+  // Common send logic for different reliable packet types.
+  private void sendByType(int connectionId, DpchType type, byte[] payload, InetAddress remoteIp, int remotePort) {
+    EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
     long now = System.currentTimeMillis();
     SenderState senderState = sendSequences.computeIfAbsent(key, ignored -> new SenderState());
-    int seq = senderState.nextSequence(now);
-    
-    Dpch packet = Dpch.data(connectionId, seq, payload);
-    stubbornLink.sendTracked(packet, ip, port);
+    int seq = senderState.nextSequence(type, now);
+
+    Dpch packet = new Dpch(connectionId, type, seq, payload);
+    stubbornLink.sendTracked(packet, remoteIp, remotePort);
     cleanStaleStatesIfNeeded();
   }
 
+  // Blocking call to receive the next in-order message ready for delivery to the application layer.
   public InboundMessage receive() throws InterruptedException {
     return deliveryQueue.take();
   }
 
+  // Poll for a message with a timeout, returning null if no message is available within the specified time.
+  public InboundMessage receive(long timeoutMs) throws InterruptedException {
+    long sanitizedTimeoutMs = ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs");
+    return deliveryQueue.poll(sanitizedTimeoutMs, TimeUnit.MILLISECONDS);
+  }
+
+  // Main loop that continuously receives messages from the stubborn link and processes them until the PerfectLink is closed.
   private void runReceiveLoop() {
     while (running.get()) {
       try {
-        // Blocking call that waits for the next message from the stubborn link.
-        processInbound(stubbornLink.receive()); 
+        processInbound(stubbornLink.receive());  // Waits for the next message from the stubborn link.
       } catch (Exception exception) {
         if (!running.get()) {
           break;
@@ -100,7 +152,7 @@ public class PerfectLink implements AutoCloseable {
   private void processInbound(InboundMessage inbound) throws IOException {
     Dpch packet = inbound.packet();
     InetSocketAddress remote = new InetSocketAddress(inbound.senderIp(), inbound.senderPort());
-    EndpointConnectionKey key = new EndpointConnectionKey(remote, packet.connectionId());
+    EndpointConnectionKey key = connectionKey(packet.connectionId(), remote);
     long now = System.currentTimeMillis();
 
     // If an ack is received, cancel the corresponding tracked DATA message in the stubborn link.
@@ -110,55 +162,157 @@ public class PerfectLink implements AutoCloseable {
         senderState.touch(now);
       }
 
-      TrackedMessage.Key trackedDataKey = new TrackedMessage.Key(packet.connectionId(), packet.sequenceNumber(), DpchType.DATA);
-      stubbornLink.cancelTracked(trackedDataKey, remote.getAddress(), remote.getPort());
+      DpchType acknowledgedType = decodeAcknowledgedType(packet.payload());
+      if (acknowledgedType == null) {
+        return;
+      }
+
+      int acknowledgedSequence = packet.sequenceNumber();
+      if (acknowledgedSequence < 0) {
+        return;
+      }
+
+      List<TrackedMessage.Key> cancellations = List.of();
+      if (senderState != null) {
+        cancellations = senderState.acknowledge(packet.connectionId(), acknowledgedSequence, acknowledgedType, now);
+      }
+
+      for (TrackedMessage.Key trackedKey : cancellations) {
+        stubbornLink.cancelTracked(trackedKey, remote.getAddress(), remote.getPort());
+      }
       cleanStaleStatesIfNeeded();
       return;
     }
 
-    // If a data packet is received, send an ack and manage in-order delivery with flow control.
-    if (packet.type() == DpchType.DATA) {
-      stubbornLink.sendOnce(Dpch.ack(packet.connectionId(), packet.sequenceNumber(), new byte[0]), remote.getAddress(), remote.getPort());
-
+    // If a reliable packet is received, send an ack and manage in-order delivery with flow control.
+    if (packet.type() == DpchType.DATA || packet.type() == DpchType.SYN || packet.type() == DpchType.FIN) {
       // Get or create the receiver state for this stream and process the incoming packet.
-      ReceiverState state = receiverStates.computeIfAbsent(key, ignored -> new ReceiverState());
+      ReceiverState state = receiverStates.computeIfAbsent(key, ignored -> {
+        // This stream became active again.
+        Integer persisted = ttlEvictedReceiverDeliveredFloors.remove(key);
+        int restoredFloor = (persisted == null) ? 0 : persisted;
+        return new ReceiverState(restoredFloor);
+      });
+
+      boolean shouldAck = false;
       synchronized (state) {
         state.touch(now);
         int seq = packet.sequenceNumber();
+        if (seq < 0) {
+          return;
+        }
 
         if (state.isAlreadyDelivered(seq)) {
+          shouldAck = true;
+        } else if (state.isOutsideWindow(seq, maxWindowSize)) {
           return;
-        }
+        } else {
+          // Add packet only if not already buffered.
+          boolean bufferedNow = state.bufferIfNew(seq, inbound);
+          shouldAck = true;
+          if (bufferedNow) {
+            // Deliver in-order packets in cascade.
+            while (state.hasNextInOrderReady()) {
+              InboundMessage delivered = state.pollNextInOrder();
+              deliveryQueue.offer(delivered);
+            }
+          }
 
-        if (state.isOutsideWindow(seq, maxWindowSize)) {
-          return;
+          // FIN is acknowledged only after it becomes in-order delivered.
+          if (packet.type() == DpchType.FIN) {
+            shouldAck = state.isAlreadyDelivered(seq);
+          }
         }
+      }
 
-        // Add packet only if not already buffered.
-        if (!state.bufferIfNew(seq, inbound)) {
-          return;
-        }
-
-        // Deliver in-order packets in cascade.
-        while (state.hasNextInOrderReady()) {
-          InboundMessage delivered = state.pollNextInOrder();
-          deliveryQueue.offer(delivered);
-        }
+      if (shouldAck) {
+        sendAckIgnoringErrors(packet, remote);
       }
 
       cleanStaleStatesIfNeeded();
     }
   }
 
+  // Send an ACK for the received packet, ignoring any exceptions to avoid impacting the receive loop.
+  private void sendAckIgnoringErrors(Dpch dataPacket, InetSocketAddress remote) {
+    try {
+      byte[] ackPayload = new byte[] {dataPacket.type().code()};
+      stubbornLink.sendOnce(Dpch.ack(dataPacket.connectionId(), dataPacket.sequenceNumber(), ackPayload), remote.getAddress(), remote.getPort());
+    } catch (IOException exception) {
+      System.err.printf("PerfectLink ACK send error to %s:%d for conn=%d seq=%d = %s%n", remote.getAddress().getHostAddress(), remote.getPort(), dataPacket.connectionId(), dataPacket.sequenceNumber(), exception.getMessage());
+    }
+  }
+
+  // To know the ack type (DATA/SYN/FIN).
+  private DpchType decodeAcknowledgedType(byte[] ackPayload) {
+    if (ackPayload.length != 1) {
+      return null;
+    }
+    return switch (ackPayload[0]) {
+      case 0 -> DpchType.DATA;
+      case 3 -> DpchType.SYN;
+      case 4 -> DpchType.FIN;
+      default -> null;
+    };
+  }
+
+  private EndpointConnectionKey connectionKey(int connectionId, InetAddress remoteIp, int remotePort) {
+    return new EndpointConnectionKey(new InetSocketAddress(remoteIp, remotePort), connectionId);
+  }
+
+  private EndpointConnectionKey connectionKey(int connectionId, InetSocketAddress remoteEndpoint) {
+    return new EndpointConnectionKey(remoteEndpoint, connectionId);
+  }
+
   // Remove stale sender and receiver states that have been idle for too long.
   private void cleanStaleStatesIfNeeded() {
-    if (sendSequences.size() <= maxStreamStates && receiverStates.size() <= maxStreamStates) {
+    if (sendSequences.size() <= maxStreamStates && receiverStates.size() <= maxStreamStates && ttlEvictedReceiverDeliveredFloors.size() <= maxStreamStates) {
       return;
     }
     
     long now = System.currentTimeMillis();
     sendSequences.entrySet().removeIf(entry -> entry.getValue().isStale(now, streamIdleTtlMs));
-    receiverStates.entrySet().removeIf(entry -> entry.getValue().isStale(now, streamIdleTtlMs));
+
+    receiverStates.entrySet().removeIf(entry -> {
+      ReceiverState state = entry.getValue();
+      if (!state.isStale(now, streamIdleTtlMs)) {
+        return false;
+      }
+
+      synchronized (state) {
+        // Persist the current floor only when receiver state is evicted.
+        updateDeliveredFloor(entry.getKey(), state.nextExpectedSequence());
+      }
+      return true;
+    });
+
+    compactDeliveredFloorsIfNeeded();
+  }
+
+  // To keep the delivered floor info when rec. state is removed and allow it to be used if the stream becomes active again soon
+  private void updateDeliveredFloor(EndpointConnectionKey key, int nextExpectedSequence) {
+    ttlEvictedReceiverDeliveredFloors.merge(key, nextExpectedSequence, Math::max);
+  }
+
+  // Keep delivered floor table bounded. Prefer dropping entries for inactive streams.
+  private void compactDeliveredFloorsIfNeeded() {
+    if (ttlEvictedReceiverDeliveredFloors.size() <= maxStreamStates) {
+      return;
+    }
+
+    ttlEvictedReceiverDeliveredFloors.entrySet().removeIf(entry -> {
+      if (ttlEvictedReceiverDeliveredFloors.size() <= maxStreamStates) {
+        return false;
+      }
+
+      EndpointConnectionKey key = entry.getKey();
+      boolean keep = receiverStates.containsKey(key) || sendSequences.containsKey(key);
+      if (keep) {
+        return false;
+      }
+
+      return true;
+    });
   }
 
   @Override

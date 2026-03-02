@@ -20,7 +20,7 @@ public final class TrackedMessage {
     }
   }
 
-  // Identity of the tracked message, immutable and used for equals/hashCode.
+  // Identity of the tracked message.
   private final Key key;
 
   // The actual message packet being tracked.
@@ -70,21 +70,4 @@ public final class TrackedMessage {
     return nextRetryAtMs;
   }
 
-  // Equality is based solely on the key, since the key uniquely identifies the tracked message.
-  @Override
-  public boolean equals(Object obj) {
-    if (this == obj) {
-      return true;
-    }
-    if (!(obj instanceof TrackedMessage other)) {
-      return false;
-    }
-    return key.equals(other.key);
-  }
-
-  // Hash is based solely on the key, since equals is based on the key.
-  @Override
-  public int hashCode() {
-    return key.hashCode();
-  }
 }

@@ -2,35 +2,26 @@ package pt.ulisboa.depchain.shared.network.links.stubborn;
 
 import java.net.InetSocketAddress;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 
 // Event types handled by the stubborn loop thread.
-sealed interface Event permits SendTrackedEvent, CancelTrackedEvent, ForceResendEvent, ShutdownEvent {}
+sealed interface Event permits SendTrackedEvent, CancelTrackedEvent, ShutdownEvent {}
 
 // Event for registering a tracked send.
-record SendTrackedEvent(InetSocketAddress endpoint, TrackedMessage.Key key, Dpch packet) implements Event {
-  // Validate send event arguments.
+record SendTrackedEvent(InetSocketAddress endpoint, TrackedMessage.Key key, Dpch packet, CompletableFuture<Boolean> accepted) implements Event {
   SendTrackedEvent {
     Objects.requireNonNull(endpoint, "endpoint cannot be null");
     Objects.requireNonNull(key, "key cannot be null");
     Objects.requireNonNull(packet, "packet cannot be null");
+    Objects.requireNonNull(accepted, "accepted cannot be null");
   }
 }
 
 // Event for canceling retries of one tracked key.
 record CancelTrackedEvent(InetSocketAddress endpoint, TrackedMessage.Key key) implements Event {
-  // Validate cancel event arguments.
   CancelTrackedEvent {
-    Objects.requireNonNull(endpoint, "endpoint cannot be null");
-    Objects.requireNonNull(key, "key cannot be null");
-  }
-}
-
-// Event for forcing an immediate retry.
-record ForceResendEvent(InetSocketAddress endpoint, TrackedMessage.Key key) implements Event {
-  // Validate force-resend event arguments.
-  ForceResendEvent {
     Objects.requireNonNull(endpoint, "endpoint cannot be null");
     Objects.requireNonNull(key, "key cannot be null");
   }

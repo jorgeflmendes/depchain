@@ -1,12 +1,15 @@
 package pt.ulisboa.depchain.client;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.concurrent.ThreadLocalRandom;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.config.LinkConfigFactory;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 
@@ -24,36 +27,54 @@ public final class Main {
     // Load the client configuration from the specified file path.
     ConfigParser config = ConfigParser.load(Path.of(configPath));
     ConfigParser.ReplicaSection targetReplicaConfig = config.requireReplica(targetReplicaId);
-    ConfigParser.StubbornSection stubbornConfig = config.stubborn();
-    ConfigParser.PerfectSection perfectConfig = config.perfect();
+    PerfectLink.BuildConfig linkConfig = LinkConfigFactory.from(config);
+
+    // Resolve the target replica's address and port from the configuration, and get the request timeout.
     InetAddress targetAddress = InetAddress.getByName(targetReplicaConfig.host());
+    int targetPort = targetReplicaConfig.clientPort();
+    long timeoutMs = config.client().requestTimeoutMs();
 
     try {
-      // TODO: wtf do we need all these parameters?
-      try (PerfectLink perfectLink = PerfectLink.unbound(config.network().maxPacketSize(), stubbornConfig.baseDelayMs(), stubbornConfig.maxDelayMs(), stubbornConfig.jitterRatio(), stubbornConfig.maxPending(), stubbornConfig.heapCompactMinSize(), stubbornConfig.maxRetryAttempts(), stubbornConfig.maxTrackedLifetimeMs(), perfectConfig.maxWindowSize(), perfectConfig.maxStreamStates(), perfectConfig.streamIdleTtlMs())) {
-        int connectionId = ThreadLocalRandom.current().nextInt(); // TODO: it should be an uuid or something else, but for now let's just use a random int, maybe it wont be needed
-
-        // Create and send one packet over the perfect link.
-        perfectLink.sendReliable(connectionId, value.getBytes(StandardCharsets.UTF_8), targetAddress, targetReplicaConfig.clientPort());
-
-        // Wait for a response packet with the same connectionId.
-        Dpch response;
-        while (true) {
-          InboundMessage inbound = perfectLink.receive();
-          Dpch candidate = inbound.packet();
-          
-          if (candidate.connectionId() == connectionId) {
-            response = candidate;
-            break;
-          }
-        }
-
-        String responsePayload = new String(response.payload(), StandardCharsets.UTF_8);
+      try (HandshakedPerfectLink transport = HandshakedPerfectLink.unbound(linkConfig)) {
+        String responsePayload = sendRequest(transport, value, targetAddress, targetPort, timeoutMs);
         System.out.println("response = " + responsePayload);
       }
     } catch (Exception exception) {
       System.out.printf("Packet exchange error = %s%n", exception.getMessage());
       System.exit(2);
+    }
+  }
+
+  // Sends one request and waits for the matching response.
+  private static String sendRequest(HandshakedPerfectLink transport, String value, InetAddress targetAddress, int targetPort, long timeoutMs) throws IOException, InterruptedException {
+    int connectionId = ThreadLocalRandom.current().nextInt(); // TODO: it should be an uuid or something else, but for now let's just use a random int, maybe it wont be needed
+    transport.sendReliable(connectionId, value.getBytes(StandardCharsets.UTF_8), targetAddress, targetPort);
+
+    try {
+      long deadlineMs = System.currentTimeMillis() + timeoutMs;
+      
+      while (true) {
+        long remainingMs = deadlineMs - System.currentTimeMillis();
+        if (remainingMs <= 0L) {
+          throw new IOException("Request timed out after " + timeoutMs + " ms");
+        }
+
+        InboundMessage inbound = transport.receive(remainingMs);
+        if (inbound == null) {
+          throw new IOException("Request timed out after " + timeoutMs + " ms");
+        }
+
+        Dpch candidate = inbound.packet();
+        if (candidate.connectionId() == connectionId) {
+          return new String(candidate.payload(), StandardCharsets.UTF_8);
+        }
+      }
+    } finally {
+      try {
+        transport.closeConnection(connectionId, targetAddress, targetPort);
+      } catch (Exception ignored) {
+        // TODO: idk
+      }
     }
   }
 }

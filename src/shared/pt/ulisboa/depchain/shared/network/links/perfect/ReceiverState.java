@@ -8,7 +8,7 @@ import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 
 final class ReceiverState {
   // The next expected sequence number to be delivered in order
-  private int nextExpectedSeq = 0;
+  private int nextExpectedSeq;
 
   // Used for staleness checks
   private volatile long lastTouchedAtMs = System.currentTimeMillis();
@@ -19,6 +19,14 @@ final class ReceiverState {
   // To hold buffered messages in order of their sequence numbers
   private final PriorityQueue<InboundMessage> buffer = new PriorityQueue<>((a, b) -> Integer.compare(a.packet().sequenceNumber(), b.packet().sequenceNumber()));
 
+  ReceiverState() {
+    this(0);
+  }
+
+  ReceiverState(int nextExpectedSeq) {
+    this.nextExpectedSeq = Math.max(0, nextExpectedSeq);
+  }
+
   void touch(long now) {
     lastTouchedAtMs = now;
   }
@@ -28,7 +36,8 @@ final class ReceiverState {
   }
 
   boolean isOutsideWindow(int sequenceNumber, int maxWindowSize) {
-    return sequenceNumber >= nextExpectedSeq + maxWindowSize;
+    long upperExclusive = (long) nextExpectedSeq + maxWindowSize;
+    return (long) sequenceNumber >= upperExclusive;
   }
 
   // Returns true if the message was buffered, false if it was already buffered or delivered.
@@ -48,8 +57,15 @@ final class ReceiverState {
   InboundMessage pollNextInOrder() {
     InboundMessage delivered = buffer.poll();
     bufferedMessageSeqNums.remove(delivered.packet().sequenceNumber());
+    if (nextExpectedSeq == Integer.MAX_VALUE) {
+      throw new IllegalStateException("Receiver sequence number exhausted for stream");
+    }
     nextExpectedSeq++;
     return delivered;
+  }
+
+  int nextExpectedSequence() {
+    return nextExpectedSeq;
   }
 
   // If it has no buffered messages and has not been touched for a while.

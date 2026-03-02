@@ -25,10 +25,16 @@ public final class FairLossLink implements AutoCloseable {
 
   // The maximum allowed size of the serialized packet payload (excluding UDP/IP headers).
   private final int maxPacketSize;
+  
+  // Reused receive buffer and packet holder to avoid per-receive allocations.
+  private final byte[] receiveBuffer;
+  private final DatagramPacket receivePacket;
 
   private FairLossLink(DatagramSocket socket, int maxPacketSize) throws SocketException {
     this.socket = Objects.requireNonNull(socket, "socket cannot be null");
     this.maxPacketSize = ValidationUtils.requirePositiveInt(maxPacketSize, "maxPacketSize");
+    this.receiveBuffer = new byte[this.maxPacketSize];
+    this.receivePacket = new DatagramPacket(this.receiveBuffer, this.receiveBuffer.length);
     this.socket.setSoTimeout(0);
   }
 
@@ -45,45 +51,30 @@ public final class FairLossLink implements AutoCloseable {
   }
 
   // Send one packet to the target endpoint.
-  public void send(Dpch packet, InetAddress targetIp, int targetPort) throws IOException {
+  public void send(Dpch packet, InetAddress remoteIp, int remotePort) throws IOException {
     Objects.requireNonNull(packet, "packet cannot be null");
-    Objects.requireNonNull(targetIp, "targetIp cannot be null");
-    sendPacket(packet, targetIp, targetPort);
-  }
-
-  // Wait until a packet is received (blocking call).
-  public InboundMessage receive() throws IOException {
-    DatagramPacket packet = receivePacket();
-    Dpch decoded = decodePacket(packet);
-    return new InboundMessage(decoded, packet.getAddress(), packet.getPort());
-  }
-
-  // Helper method to serialize and send a Dpch to the given target address and port.
-  private void sendPacket(Dpch value, InetAddress targetIp, int targetPort) throws IOException {
-    byte[] payload = DpchSerialization.toBytes(value);
-
+    Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
+    byte[] payload = DpchSerialization.toBytes(packet);
     if (payload.length > maxPacketSize) {
       throw new IOException("Serialized payload exceeds maxPacketSize (%d > %d)".formatted(payload.length, maxPacketSize));
     }
 
-    DatagramPacket packet = new DatagramPacket(payload, payload.length, targetIp, targetPort);
+    DatagramPacket datagram = new DatagramPacket(payload, payload.length, remoteIp, remotePort);
     synchronized (sendLock) {
-      socket.send(packet);
+      socket.send(datagram);
     }
   }
 
-  // Receive a packet from the socket.
-  private DatagramPacket receivePacket() throws IOException {
-    DatagramPacket packet = new DatagramPacket(new byte[maxPacketSize], maxPacketSize);
+  // Wait until a packet is received (blocking call).
+  public InboundMessage receive() throws IOException {
     synchronized (receiveLock) {
-      socket.receive(packet);
-    }
-    return packet;
-  }
+      receivePacket.setData(receiveBuffer, 0, receiveBuffer.length);
+      receivePacket.setLength(receiveBuffer.length);
+      socket.receive(receivePacket);
+      Dpch decoded = DpchSerialization.fromBytes(receivePacket.getData(), receivePacket.getOffset(), receivePacket.getLength());
 
-  // Decode a DatagramPacket into a Dpch.
-  private Dpch decodePacket(DatagramPacket packet) throws IOException {
-    return DpchSerialization.fromBytes(packet.getData(), packet.getOffset(), packet.getLength());
+      return new InboundMessage(decoded, receivePacket.getAddress(), receivePacket.getPort());
+    }
   }
 
   @Override

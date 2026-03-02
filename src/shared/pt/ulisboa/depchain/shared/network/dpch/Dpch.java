@@ -14,6 +14,10 @@ public final class Dpch {
   private final byte[] payload;
 
   public Dpch(int connectionId, DpchType type, int sequenceNumber, byte[] payload) {
+    this(connectionId, type, sequenceNumber, payload, true);
+  }
+
+  private Dpch(int connectionId, DpchType type, int sequenceNumber, byte[] payload, boolean copyPayload) {
     Objects.requireNonNull(type, "type cannot be null");
     Objects.requireNonNull(payload, "payload cannot be null");
     if (payload.length > MAX_PAYLOAD_LENGTH) {
@@ -23,7 +27,7 @@ public final class Dpch {
     this.connectionId = connectionId;
     this.type = type;
     this.sequenceNumber = sequenceNumber;
-    this.payload = Arrays.copyOf(payload, payload.length);
+    this.payload = copyPayload ? Arrays.copyOf(payload, payload.length) : payload;
   }
 
   public static Dpch data(int connectionId, int sequenceNumber, byte[] payload) {
@@ -34,16 +38,17 @@ public final class Dpch {
     return new Dpch(connectionId, DpchType.ACK, sequenceNumber, payload);
   }
 
-  public static Dpch nack(int connectionId, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, DpchType.NACK, sequenceNumber, payload);
-  }
-
   public static Dpch syn(int connectionId, int sequenceNumber, byte[] payload) {
     return new Dpch(connectionId, DpchType.SYN, sequenceNumber, payload);
   }
 
   public static Dpch fin(int connectionId, int sequenceNumber, byte[] payload) {
     return new Dpch(connectionId, DpchType.FIN, sequenceNumber, payload);
+  }
+
+  // Fast path for decoder: payload already belongs exclusively to this packet instance.
+  static Dpch decoded(int connectionId, DpchType type, int sequenceNumber, byte[] payload) {
+    return new Dpch(connectionId, type, sequenceNumber, payload, false);
   }
 
   public int connectionId() {
@@ -60,5 +65,10 @@ public final class Dpch {
 
   public byte[] payload() {
     return Arrays.copyOf(payload, payload.length);
+  }
+
+  // Internal read-only use inside the dpch package to avoid repeated copying during serialization.
+  byte[] payloadInternal() {
+    return payload;
   }
 }

@@ -1,17 +1,58 @@
 package pt.ulisboa.depchain.shared.network.links.perfect;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.NavigableMap;
+import java.util.TreeMap;
+
+import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.links.stubborn.TrackedMessage;
 
 final class SenderState {
-  // The next sequence number to be sent
-  private final AtomicInteger nextSequence = new AtomicInteger(0);
+  // Next local sequence number to be sent in this stream.
+  private int nextSequence = 0;
 
-  // Timestamp of the last activity on this stream, used for staleness checks
+  // Outstanding tracked packets still waiting for ACK, indexed by sequence number.
+  private final NavigableMap<Integer, DpchType> inFlightBySeq = new TreeMap<>();
+
+  // Timestamp of the last activity on this stream, used for staleness checks.
   private volatile long lastTouchedAtMs = System.currentTimeMillis();
 
-  int nextSequence(long now) {
+  synchronized int nextSequence(DpchType type, long now) {
+    if (nextSequence == Integer.MAX_VALUE) {
+      throw new IllegalStateException("Sender sequence number exhausted for stream");
+    }
+
+    int sequence = nextSequence++;
+    inFlightBySeq.put(sequence, type);
     touch(now);
-    return nextSequence.getAndIncrement();
+    return sequence;
+  }
+
+  // Translate one ACK into tracked-message keys that should be canceled in StubbornLink.
+  synchronized List<TrackedMessage.Key> acknowledge(int connectionId, int sequenceNumber, DpchType acknowledgedType, long now) {
+    touch(now);
+    List<TrackedMessage.Key> cancellations = new ArrayList<>();
+
+    if (acknowledgedType == DpchType.FIN) {
+      // FIN ACK is treated as cumulative close acknowledgment for everything up to FIN sequence.
+      Iterator<Integer> iterator = inFlightBySeq.headMap(sequenceNumber, true).navigableKeySet().iterator();
+      while (iterator.hasNext()) {
+        int seq = iterator.next();
+        DpchType type = inFlightBySeq.get(seq);
+        cancellations.add(new TrackedMessage.Key(connectionId, seq, type));
+        iterator.remove();
+      }
+      return cancellations;
+    }
+
+    DpchType trackedType = inFlightBySeq.get(sequenceNumber);
+    if (trackedType == acknowledgedType) {
+      inFlightBySeq.remove(sequenceNumber);
+      cancellations.add(new TrackedMessage.Key(connectionId, sequenceNumber, acknowledgedType));
+    }
+    return cancellations;
   }
 
   void touch(long now) {

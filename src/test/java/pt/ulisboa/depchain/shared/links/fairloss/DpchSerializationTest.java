@@ -34,9 +34,8 @@ class DpchSerializationTest {
         new Dpch[] {
           Dpch.data(10, 1, "d".getBytes(StandardCharsets.UTF_8)),
           Dpch.ack(10, 2, "a".getBytes(StandardCharsets.UTF_8)),
-          Dpch.nack(10, 3, "n".getBytes(StandardCharsets.UTF_8)),
-          Dpch.syn(10, 4, "s".getBytes(StandardCharsets.UTF_8)),
-          Dpch.fin(10, 5, "f".getBytes(StandardCharsets.UTF_8))
+          Dpch.syn(10, 3, "s".getBytes(StandardCharsets.UTF_8)),
+          Dpch.fin(10, 4, "f".getBytes(StandardCharsets.UTF_8))
         };
 
     for (Dpch packet : packets) {
@@ -125,4 +124,3 @@ class DpchSerializationTest {
     assertThrows(NullPointerException.class, () -> DpchSerialization.toBytes(null));
   }
 }
-
