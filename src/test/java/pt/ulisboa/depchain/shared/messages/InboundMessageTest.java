@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
+import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 
 class InboundMessageTest {
   @Test

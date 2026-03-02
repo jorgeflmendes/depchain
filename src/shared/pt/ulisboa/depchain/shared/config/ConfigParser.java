@@ -18,14 +18,16 @@ public final class ConfigParser {
   private final ClientSection client;
   private final TimeoutsSection timeouts;
   private final StubbornSection stubborn;
+  private final PerfectSection perfect;
   private final NetworkSection network;
 
-  private ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, NetworkSection network) {
+  private ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, PerfectSection perfect, NetworkSection network) {
     this.system = system;
     this.replicas = List.copyOf(replicas);
     this.client = client;
     this.timeouts = timeouts;
     this.stubborn = stubborn;
+    this.perfect = perfect;
     this.network = network;
   }
   
@@ -47,6 +49,10 @@ public final class ConfigParser {
 
   public StubbornSection stubborn() {
     return stubborn;
+  }
+
+  public PerfectSection perfect() {
+    return perfect;
   }
 
   public NetworkSection network() {
@@ -92,6 +98,7 @@ public final class ConfigParser {
       MutableClientSection client = null;
       MutableTimeoutsSection timeouts = null;
       MutableStubbornSection stubborn = null;
+      MutablePerfectSection perfect = null;
       MutableNetworkSection network = null;
       Set<String> seenTopLevelSections = new HashSet<>();
 
@@ -123,6 +130,7 @@ public final class ConfigParser {
           case "client" -> client = parseClientSection();
           case "timeouts" -> timeouts = parseTimeoutsSection();
           case "stubborn" -> stubborn = parseStubbornSection();
+          case "perfect" -> perfect = parsePerfectSection();
           case "network" -> network = parseNetworkSection();
           default -> fail("Unknown top-level section '%s'".formatted(sectionName));
         }
@@ -143,6 +151,9 @@ public final class ConfigParser {
       if (stubborn == null) {
         throw new IllegalArgumentException("Missing required section 'stubborn' in " + path);
       }
+      if (perfect == null) {
+        throw new IllegalArgumentException("Missing required section 'perfect' in " + path);
+      }
       if (network == null) {
         throw new IllegalArgumentException("Missing required section 'network' in " + path);
       }
@@ -151,10 +162,11 @@ public final class ConfigParser {
       ClientSection parsedClient = client.toRecord(path);
       TimeoutsSection parsedTimeouts = timeouts.toRecord(path);
       StubbornSection parsedStubborn = stubborn.toRecord(path);
+      PerfectSection parsedPerfect = perfect.toRecord(path);
       NetworkSection parsedNetwork = network.toRecord(path);
 
-      validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedNetwork, path);
-      return new ConfigParser(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedNetwork);
+      validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedPerfect, parsedNetwork, path);
+      return new ConfigParser(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedPerfect, parsedNetwork);
     }
 
     // YAML section: system-
@@ -377,7 +389,43 @@ public final class ConfigParser {
           case "maxPending" -> result.maxPending = parsePositiveInt(kv.value(), "stubborn.maxPending");
           case "heapCompactMinSize" ->
               result.heapCompactMinSize = parsePositiveInt(kv.value(), "stubborn.heapCompactMinSize");
+          case "maxRetryAttempts" ->
+              result.maxRetryAttempts = parsePositiveInt(kv.value(), "stubborn.maxRetryAttempts");
+          case "maxTrackedLifetimeMs" ->
+              result.maxTrackedLifetimeMs = parsePositiveLong(kv.value(), "stubborn.maxTrackedLifetimeMs");
           default -> fail("Unknown key in 'stubborn' section: '%s'".formatted(kv.key()));
+        }
+        index++;
+      }
+
+      return result;
+    }
+
+    // YAML section: perfect
+    private MutablePerfectSection parsePerfectSection() {
+      MutablePerfectSection result = new MutablePerfectSection();
+
+      while (hasMoreLines()) {
+        String line = normalizeLine(currentRawLine(), currentLineNumber());
+        if (line.isBlank()) {
+          index++;
+          continue;
+        }
+
+        int indent = indentationOf(line, currentLineNumber());
+        if (indent == 0) {
+          break;
+        }
+        if (indent != 2) {
+          fail("Invalid indentation in 'perfect' section (expected 2 spaces)");
+        }
+
+        KeyValue kv = parseKeyValue(line.trim());
+        switch (kv.key()) {
+          case "maxWindowSize" -> result.maxWindowSize = parsePositiveInt(kv.value(), "perfect.maxWindowSize");
+          case "maxStreamStates" -> result.maxStreamStates = parsePositiveInt(kv.value(), "perfect.maxStreamStates");
+          case "streamIdleTtlMs" -> result.streamIdleTtlMs = parsePositiveLong(kv.value(), "perfect.streamIdleTtlMs");
+          default -> fail("Unknown key in 'perfect' section: '%s'".formatted(kv.key()));
         }
         index++;
       }
@@ -446,7 +494,7 @@ public final class ConfigParser {
   }
 
   // Cross-section validation
-  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, NetworkSection network, Path path) {
+  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, PerfectSection perfect, NetworkSection network, Path path) {
     if (system.n() != replicas.size()) {
       throw new IllegalArgumentException("system.n (%d) must match number of replicas (%d) in %s".formatted(system.n(), replicas.size(), path));
     }
@@ -690,12 +738,27 @@ public final class ConfigParser {
     private Double jitterRatio;
     private Integer maxPending;
     private Integer heapCompactMinSize;
+    private Integer maxRetryAttempts;
+    private Long maxTrackedLifetimeMs;
 
     private StubbornSection toRecord(Path path) {
-      if (baseDelayMs == null || maxDelayMs == null || jitterRatio == null || maxPending == null || heapCompactMinSize == null) {
+      if (baseDelayMs == null || maxDelayMs == null || jitterRatio == null || maxPending == null || heapCompactMinSize == null || maxRetryAttempts == null || maxTrackedLifetimeMs == null) {
         throw new IllegalArgumentException("Section 'stubborn' is incomplete in " + path);
       }
-      return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize);
+      return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize, maxRetryAttempts, maxTrackedLifetimeMs);
+    }
+  }
+
+  private static final class MutablePerfectSection {
+    private Integer maxWindowSize;
+    private Integer maxStreamStates;
+    private Long streamIdleTtlMs;
+
+    private PerfectSection toRecord(Path path) {
+      if (maxWindowSize == null || maxStreamStates == null || streamIdleTtlMs == null) {
+        throw new IllegalArgumentException("Section 'perfect' is incomplete in " + path);
+      }
+      return new PerfectSection(maxWindowSize, maxStreamStates, streamIdleTtlMs);
     }
   }
 
@@ -719,7 +782,9 @@ public final class ConfigParser {
 
   public record TimeoutsSection(int viewChangeMs, int retransmitMs, int maxBackoffMs) {}
 
-  public record StubbornSection(long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize) {}
+  public record StubbornSection(long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize, int maxRetryAttempts, long maxTrackedLifetimeMs) {}
+
+  public record PerfectSection(int maxWindowSize, int maxStreamStates, long streamIdleTtlMs) {}
 
   public record NetworkSection(int maxPacketSize) {}
 }

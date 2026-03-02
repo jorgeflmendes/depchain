@@ -40,6 +40,11 @@ class ConfigParserTest {
     assertEquals(0.20d, config.stubborn().jitterRatio());
     assertEquals(50_000, config.stubborn().maxPending());
     assertEquals(1_024, config.stubborn().heapCompactMinSize());
+    assertEquals(12, config.stubborn().maxRetryAttempts());
+    assertEquals(30_000L, config.stubborn().maxTrackedLifetimeMs());
+    assertEquals(1_000, config.perfect().maxWindowSize());
+    assertEquals(4_096, config.perfect().maxStreamStates());
+    assertEquals(60_000L, config.perfect().streamIdleTtlMs());
   }
 
   private static String configWithoutPublicKeyPath() {
@@ -94,6 +99,13 @@ class ConfigParserTest {
           jitterRatio: 0.20
           maxPending: 50000
           heapCompactMinSize: 1024
+          maxRetryAttempts: 12
+          maxTrackedLifetimeMs: 30000
+
+        perfect:
+          maxWindowSize: 1000
+          maxStreamStates: 4096
+          streamIdleTtlMs: 60000
 
         network:
           maxPacketSize: 8192
@@ -153,6 +165,13 @@ class ConfigParserTest {
           jitterRatio: 0.20
           maxPending: 50000
           heapCompactMinSize: 1024
+          maxRetryAttempts: 12
+          maxTrackedLifetimeMs: 30000
+
+        perfect:
+          maxWindowSize: 1000
+          maxStreamStates: 4096
+          streamIdleTtlMs: 60000
 
         network:
           maxPacketSize: 8192

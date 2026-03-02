@@ -54,6 +54,14 @@ stubborn:
   jitterRatio: 0.20
   maxPending: 50000
   heapCompactMinSize: 1024
+  maxRetryAttempts: 12
+  maxTrackedLifetimeMs: 30000
+
+# Parameters for perfect-link buffering and state cleanup
+perfect:
+  maxWindowSize: 1000
+  maxStreamStates: 4096
+  streamIdleTtlMs: 60000
 
 # Network configuration parameters, including the maximum packet size for messages sent between replicas and clients
 network:

@@ -7,8 +7,8 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
-import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
+import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
+import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -25,31 +25,28 @@ public final class Main {
     ConfigParser config = ConfigParser.load(Path.of(configPath));
     ConfigParser.ReplicaSection targetReplicaConfig = config.requireReplica(targetReplicaId);
     ConfigParser.StubbornSection stubbornConfig = config.stubborn();
+    ConfigParser.PerfectSection perfectConfig = config.perfect();
     InetAddress targetAddress = InetAddress.getByName(targetReplicaConfig.host());
 
     try {
-      try (StubbornLink transport = StubbornLink.unbound(config.network().maxPacketSize(), stubbornConfig.baseDelayMs(), stubbornConfig.maxDelayMs(), stubbornConfig.jitterRatio(), stubbornConfig.maxPending(), stubbornConfig.heapCompactMinSize())) {
+      // TODO: wtf do we need all these parameters?
+      try (PerfectLink perfectLink = PerfectLink.unbound(config.network().maxPacketSize(), stubbornConfig.baseDelayMs(), stubbornConfig.maxDelayMs(), stubbornConfig.jitterRatio(), stubbornConfig.maxPending(), stubbornConfig.heapCompactMinSize(), stubbornConfig.maxRetryAttempts(), stubbornConfig.maxTrackedLifetimeMs(), perfectConfig.maxWindowSize(), perfectConfig.maxStreamStates(), perfectConfig.streamIdleTtlMs())) {
         int connectionId = ThreadLocalRandom.current().nextInt(); // TODO: it should be an uuid or something else, but for now let's just use a random int, maybe it wont be needed
-        int sequenceNumber = 0;
 
-        // Create and send one packet over the stubborn link.
-        Dpch request = Dpch.data(connectionId, sequenceNumber, value.getBytes(StandardCharsets.UTF_8));
-        var trackedKey = transport.sendTracked(request, targetAddress, targetReplicaConfig.clientPort());
+        // Create and send one packet over the perfect link.
+        perfectLink.sendReliable(connectionId, value.getBytes(StandardCharsets.UTF_8), targetAddress, targetReplicaConfig.clientPort());
 
-        // Wait for the response packet with the same connectionId and sequenceNumber as the original request.
+        // Wait for a response packet with the same connectionId.
         Dpch response;
         while (true) {
-          InboundMessage inbound = transport.receive();
+          InboundMessage inbound = perfectLink.receive();
           Dpch candidate = inbound.packet();
           
-          if (candidate.connectionId() == request.connectionId() && candidate.sequenceNumber() == request.sequenceNumber()) {
+          if (candidate.connectionId() == connectionId) {
             response = candidate;
             break;
           }
         }
-
-        // Response arrived: stop retrying this request.
-        transport.cancelTracked(trackedKey, targetAddress, targetReplicaConfig.clientPort());
 
         String responsePayload = new String(response.payload(), StandardCharsets.UTF_8);
         System.out.println("response = " + responsePayload);

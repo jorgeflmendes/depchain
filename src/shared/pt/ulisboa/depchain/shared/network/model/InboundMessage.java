@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.network.messages;
+package pt.ulisboa.depchain.shared.network.model;
 
 import java.net.InetAddress;
 import java.util.Objects;

@@ -8,7 +8,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.util.Objects;
 
-import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
+import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;

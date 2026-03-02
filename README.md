@@ -118,14 +118,16 @@ Project layout:
     |   |   |       |-- ScheduledRetry.java
     |   |   |       |-- StubbornLink.java
     |   |   |       `-- TrackedMessage.java
-    |   |   `-- messages/InboundMessage.java
+    |   |   `-- model/
+    |   |       |-- EndpointConnectionKey.java
+    |   |       `-- InboundMessage.java
     |   `-- utils/
     |       |-- BinarySerialization.java
     |       `-- ValidationUtils.java
     `-- test/java/pt/ulisboa/depchain/
         |-- integration/ReplicaConnectivityTest.java
         `-- shared/
-            |-- config/ConfigFileTest.java
+            |-- config/ConfigParserTest.java
             |-- links/fairloss/
             |   |-- DpchSerializationTest.java
             |   `-- FairLossLinkTest.java
@@ -142,6 +144,7 @@ What each file does:
   - replica endpoints (consensus/client ports and key paths);
   - client settings (host, known replicas, request timeout);
   - stubborn-link retry parameters (`baseDelayMs`, `maxDelayMs`, `jitterRatio`, `maxPending`, `heapCompactMinSize`);
+  - perfect-link buffering/cleanup parameters (`maxWindowSize`, `maxStreamStates`, `streamIdleTtlMs`);
   - network limits (max packet size).
 - `config/keys/`: Key material directory structure (files are expected at runtime, but not versioned here).
 - `scripts/udp_pingpong_trace.py`: Runs client/server through a UDP proxy and generates a packet-level SVG trace with automatic per-connection failure scenarios.
@@ -149,7 +152,7 @@ What each file does:
 - `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, sends a tracked request through `StubbornLink`, waits for matching response, then cancels retries.
 - `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Binds `StubbornLink` on `clientPort`, receives requests in a loop, and dispatches handlers on virtual threads.
 
-- `src/shared/pt/ulisboa/depchain/shared/config/ConfigParser.java`: Strict parser/validator for `config/config.yaml` with consistency checks (IDs, ports, thresholds, stubborn limits, packet size). Supports YAML comments with `#`.
+- `src/shared/pt/ulisboa/depchain/shared/config/ConfigParser.java`: Strict parser/validator for `config/config.yaml` with consistency checks (IDs, ports, thresholds, stubborn/perfect limits, packet size). Supports YAML comments with `#`.
 
 - `src/shared/pt/ulisboa/depchain/shared/network/links/fairloss/FairLossLink.java`: Low-level UDP fair-loss transport over `DatagramSocket` with thread-safe send/receive paths.
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/StubbornLink.java`: Retry-capable link with tracked send/cancel/force-resend, exponential backoff + jitter, and retry-heap compaction.
@@ -157,10 +160,11 @@ What each file does:
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/ScheduledRetry.java`: Retry scheduling item (`endpoint`, `key`, `dueAtMs`) used in the retry heap.
 - `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/Event.java`: Sealed event model for the stubborn event loop (`SendTracked`, `CancelTracked`, `ForceResend`, `Shutdown`).
 - `src/shared/pt/ulisboa/depchain/shared/network/dpch/DpchSerialization.java`: Binary framing/unframing for the universal DPCH wire format (`magic`, `version`, `conn_id`, `type`, `seq_num`, `payload_len`, `payload`).
-- `src/shared/pt/ulisboa/depchain/shared/network/messages/InboundMessage.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
+- `src/shared/pt/ulisboa/depchain/shared/network/model/EndpointConnectionKey.java`: Shared key for stream identity by remote endpoint + connection ID.
+- `src/shared/pt/ulisboa/depchain/shared/network/model/InboundMessage.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
 - `src/shared/pt/ulisboa/depchain/shared/utils/BinarySerialization.java`: Reusable binary read/write helpers for primitive types, UUID, strings, and byte arrays.
 
-- `src/test/java/pt/ulisboa/depchain/shared/config/ConfigFileTest.java`: Unit tests for config parsing/validation.
+- `src/test/java/pt/ulisboa/depchain/shared/config/ConfigParserTest.java`: Unit tests for config parsing/validation.
 - `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/DpchSerializationTest.java`: Unit tests for packet codec round-trip, malformed headers, invalid slices, and payload boundary checks.
 - `src/test/java/pt/ulisboa/depchain/shared/utils/BinarySerializationTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
 - `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/FairLossLinkTest.java`: Unit tests for fair-loss send/receive behavior, malformed packet handling, and concurrent multi-client scenarios.
@@ -251,13 +255,13 @@ Run a specific replica/config:
 - localhost addresses and per-replica consensus/client ports;
 - client identity, host, request timeout, and known replica IDs (no dedicated client port);
 - timeout values for view changes and retransmissions;
-- stubborn retry parameters and network max packet size.
+- stubborn retry parameters, perfect-link buffering/cleanup parameters, and network max packet size.
 
 Before execution, ensure:
 
 - key files exist at the configured paths;
 - required ports are free;
-- all replicas use the same membership/network/stubborn configuration.
+- all replicas use the same membership/network/stubborn/perfect configuration.
 
 ## 11. Stubborn Ping-Pong Diagram
 

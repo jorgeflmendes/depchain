@@ -23,7 +23,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import pt.ulisboa.depchain.shared.network.messages.InboundMessage;
+import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;

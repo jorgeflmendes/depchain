@@ -17,8 +17,7 @@ public final class Dpch {
     Objects.requireNonNull(type, "type cannot be null");
     Objects.requireNonNull(payload, "payload cannot be null");
     if (payload.length > MAX_PAYLOAD_LENGTH) {
-      throw new IllegalArgumentException(
-          "payload length exceeds uint16 max (%d > %d)".formatted(payload.length, MAX_PAYLOAD_LENGTH));
+      throw new IllegalArgumentException("payload length exceeds uint16 max (%d > %d)".formatted(payload.length, MAX_PAYLOAD_LENGTH));
     }
 
     this.connectionId = connectionId;
