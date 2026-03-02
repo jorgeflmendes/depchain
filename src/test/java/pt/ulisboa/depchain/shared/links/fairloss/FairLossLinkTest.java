@@ -24,8 +24,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import pt.ulisboa.depchain.shared.network.model.InboundMessage;
+import pt.ulisboa.depchain.shared.network.model.InboundDatagram;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 
 class FairLossLinkTest {
@@ -38,31 +39,33 @@ class FairLossLinkTest {
     try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
          FairLossLink clientTransport = FairLossLink.unbound(4096)) {
       Dpch outbound = Dpch.data(UUID.randomUUID(), 7, "hello".getBytes(StandardCharsets.UTF_8));
-      clientTransport.send(outbound, loopback, port);
+      clientTransport.send(DpchSerialization.toBytes(outbound), loopback, port);
 
-      InboundMessage inbound = serverTransport.receive();
-      assertEquals(outbound.connectionId(), inbound.packet().connectionId());
-      assertEquals(outbound.sequenceNumber(), inbound.packet().sequenceNumber());
-      assertEquals("hello", new String(inbound.packet().payload(), StandardCharsets.UTF_8));
-      assertNotNull(inbound.senderIp());
+      InboundDatagram inboundRaw = serverTransport.receive();
+      Dpch inbound = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
+      assertEquals(outbound.connectionId(), inbound.connectionId());
+      assertEquals(outbound.sequenceNumber(), inbound.sequenceNumber());
+      assertEquals("hello", new String(inbound.payload(), StandardCharsets.UTF_8));
+      assertNotNull(inboundRaw.senderIp());
 
       Dpch response =
           Dpch.data(
-              inbound.packet().connectionId(),
-              inbound.packet().sequenceNumber(),
+              inbound.connectionId(),
+              inbound.sequenceNumber(),
               "matched".getBytes(StandardCharsets.UTF_8));
-      serverTransport.send(response, inbound.senderIp(), inbound.senderPort());
+      serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.senderIp(), inboundRaw.senderPort());
 
-      InboundMessage reply = clientTransport.receive();
-      assertEquals("matched", new String(reply.packet().payload(), StandardCharsets.UTF_8));
-      assertEquals(outbound.connectionId(), reply.packet().connectionId());
-      assertEquals(outbound.sequenceNumber(), reply.packet().sequenceNumber());
+      InboundDatagram replyRaw = clientTransport.receive();
+      Dpch reply = DpchSerialization.fromBytes(replyRaw.payload(), 0, replyRaw.payload().length);
+      assertEquals("matched", new String(reply.payload(), StandardCharsets.UTF_8));
+      assertEquals(outbound.connectionId(), reply.connectionId());
+      assertEquals(outbound.sequenceNumber(), reply.sequenceNumber());
     }
   }
 
   @Test
   @Timeout(5)
-  void receiveFailsOnMalformedPacket() throws Exception {
+  void receiveReturnsRawMalformedPacket() throws Exception {
     InetAddress loopback = InetAddress.getLoopbackAddress();
     int port = pickFreeUdpPort(loopback);
 
@@ -70,7 +73,8 @@ class FairLossLinkTest {
          DatagramSocket sender = new DatagramSocket(0, loopback)) {
       byte[] malformed = new byte[] {0x01, 0x02, 0x03};
       sender.send(new DatagramPacket(malformed, malformed.length, loopback, port));
-      assertThrows(IOException.class, serverTransport::receive);
+      InboundDatagram inbound = serverTransport.receive();
+      assertEquals(malformed.length, inbound.payload().length);
     }
   }
 
@@ -79,7 +83,7 @@ class FairLossLinkTest {
     InetAddress loopback = InetAddress.getLoopbackAddress();
 
     try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
-      Dpch oversized = Dpch.data(UUID.randomUUID(), 1, new byte[8_192]);
+      byte[] oversized = new byte[8_192];
       IOException error =
           assertThrows(
               IOException.class,
@@ -104,17 +108,18 @@ class FairLossLinkTest {
               try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096)) {
                 serverReady.countDown();
                 for (int i = 0; i < clientCount; i++) {
-                  InboundMessage inbound = serverTransport.receive();
-                  String text = new String(inbound.packet().payload(), StandardCharsets.UTF_8);
-                  String key = inbound.packet().connectionId() + ":" + inbound.packet().sequenceNumber();
+                  InboundDatagram inboundRaw = serverTransport.receive();
+                  Dpch inbound = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
+                  String text = new String(inbound.payload(), StandardCharsets.UTF_8);
+                  String key = inbound.connectionId() + ":" + inbound.sequenceNumber();
                   received.put(key, text);
 
                   Dpch response =
                       Dpch.data(
-                          inbound.packet().connectionId(),
-                          inbound.packet().sequenceNumber(),
+                          inbound.connectionId(),
+                          inbound.sequenceNumber(),
                           ("ack:" + text).getBytes(StandardCharsets.UTF_8));
-                  serverTransport.send(response, inbound.senderIp(), inbound.senderPort());
+                  serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.senderIp(), inboundRaw.senderPort());
                 }
               } catch (Exception exception) {
                 throw new RuntimeException(exception);
@@ -135,10 +140,10 @@ class FairLossLinkTest {
         tasks.add(
             () -> {
               try (FairLossLink clientTransport = FairLossLink.unbound(4096)) {
-                clientTransport.send(outbound, loopback, port);
+                clientTransport.send(DpchSerialization.toBytes(outbound), loopback, port);
                 while (true) {
-                  InboundMessage inbound = clientTransport.receive();
-                  Dpch candidate = inbound.packet();
+                  InboundDatagram inboundRaw = clientTransport.receive();
+                  Dpch candidate = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
                   boolean sameConnectionId = candidate.connectionId().equals(outbound.connectionId());
                   boolean sameSequence = candidate.sequenceNumber() == outbound.sequenceNumber();
                   if (sameConnectionId && sameSequence) {

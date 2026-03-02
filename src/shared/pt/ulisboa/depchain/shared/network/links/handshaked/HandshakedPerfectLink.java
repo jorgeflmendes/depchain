@@ -101,6 +101,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
       state.markLocalFinished();
       state.notifyAll();
     }
+    connectionStates.remove(key, state);
 
     cleanStaleStatesIfNeeded();
   }
@@ -149,6 +150,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
     ConnectionState state = connectionStates.computeIfAbsent(key, ignored -> new ConnectionState());
     boolean deliverData = false;
+    boolean shouldRemoveState = false;
     long now = System.currentTimeMillis();
 
     synchronized (state) {
@@ -165,9 +167,14 @@ public final class HandshakedPerfectLink implements AutoCloseable {
       } else if (type == DpchType.FIN) {
         state.markRemoteFinished();
         state.notifyAll();
+        shouldRemoveState = true;
       } else if (state.isFullyEstablished() && !state.isFinished()) {
         deliverData = true;
       }
+    }
+
+    if (shouldRemoveState) {
+      connectionStates.remove(key, state);
     }
 
     cleanStaleStatesIfNeeded();

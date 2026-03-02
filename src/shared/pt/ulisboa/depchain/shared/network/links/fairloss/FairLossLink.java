@@ -6,11 +6,10 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketException;
+import java.util.Arrays;
 import java.util.Objects;
 
-import pt.ulisboa.depchain.shared.network.model.InboundMessage;
-import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
+import pt.ulisboa.depchain.shared.network.model.InboundDatagram;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class FairLossLink implements AutoCloseable {
@@ -50,11 +49,10 @@ public final class FairLossLink implements AutoCloseable {
     return new FairLossLink(socket, maxPacketSize);
   }
 
-  // Send one packet to the target endpoint.
-  public void send(Dpch packet, InetAddress remoteIp, int remotePort) throws IOException {
-    Objects.requireNonNull(packet, "packet cannot be null");
+  // Send one raw payload to the target endpoint.
+  public void send(byte[] payload, InetAddress remoteIp, int remotePort) throws IOException {
+    Objects.requireNonNull(payload, "payload cannot be null");
     Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
-    byte[] payload = DpchSerialization.toBytes(packet);
     if (payload.length > maxPacketSize) {
       throw new IOException("Serialized payload exceeds maxPacketSize (%d > %d)".formatted(payload.length, maxPacketSize));
     }
@@ -65,15 +63,16 @@ public final class FairLossLink implements AutoCloseable {
     }
   }
 
-  // Wait until a packet is received (blocking call).
-  public InboundMessage receive() throws IOException {
+  // Wait until one datagram is received (blocking call).
+  public InboundDatagram receive() throws IOException {
     synchronized (receiveLock) {
       receivePacket.setData(receiveBuffer, 0, receiveBuffer.length);
       receivePacket.setLength(receiveBuffer.length);
       socket.receive(receivePacket);
-      Dpch decoded = DpchSerialization.fromBytes(receivePacket.getData(), receivePacket.getOffset(), receivePacket.getLength());
 
-      return new InboundMessage(decoded, receivePacket.getAddress(), receivePacket.getPort());
+      byte[] payload = Arrays.copyOfRange(receivePacket.getData(), receivePacket.getOffset(), receivePacket.getOffset() + receivePacket.getLength());
+      
+      return new InboundDatagram(payload, receivePacket.getAddress(), receivePacket.getPort());
     }
   }
 

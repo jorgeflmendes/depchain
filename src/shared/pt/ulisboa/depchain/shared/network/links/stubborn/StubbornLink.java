@@ -12,7 +12,9 @@ import java.util.PriorityQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
+import pt.ulisboa.depchain.shared.network.model.InboundDatagram;
 import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
@@ -101,7 +103,7 @@ public final class StubbornLink implements AutoCloseable {
     Objects.requireNonNull(packet, "packet cannot be null");
     Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
     ValidationUtils.requireValidPort(remotePort, "remotePort");
-    fairLoss.send(packet, remoteIp, remotePort);
+    fairLoss.send(DpchSerialization.toBytes(packet), remoteIp, remotePort);
   }
 
   // Send now and start retry tracking for this message key.
@@ -162,7 +164,10 @@ public final class StubbornLink implements AutoCloseable {
   // Receive one inbound packet from fair-loss.
   public InboundMessage receive() throws IOException {
     ensureOpen();
-    return fairLoss.receive();
+    InboundDatagram datagram = fairLoss.receive();
+    byte[] payload = datagram.payload();
+    Dpch decoded = DpchSerialization.fromBytes(payload, 0, payload.length);
+    return new InboundMessage(decoded, datagram.senderIp(), datagram.senderPort());
   }
 
   // Retry loop that processes due retransmissions.
@@ -237,7 +242,7 @@ public final class StubbornLink implements AutoCloseable {
   // Best-effort send that keeps retry state even if send fails.
   private void sendIgnoringErrors(Dpch packet, InetSocketAddress endpoint) {
     try {
-      fairLoss.send(packet, endpoint.getAddress(), endpoint.getPort());
+      fairLoss.send(DpchSerialization.toBytes(packet), endpoint.getAddress(), endpoint.getPort());
     } catch (IOException exception) {
       System.out.printf("Stubborn send error to %s:%d for conn=%s seq=%d type=%s = %s%n", endpoint.getAddress().getHostAddress(), endpoint.getPort(), packet.connectionId(), packet.sequenceNumber(), packet.type(), exception.getMessage());
     }
