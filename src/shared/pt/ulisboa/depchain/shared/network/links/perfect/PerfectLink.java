@@ -5,7 +5,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -97,28 +96,60 @@ public class PerfectLink implements AutoCloseable {
   }
 
   // Send a message reliably to the specified remote endpoint and connection ID.
-  public void sendReliable(UUID connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+  public void sendReliable(long connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
     sendByType(connectionId, DpchType.DATA, payload, remoteIp, remotePort);
   }
 
   // SYN message to initiate a new connection.
-  public void sendSyn(UUID connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+  public void sendSyn(long connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
     sendByType(connectionId, DpchType.SYN, payload, remoteIp, remotePort);
   }
 
+  // SYN carrying ACK semantics in the same DPCH packet.
+  public void sendSynAck(long connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+    sendByTypeWithAck(connectionId, DpchType.SYN, payload, remoteIp, remotePort);
+  }
+
   // FIN message to terminate a connection.
-  public void sendFin(UUID connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+  public void sendFin(long connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
     sendByType(connectionId, DpchType.FIN, payload, remoteIp, remotePort);
   }
 
+  // FIN carrying ACK semantics in the same DPCH packet.
+  public void sendFinAck(long connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
+    sendByTypeWithAck(connectionId, DpchType.FIN, payload, remoteIp, remotePort);
+  }
+
+  // Send one standalone ACK (without tracking/retry), used by higher layers for control completion.
+  public void sendAck(long connectionId, int acknowledgedSequence, DpchType acknowledgedType, InetAddress remoteIp, int remotePort) {
+    byte[] ackPayload = new byte[] {acknowledgedType.code()};
+    sendAckIgnoringErrors(connectionId, acknowledgedSequence, new InetSocketAddress(remoteIp, remotePort), ackPayload);
+  }
+
   // Common send logic for different reliable packet types.
-  private void sendByType(UUID connectionId, DpchType type, byte[] payload, InetAddress remoteIp, int remotePort) {
+  private void sendByType(long connectionId, DpchType type, byte[] payload, InetAddress remoteIp, int remotePort) {
     EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
     long now = System.currentTimeMillis();
     SenderState senderState = sendSequences.computeIfAbsent(key, ignored -> new SenderState());
     int seq = senderState.nextSequence(type, now);
 
     Dpch packet = new Dpch(connectionId, type, seq, payload);
+    stubbornLink.sendTracked(packet, remoteIp, remotePort);
+    cleanStaleStatesIfNeeded();
+  }
+
+  private void sendByTypeWithAck(long connectionId, DpchType type, byte[] payload, InetAddress remoteIp, int remotePort) {
+    EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
+    long now = System.currentTimeMillis();
+    SenderState senderState = sendSequences.computeIfAbsent(key, ignored -> new SenderState());
+    int seq = senderState.nextSequence(type, now);
+
+    Dpch packet = switch (type) {
+      case SYN -> Dpch.synAck(connectionId, seq, payload);
+      case FIN -> Dpch.finAck(connectionId, seq, payload);
+      default -> throw new IllegalArgumentException("ACK combination only supported for SYN/FIN");
+    };
+
     stubbornLink.sendTracked(packet, remoteIp, remotePort);
     cleanStaleStatesIfNeeded();
   }
@@ -156,23 +187,25 @@ public class PerfectLink implements AutoCloseable {
     EndpointConnectionKey key = connectionKey(packet.connectionId(), remote);
     long now = System.currentTimeMillis();
 
-    if (packet.type() == DpchType.ACK) {
-      handleAck(packet, key, remote, now);
-    } else if (packet.type() == DpchType.DATA || packet.type() == DpchType.SYN || packet.type() == DpchType.FIN) {
-      handleReliable(inbound, packet, key, remote, now);
+    DpchType reliableType = packet.reliableTypeOrNull();
+    if (packet.hasType(DpchType.ACK)) {
+      handleAck(packet, reliableType, key, remote, now);
+    }
+    if (reliableType != null) {
+      handleReliable(inbound, packet, reliableType, key, remote, now);
     }
 
     cleanStaleStatesIfNeeded();
   }
 
   // Handle ACK messages by canceling matching tracked packets.
-  private void handleAck(Dpch ackPacket, EndpointConnectionKey key, InetSocketAddress remote, long now) {
+  private void handleAck(Dpch ackPacket, DpchType fallbackAcknowledgedType, EndpointConnectionKey key, InetSocketAddress remote, long now) {
     SenderState senderState = sendSequences.get(key);
     if (senderState == null) {
       return;
     }
 
-    DpchType acknowledgedType = decodeAcknowledgedType(ackPacket.payload());
+    DpchType acknowledgedType = decodeAcknowledgedType(ackPacket.payload(), fallbackAcknowledgedType);
     if (acknowledgedType == null) {
       return;
     }
@@ -189,7 +222,7 @@ public class PerfectLink implements AutoCloseable {
   }
 
   // Handle reliable packets (DATA/SYN/FIN) with deduplication + in-order delivery.
-  private void handleReliable(InboundMessage inbound, Dpch packet, EndpointConnectionKey key, InetSocketAddress remote, long now) {
+  private void handleReliable(InboundMessage inbound, Dpch packet, DpchType reliableType, EndpointConnectionKey key, InetSocketAddress remote, long now) {
     ReceiverState state = receiverStates.computeIfAbsent(key, ignored -> {
       // This stream became active again.
       Integer persisted = ttlEvictedReceiverDeliveredFloors.remove(key);
@@ -206,13 +239,16 @@ public class PerfectLink implements AutoCloseable {
       }
 
       if (state.isAlreadyDelivered(seq)) {
+        // Duplicate reliable packet: ACK to stop retries.
         shouldAck = true;
       } else if (state.isOutsideWindow(seq, maxWindowSize)) {
         return;
       } else {
         // Add packet only if not already buffered.
         boolean bufferedNow = state.bufferIfNew(seq, inbound);
-        shouldAck = true;
+        // ACK DATA and SYN immediately; FIN keeps the in-order ACK rule below.
+        // Combined packets (SYN|ACK / FIN|ACK) are also ACKed to preserve handshake symmetry.
+        shouldAck = reliableType == DpchType.DATA || reliableType == DpchType.SYN || packet.hasType(DpchType.ACK);
         if (bufferedNow) {
           // Deliver in-order packets in cascade.
           while (state.hasNextInOrderReady()) {
@@ -222,30 +258,33 @@ public class PerfectLink implements AutoCloseable {
         }
 
         // FIN is acknowledged only after it becomes in-order delivered.
-        if (packet.type() == DpchType.FIN) {
+        if (reliableType == DpchType.FIN && !packet.hasType(DpchType.ACK)) {
           shouldAck = state.isAlreadyDelivered(seq);
         }
       }
     }
 
     if (shouldAck) {
-      sendAckIgnoringErrors(packet, remote);
+      byte[] ackPayload = new byte[] {reliableType.code()};
+      sendAckIgnoringErrors(packet.connectionId(), packet.sequenceNumber(), remote, ackPayload);
     }
   }
 
   // Send an ACK for the received packet, ignoring any exceptions to avoid impacting the receive loop.
-  private void sendAckIgnoringErrors(Dpch dataPacket, InetSocketAddress remote) {
+  private void sendAckIgnoringErrors(long connectionId, int sequenceNumber, InetSocketAddress remote, byte[] ackPayload) {
     try {
-      byte[] ackPayload = new byte[] {dataPacket.type().code()};
-      stubbornLink.sendOnce(Dpch.ack(dataPacket.connectionId(), dataPacket.sequenceNumber(), ackPayload), remote.getAddress(), remote.getPort());
+      stubbornLink.sendOnce(Dpch.ack(connectionId, sequenceNumber, ackPayload), remote.getAddress(), remote.getPort());
     } catch (IOException exception) {
-      System.err.printf("PerfectLink ACK send error to %s:%d for conn=%s seq=%d = %s%n", remote.getAddress().getHostAddress(), remote.getPort(), dataPacket.connectionId(), dataPacket.sequenceNumber(), exception.getMessage());
+      System.err.printf("PerfectLink ACK send error to %s:%d for conn=%s seq=%d = %s%n", remote.getAddress().getHostAddress(), remote.getPort(), connectionId, sequenceNumber, exception.getMessage());
     }
   }
 
   // To know the ack type (DATA/SYN/FIN).
-  private DpchType decodeAcknowledgedType(byte[] ackPayload) {
+  private DpchType decodeAcknowledgedType(byte[] ackPayload, DpchType fallbackAcknowledgedType) {
     if (ackPayload.length != 1) {
+      if (ackPayload.length == 0) {
+        return fallbackAcknowledgedType;
+      }
       return null;
     }
 
@@ -260,11 +299,11 @@ public class PerfectLink implements AutoCloseable {
     }
   }
 
-  private EndpointConnectionKey connectionKey(UUID connectionId, InetAddress remoteIp, int remotePort) {
+  private EndpointConnectionKey connectionKey(long connectionId, InetAddress remoteIp, int remotePort) {
     return new EndpointConnectionKey(new InetSocketAddress(remoteIp, remotePort), connectionId);
   }
 
-  private EndpointConnectionKey connectionKey(UUID connectionId, InetSocketAddress remoteEndpoint) {
+  private EndpointConnectionKey connectionKey(long connectionId, InetSocketAddress remoteEndpoint) {
     return new EndpointConnectionKey(remoteEndpoint, connectionId);
   }
 

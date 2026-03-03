@@ -14,7 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -22,6 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
@@ -38,7 +38,7 @@ class FairLossLinkTest {
 
     try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
          FairLossLink clientTransport = FairLossLink.unbound(4096)) {
-      Dpch outbound = Dpch.data(UUID.randomUUID(), 7, "hello".getBytes(StandardCharsets.UTF_8));
+      Dpch outbound = Dpch.data(ThreadLocalRandom.current().nextLong(), 7, "hello".getBytes(StandardCharsets.UTF_8));
       clientTransport.send(DpchSerialization.toBytes(outbound), loopback, port);
 
       InboundDatagram inboundRaw = serverTransport.receive();
@@ -135,7 +135,7 @@ class FairLossLinkTest {
 
       for (int i = 0; i < clientCount; i++) {
         Dpch outbound =
-            Dpch.data(UUID.randomUUID(), i, ("client-" + i).getBytes(StandardCharsets.UTF_8));
+            Dpch.data(ThreadLocalRandom.current().nextLong(), i, ("client-" + i).getBytes(StandardCharsets.UTF_8));
         outboundPackets.add(outbound);
         tasks.add(
             () -> {
@@ -144,7 +144,7 @@ class FairLossLinkTest {
                 while (true) {
                   InboundDatagram inboundRaw = clientTransport.receive();
                   Dpch candidate = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
-                  boolean sameConnectionId = candidate.connectionId().equals(outbound.connectionId());
+                  boolean sameConnectionId = candidate.connectionId() == outbound.connectionId();
                   boolean sameSequence = candidate.sequenceNumber() == outbound.sequenceNumber();
                   if (sameConnectionId && sameSequence) {
                     return candidate;

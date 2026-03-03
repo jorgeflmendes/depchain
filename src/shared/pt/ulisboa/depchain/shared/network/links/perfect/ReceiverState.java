@@ -4,6 +4,7 @@ import java.util.HashSet;
 import java.util.PriorityQueue;
 import java.util.Set;
 
+import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 
 final class ReceiverState {
@@ -53,7 +54,7 @@ final class ReceiverState {
   InboundMessage pollNextInOrder() {
     InboundMessage delivered = buffer.poll();
     bufferedMessageSeqNums.remove(delivered.packet().sequenceNumber());
-    if (nextExpectedSeq == Integer.MAX_VALUE) {
+    if (nextExpectedSeq > Dpch.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Receiver sequence number exhausted for stream");
     }
     nextExpectedSeq++;

@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.config.LinkConfigFactory;
@@ -47,12 +47,12 @@ public final class Main {
 
   // Sends one request and waits for the matching response.
   private static String sendRequest(HandshakedPerfectLink transport, String value, InetAddress targetAddress, int targetPort, long timeoutMs) throws IOException, InterruptedException {
-    UUID connectionId = UUID.randomUUID();
+    long connectionId = ThreadLocalRandom.current().nextLong();
     transport.sendReliable(connectionId, value.getBytes(StandardCharsets.UTF_8), targetAddress, targetPort);
 
     try {
       long deadlineMs = System.currentTimeMillis() + timeoutMs;
-      
+
       while (true) {
         long remainingMs = deadlineMs - System.currentTimeMillis();
         if (remainingMs <= 0L) {
@@ -65,7 +65,7 @@ public final class Main {
         }
 
         Dpch candidate = inbound.packet();
-        if (candidate.connectionId().equals(connectionId)) {
+        if (candidate.connectionId() == connectionId) {
           return new String(candidate.payload(), StandardCharsets.UTF_8);
         }
       }

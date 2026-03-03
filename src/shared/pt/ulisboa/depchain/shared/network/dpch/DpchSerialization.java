@@ -6,17 +6,18 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Objects;
-import java.util.UUID;
 
 import pt.ulisboa.depchain.shared.utils.BinarySerialization;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class DpchSerialization {
-  // 4-byte DPCH protocol signature.
-  private static final int MAGIC_NUMBER = 0x44504348; // "DPCH" in ASCII
-  
+  // 2-byte DPCH-L protocol signature.
+  private static final byte MAGIC_HI = 0x44; // 'D'
+  private static final byte MAGIC_LO = 0x50; // 'P'
+
   // 1-byte protocol version.
-  private static final byte FORMAT_VERSION = 1;
+  private static final byte FORMAT_VERSION = 2;
+  static final int LONG_HEADER_SIZE = 14;
 
   public static byte[] toBytes(Dpch value) throws IOException {
     Objects.requireNonNull(value, "value cannot be null");
@@ -31,11 +32,15 @@ public final class DpchSerialization {
   // Decode a message record from raw bytes.
   public static Dpch fromBytes(byte[] bytes, int offset, int length) throws IOException {
     ValidationUtils.requireValidSlice(bytes, offset, length);
+    if (length < LONG_HEADER_SIZE) {
+      throw new IOException("DPCH-L packet shorter than long header (" + length + " < " + LONG_HEADER_SIZE + ")");
+    }
 
     try (ByteArrayInputStream input = new ByteArrayInputStream(bytes, offset, length); DataInputStream dataInput = new DataInputStream(input)) {
       // Read the magic number and version for basic sanity checks.
-      int magic = BinarySerialization.readInt(dataInput);
-      if (magic != MAGIC_NUMBER) {
+      byte magicHi = BinarySerialization.readByte(dataInput);
+      byte magicLo = BinarySerialization.readByte(dataInput);
+      if (magicHi != MAGIC_HI || magicLo != MAGIC_LO) {
         throw new IOException("Invalid message magic");
       }
       byte version = BinarySerialization.readByte(dataInput);
@@ -44,31 +49,18 @@ public final class DpchSerialization {
       }
 
       // Remaining header fields.
-      UUID connectionId = BinarySerialization.readUuid(dataInput);
-      byte typeCode = BinarySerialization.readByte(dataInput);
-      int sequenceNumber = BinarySerialization.readInt(dataInput);
-      
-      // Read payload length and payload, with sanity checks.
-      int payloadLength = Short.toUnsignedInt(BinarySerialization.readShort(dataInput));
-      if (payloadLength > dataInput.available()) {
-        throw new IOException("Invalid payload length for packet size");
-      }
-      byte[] payload = dataInput.readNBytes(payloadLength);
-      if (payload.length != payloadLength) {
-        throw new IOException("Incomplete packet payload");
-      }
+      byte flagsByte = BinarySerialization.readByte(dataInput);
+      int flags = DpchFlags.decode(flagsByte);
+      long connectionId = BinarySerialization.readLong(dataInput);
+      int sequenceNumber = Short.toUnsignedInt(BinarySerialization.readShort(dataInput));
+      byte[] payload = dataInput.readNBytes(dataInput.available());
 
       // Check for trailing bytes, which would indicate a malformed packet.
       if (dataInput.available() != 0) {
         throw new IOException("Trailing bytes after packet payload");
       }
 
-      try {
-        DpchType type = DpchType.fromCode(typeCode);
-        return Dpch.decoded(connectionId, type, sequenceNumber, payload);
-      } catch (IllegalArgumentException invalidPacket) {
-        throw new IOException(invalidPacket.getMessage(), invalidPacket);
-      }
+      return Dpch.decoded(connectionId, flags, sequenceNumber, payload);
     }
   }
 
@@ -76,12 +68,12 @@ public final class DpchSerialization {
   private static void writeHeader(DataOutputStream output, Dpch packet) throws IOException {
     byte[] payload = packet.payloadInternal();
 
-    BinarySerialization.writeInt(output, MAGIC_NUMBER);
+    BinarySerialization.writeByte(output, MAGIC_HI);
+    BinarySerialization.writeByte(output, MAGIC_LO);
     BinarySerialization.writeByte(output, FORMAT_VERSION);
-    BinarySerialization.writeUuid(output, packet.connectionId());
-    BinarySerialization.writeByte(output, packet.type().code());
-    BinarySerialization.writeInt(output, packet.sequenceNumber());
-    BinarySerialization.writeShort(output, (short) payload.length);
+    BinarySerialization.writeByte(output, DpchFlags.encode(packet.flags()));
+    BinarySerialization.writeLong(output, packet.connectionId());
+    BinarySerialization.writeShort(output, (short) packet.sequenceNumber());
 
     output.write(payload);
   }

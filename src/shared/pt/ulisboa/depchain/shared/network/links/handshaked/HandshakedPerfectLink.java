@@ -5,7 +5,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -26,6 +25,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
   private final int maxConnectionStates;
   private final long connectionIdleTtlMs;
   private final Map<EndpointConnectionKey, ConnectionState> connectionStates;
+  private final Map<EndpointConnectionKey, Long> closedConnections;
   private final BlockingQueue<InboundMessage> deliveryQueue;
   private final AtomicBoolean running;
   private final Thread workerThread;
@@ -35,6 +35,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     this.maxConnectionStates = ValidationUtils.requirePositiveInt(maxConnectionStates, "maxConnectionStates");
     this.connectionIdleTtlMs = ValidationUtils.requirePositiveLong(connectionIdleTtlMs, "connectionIdleTtlMs");
     this.connectionStates = new ConcurrentHashMap<>();
+    this.closedConnections = new ConcurrentHashMap<>();
     this.deliveryQueue = new LinkedBlockingQueue<>();
     this.running = new AtomicBoolean(true);
     this.workerThread = Thread.ofVirtual().name("handshaked-perfect-link").start(this::runReceiveLoop);
@@ -53,8 +54,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
   }
 
   // Send one DATA message after strict SYN/SYN establishment.
-  public void sendReliable(UUID connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
-    Objects.requireNonNull(connectionId, "connectionId cannot be null");
+  public void sendReliable(long connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
     Objects.requireNonNull(payload, "payload cannot be null");
     Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
     ValidationUtils.requireValidPort(remotePort, "remotePort");
@@ -81,18 +81,29 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     cleanStaleStatesIfNeeded();
   }
 
-  public void closeConnection(UUID connectionId, InetAddress remoteIp, int remotePort) {
-    Objects.requireNonNull(connectionId, "connectionId cannot be null");
+  public void closeConnection(long connectionId, InetAddress remoteIp, int remotePort) {
     Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
     ValidationUtils.requireValidPort(remotePort, "remotePort");
 
     EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
-    ConnectionState state = connectionStates.computeIfAbsent(key, ignored -> new ConnectionState());
     long now = System.currentTimeMillis();
+    if (isClosedRecently(key, now)) {
+      return;
+    }
+
+    ConnectionState state = connectionStates.get(key);
+    if (state == null) {
+      // Avoid resurrecting a stream with SYN/FIN when no active state exists.
+      markClosed(key, now);
+      cleanStaleStatesIfNeeded();
+      return;
+    }
 
     synchronized (state) {
       state.touch(now);
-      if (state.isLocalFinished()) {
+      if (state.isLocalFinished() || state.isRemoteFinished()) {
+        connectionStates.remove(key, state);
+        markClosed(key, System.currentTimeMillis());
         return;
       }
 
@@ -102,6 +113,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
       state.notifyAll();
     }
     connectionStates.remove(key, state);
+    markClosed(key, System.currentTimeMillis());
 
     cleanStaleStatesIfNeeded();
   }
@@ -144,21 +156,25 @@ public final class HandshakedPerfectLink implements AutoCloseable {
       return null;
     }
 
-    UUID connectionId = inbound.packet().connectionId();
+    long connectionId = inbound.packet().connectionId();
     InetAddress remoteIp = inbound.senderIp();
     int remotePort = inbound.senderPort();
     EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
+    long now = System.currentTimeMillis();
+    if (isClosedRecently(key, now)) {
+      return null;
+    }
+
     ConnectionState state = connectionStates.computeIfAbsent(key, ignored -> new ConnectionState());
     boolean deliverData = false;
     boolean shouldRemoveState = false;
-    long now = System.currentTimeMillis();
 
     synchronized (state) {
       state.touch(now);
 
       if (type == DpchType.SYN) {
         state.markRemoteEstablishedIfNotFinished();
-        // Passive handshake side: reply with SYN once.
+        // Passive handshake side: reply with plain SYN (ACK stays separate).
         if (state.shouldSendSyn() && !state.isLocalFinished()) {
           perfectLink.sendSyn(connectionId, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
           state.markLocalEstablished();
@@ -175,13 +191,14 @@ public final class HandshakedPerfectLink implements AutoCloseable {
 
     if (shouldRemoveState) {
       connectionStates.remove(key, state);
+      markClosed(key, System.currentTimeMillis());
     }
 
     cleanStaleStatesIfNeeded();
     return deliverData ? inbound : null;
   }
 
-  private EndpointConnectionKey connectionKey(UUID connectionId, InetAddress remoteIp, int remotePort) {
+  private EndpointConnectionKey connectionKey(long connectionId, InetAddress remoteIp, int remotePort) {
     return new EndpointConnectionKey(new InetSocketAddress(remoteIp, remotePort), connectionId);
   }
 
@@ -191,7 +208,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     }
   }
 
-  private void ensureSynSent(ConnectionState state, UUID connectionId, InetAddress remoteIp, int remotePort) {
+  private void ensureSynSent(ConnectionState state, long connectionId, InetAddress remoteIp, int remotePort) {
     if (state.shouldSendSyn()) {
       perfectLink.sendSyn(connectionId, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
       state.markLocalEstablished();
@@ -224,17 +241,50 @@ public final class HandshakedPerfectLink implements AutoCloseable {
 
   // Keep memory bounded without dropping active states arbitrarily.
   private void cleanStaleStatesIfNeeded() {
-    if (connectionStates.size() <= maxConnectionStates) {
-      return;
-    }
-
     long now = System.currentTimeMillis();
-    connectionStates.entrySet().removeIf(entry -> entry.getValue().isStale(now, connectionIdleTtlMs));
-    if (connectionStates.size() <= maxConnectionStates) {
+    pruneClosedConnections(now);
+
+    if (connectionStates.size() > maxConnectionStates) {
+      connectionStates.entrySet().removeIf(entry -> entry.getValue().isStale(now, connectionIdleTtlMs));
+      if (connectionStates.size() > maxConnectionStates) {
+        connectionStates.entrySet().removeIf(entry -> entry.getValue().isFinished());
+      }
+    }
+  }
+
+  private void markClosed(EndpointConnectionKey key, long now) {
+    closedConnections.put(key, now);
+  }
+
+  private boolean isClosedRecently(EndpointConnectionKey key, long now) {
+    Long closedAt = closedConnections.get(key);
+    if (closedAt == null) {
+      return false;
+    }
+
+    if ((now - closedAt) > connectionIdleTtlMs) {
+      closedConnections.remove(key, closedAt);
+      return false;
+    }
+    return true;
+  }
+
+  private void pruneClosedConnections(long now) {
+    if (closedConnections.isEmpty()) {
       return;
     }
 
-    connectionStates.entrySet().removeIf(entry -> entry.getValue().isFinished());
+    closedConnections.entrySet().removeIf(entry -> (now - entry.getValue()) > connectionIdleTtlMs);
+    if (closedConnections.size() <= maxConnectionStates) {
+      return;
+    }
+
+    closedConnections.entrySet().removeIf(entry -> {
+      if (closedConnections.size() <= maxConnectionStates) {
+        return false;
+      }
+      return !connectionStates.containsKey(entry.getKey());
+    });
   }
 
   @Override

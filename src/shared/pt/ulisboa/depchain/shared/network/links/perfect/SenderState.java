@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
-import java.util.UUID;
 
+import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.links.stubborn.TrackedMessage;
 
@@ -22,7 +22,7 @@ final class SenderState {
   private volatile long lastTouchedAtMs = System.currentTimeMillis();
 
   synchronized int nextSequence(DpchType type, long now) {
-    if (nextSequence == Integer.MAX_VALUE) {
+    if (nextSequence > Dpch.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Sender sequence number exhausted for stream");
     }
 
@@ -33,7 +33,7 @@ final class SenderState {
   }
 
   // Translate one ACK into tracked-message keys that should be canceled in StubbornLink.
-  synchronized List<TrackedMessage.Key> acknowledge(UUID connectionId, int sequenceNumber, DpchType acknowledgedType, long now) {
+  synchronized List<TrackedMessage.Key> acknowledge(long connectionId, int sequenceNumber, DpchType acknowledgedType, long now) {
     touch(now);
     List<TrackedMessage.Key> cancellations = new ArrayList<>();
 
@@ -59,8 +59,7 @@ final class SenderState {
   void touch(long now) {
     lastTouchedAtMs = now;
   }
-
-  // If it has not been touched for a while.
+  
   boolean isStale(long now, long ttlMs) {
     return (now - lastTouchedAtMs) >= ttlMs;
   }
