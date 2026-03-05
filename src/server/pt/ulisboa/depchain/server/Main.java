@@ -49,6 +49,9 @@ public final class Main {
     String sender = senderIp.getHostAddress() + ":" + senderPort;
     try {
       String payloadText = new String(inbound.payload(), StandardCharsets.UTF_8);
+
+      System.out.println("Received request: " + payloadText);
+      
       byte[] responsePayload = ("Received " + payloadText).getBytes(StandardCharsets.UTF_8);
       transport.sendReliable(inbound.connectionId(), responsePayload, senderIp, senderPort);
     } catch (RuntimeException exception) {
