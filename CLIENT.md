@@ -310,6 +310,87 @@ response = Received hello
 
 ---
 
+## Running and Testing the Client–Server Communication
+
+Before integrating the HotStuff consensus algorithm, the client can already be tested using the current server implementation, which simply echoes back the received message. This allows us to validate the networking stack and request/response flow.
+
+### 1. Compile the Project
+
+From the root directory of the repository, compile the project using Maven:
+
+```id="0n1p7y"
+mvn clean package
+```
+
+This will compile all source files and generate the `.class` files inside:
+
+```id="r0av6s"
+target/classes
+```
+
+---
+
+### 2. Start a Replica (Server)
+
+Open a terminal in the project root directory and start a replica node:
+
+```id="i06w0h"
+java -cp target/classes pt.ulisboa.depchain.server.Main server1 config/config.yaml
+```
+
+Expected output:
+
+```id="q0x0oi"
+Replica server1 listening for client UDP requests on 127.0.0.1:<port>
+```
+
+This process represents one blockchain replica waiting for client requests.
+
+---
+
+### 3. Send a Client Request
+
+Open another terminal (also in the project root directory) and run the client:
+
+```id="w3yyls"
+java -cp target/classes pt.ulisboa.depchain.client.Main hello server1 config/config.yaml
+```
+
+Arguments:
+
+```id="9j96u7"
+Main <value> <targetReplicaId> <configPath>
+```
+
+Example:
+
+```id="n5p8kq"
+Main hello server1 config/config.yaml
+```
+
+This sends the string `"hello"` to the replica identified as `server1`.
+
+---
+
+### 4. Expected Result
+
+The server receives the request and sends back a response.
+
+Client terminal:
+
+```id="d6r3iy"
+response = Received hello
+```
+
+This confirms that:
+
+* The client successfully sent the request.
+* The replica received the message.
+* The response was correctly returned through the network stack.
+
+---
+
+
 # Future Integration
 
 When the HotStuff consensus algorithm is implemented, the flow will change slightly.
