@@ -69,7 +69,7 @@ public class DepChainClient {
                 Dpch packet = message.packet();
 
                 if (packet.connectionId() == connectionId) {
-                    Clientreply reply = ClientCodec.decodeReply(packet.payload());
+                    ClientReply reply = ClientCodec.decodeReply(packet.payload());
                     return reply.value();
                 }
             }
