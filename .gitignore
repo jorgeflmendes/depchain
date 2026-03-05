@@ -12,7 +12,6 @@
 
 # Package Files #
 *.jar
-!gradle/wrapper/gradle-wrapper.jar
 *.war
 *.nar
 *.ear
@@ -24,12 +23,15 @@
 hs_err_pid*
 replay_pid*
 
-# Gradle
-.gradle/
-.gradle-user-home/
+# Build outputs
 build/
 **/build/
 out/
+
+# Maven
+.m2-local/
+target/
+**/target/
 
 # IDE
 .idea/
@@ -38,9 +40,6 @@ out/
 *.iml
 *.ipr
 *.iws
-
-
-.gradle-local
 
 # OS
 .DS_Store

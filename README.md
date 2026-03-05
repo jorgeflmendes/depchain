@@ -86,18 +86,16 @@ src/
 docs/
   project.pdf
   hot-stuff-paper.pdf
-build.gradle
-settings.gradle
-gradlew / gradlew.bat
+pom.xml
 ```
 
-Gradle source sets:
+Maven source mapping:
 - `main`: `src/server`, `src/client`, `src/shared`
 - `test`: `src/test/java`
 
 ## Prerequisites
 - Java 21
-- Gradle wrapper (included: `gradlew`, `gradlew.bat`)
+- Maven 3.9+
 
 Check Java:
 ```powershell
@@ -122,34 +120,38 @@ Before running:
 ## Build and Test
 Build everything:
 ```powershell
-.\gradlew.bat clean build
+mvn clean package
 ```
 
 Run unit tests (excludes `integration` tag):
 ```powershell
-.\gradlew.bat test
+mvn test
 ```
 
 Run integration tests (includes only `integration` tag):
 ```powershell
-.\gradlew.bat integrationTest
+mvn verify
 ```
 
 ## Run Locally
-Run one server replica (default `server1`):
+Compile classes:
 ```powershell
-.\gradlew.bat run
+mvn -DskipTests package
 ```
 
-Run a specific replica:
+Run one server replica:
 ```powershell
-.\gradlew.bat run -PreplicaId=server2 -PconfigPath=config/config.yaml
+java -cp target/classes pt.ulisboa.depchain.server.Main server1 config/config.yaml
 ```
 
-Run client manually after compiling:
+Run another replica:
 ```powershell
-.\gradlew.bat classes
-java -cp build\classes\java\main pt.ulisboa.depchain.client.Main "hello" server1 config/config.yaml
+java -cp target/classes pt.ulisboa.depchain.server.Main server2 config/config.yaml
+```
+
+Run client:
+```powershell
+java -cp target/classes pt.ulisboa.depchain.client.Main "hello" server1 config/config.yaml
 ```
 
 Client usage:
