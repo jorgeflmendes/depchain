@@ -16,7 +16,7 @@ import pt.ulisboa.depchain.shared.network.links.handshaked.coordinator.StartHand
 import pt.ulisboa.depchain.shared.network.links.handshaked.registry.ClosedConnectionsRegistry;
 import pt.ulisboa.depchain.shared.network.links.handshaked.registry.ConnectionStateRegistry;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
-import pt.ulisboa.depchain.shared.network.links.handshaked.InboundHandshakeDecider.ControlReply;
+import pt.ulisboa.depchain.shared.network.links.handshaked.InboundHandshakeDecider.HandshakeReply;
 import pt.ulisboa.depchain.shared.network.links.handshaked.InboundHandshakeDecider.InboundDecision;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundMessage;
@@ -141,7 +141,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     long now = System.currentTimeMillis();
     if (closedConnectionsRegistry.isClosedRecently(connectionKey, now)) { // Recently closed: only re-ACK control retries.
       if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
-        sendControlReply(ControlReply.ACK, connectionId, sequenceNumber, packetType, remoteIp, remotePort);
+        sendControlReply(HandshakeReply.ACK, connectionId, sequenceNumber, packetType, remoteIp, remotePort);
       }
       return null;
     }
@@ -149,7 +149,8 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     ConnectionState connectionState = connectionStateRegistry.getOrCreate(connectionKey);
     InboundDecision decision;
     synchronized (connectionState) { // Decision reads/mutates state atomically with sender wait/notify.
-      decision = InboundHandshakeDecider.decideInboundLocked(connectionState, packetType, now);
+      // Pass inbound ACK flag so decider can distinguish pure SYN from SYN|ACK.
+      decision = InboundHandshakeDecider.decideInboundLocked(connectionState, packetType, inbound.packet().hasType(DpchType.ACK), now);
     }
 
     sendControlReply(decision.reply(), connectionId, sequenceNumber, packetType, remoteIp, remotePort);
@@ -167,7 +168,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
   }
 
   // Maps handshake decision reply to concrete control packet emission on PerfectLink.
-  private void sendControlReply(ControlReply reply, long connectionId, int sequenceNumber, DpchType inboundType, InetAddress remoteIp, int remotePort) {
+  private void sendControlReply(HandshakeReply reply, long connectionId, int sequenceNumber, DpchType inboundType, InetAddress remoteIp, int remotePort) {
     switch (reply) {
       case NONE -> {}
       case ACK -> perfectLink.sendAck(connectionId, sequenceNumber, inboundType, remoteIp, remotePort);

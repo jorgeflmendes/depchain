@@ -5,8 +5,8 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 // Decides how to handle inbound messages based on their type and the current connection state
 final class InboundHandshakeDecider {
-  // Control reply types for handshake messages
-  enum ControlReply {
+  // Handshake/control replies emitted by this decider for SYN/FIN processing.
+  enum HandshakeReply {
     NONE,
     ACK,
     SYN_ACK,
@@ -14,38 +14,66 @@ final class InboundHandshakeDecider {
   }
 
   // Represents the decision on whether to deliver data and what control reply to send for an inbound message
-  record InboundDecision(boolean deliverData, ControlReply reply) {
+  record InboundDecision(boolean deliverData, HandshakeReply reply) {
     InboundDecision {
       ValidationUtils.requireNonNull(reply, "reply");
     }
   }
 
-  // Determines whether to deliver data and what control reply to send based on the message type and connection state
-  static InboundDecision decideInboundLocked(ConnectionState state, DpchType type, long now) {
+  // Entry point: routes inbound packet to the type-specific decision path.
+  // "Locked" means caller must already hold the monitor for the given ConnectionState.
+  static InboundDecision decideInboundLocked(ConnectionState state, DpchType type, boolean inboundHasAck, long now) {
     state.touch(now);
-
     if (type == DpchType.SYN) {
-      state.markRemoteEstablishedIfNotFinished();
-      ControlReply reply = ControlReply.ACK;
-      if (state.shouldSendSyn() && !state.isClosing()) {
-        state.markLocalEstablished();
-        reply = ControlReply.SYN_ACK;
-      }
-      return new InboundDecision(false, reply);
+      return decideSynLocked(state, inboundHasAck);
     }
-
     if (type == DpchType.FIN) {
-      state.markRemoteFinished();
-      ControlReply reply = ControlReply.ACK;
+      return decideFinLocked(state);
+    }
+    return decideDataLocked(state);
+  }
 
-      if (state.isLocalCloseRequested() && !state.isLocalFinished()) {
-        state.markLocalFinished();
-        reply = ControlReply.FIN_ACK;
-      }
-      return new InboundDecision(false, reply);
+  // SYN-specific branch of the state machine (called while the connection state lock is held).
+  private static InboundDecision decideSynLocked(ConnectionState state, boolean inboundHasAck) {
+    state.markRemoteEstablishedIfNotFinished();
+    // Closing state has priority: do not reopen a stream while close is in progress.
+    if (state.isClosing()) {
+      return new InboundDecision(false, HandshakeReply.ACK);
     }
 
-    return new InboundDecision(state.canExchangeData(), ControlReply.NONE);
+    // Pure SYN (no ACK bit) is treated as an open request and always answered with SYN|ACK (TCP-like behaviour when the first SYN/ACK is lost).
+    if (!inboundHasAck) {
+      if (state.shouldSendSyn()) {
+        state.markLocalEstablished();
+      }
+      return new InboundDecision(false, HandshakeReply.SYN_ACK);
+    }
+
+    // SYN carrying ACK is interpreted as a control retry/combined control message (keep ACK-only reply).
+    HandshakeReply reply = HandshakeReply.ACK;
+    if (state.shouldSendSyn()) {
+      state.markLocalEstablished();
+      reply = HandshakeReply.SYN_ACK;
+    }
+    return new InboundDecision(false, reply);
+  }
+
+  // FIN-specific branch of the state machine (called while the connection state lock is held).
+  private static InboundDecision decideFinLocked(ConnectionState state) {
+    state.markRemoteFinished();
+    HandshakeReply reply = HandshakeReply.ACK;
+
+    if (state.isLocalCloseRequested() && !state.isLocalFinished()) {
+      state.markLocalFinished();
+      reply = HandshakeReply.FIN_ACK;
+    }
+    return new InboundDecision(false, reply);
+  }
+
+  // DATA-specific branch: only decides delivery gating, not ACK emission (called while lock is held).
+  private static InboundDecision decideDataLocked(ConnectionState state) {
+    // Handshaked layer only gates DATA delivery; DATA acknowledgments are emitted by PerfectLink.
+    return new InboundDecision(state.canExchangeData(), HandshakeReply.NONE);
   }
 
   static boolean handlesInboundType(DpchType type) {

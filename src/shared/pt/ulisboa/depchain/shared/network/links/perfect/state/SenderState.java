@@ -17,6 +17,28 @@ public final class SenderState {
   private final NavigableMap<Integer, DpchType> inFlightBySeq = new TreeMap<>();
   private volatile long lastTouchedAtMs = System.currentTimeMillis();
 
+  // Returns an existing in-flight sequence for the same type (if requested), otherwise allocates a new one.
+  // For messages that can be retried while pending, to avoid filling the in-flight map with multiple entries for the same logical message.
+  public synchronized int nextOrPendingSequence(DpchType type, boolean reusePendingSameType, long now) {
+    touch(now);
+    if (reusePendingSameType) {
+      for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
+        // TreeMap iteration keeps lowest pending sequence first, preserving deterministic reuse.
+        if (entry.getValue() == type) {
+          return entry.getKey();
+        }
+      }
+    }
+
+    if (nextSequence > Dpch.MAX_PACKET_NUMBER) {
+      throw new IllegalStateException("Sender sequence number exhausted for stream");
+    }
+    int sequence = nextSequence++;
+    inFlightBySeq.put(sequence, type);
+    notifyAll();
+    return sequence;
+  }
+
   // Get the next sequence number for a new message of the given type and track it.
   public synchronized int nextSequence(DpchType type, long now) {
     if (nextSequence > Dpch.MAX_PACKET_NUMBER) {

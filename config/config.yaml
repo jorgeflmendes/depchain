@@ -34,7 +34,7 @@ replicas:
 client:
   id: client
   host: 127.0.0.1
-  requestTimeoutMs: 3000
+  requestTimeoutMs: 5000
   knownReplicas:
     - server1
     - server2
@@ -49,13 +49,13 @@ timeouts:
 
 # Parameters for the stubborn retransmission mechanism used by replicas to resend messages to peers
 stubborn:
-  baseDelayMs: 100
-  maxDelayMs: 5000
+  baseDelayMs: 80
+  maxDelayMs: 1500
   jitterRatio: 0.20
   maxPending: 50000
   heapCompactMinSize: 1024
-  maxRetryAttempts: -1
-  maxTrackedLifetimeMs: -1
+  maxRetryAttempts: 8
+  maxTrackedLifetimeMs: 20000
 
 # Parameters for perfect-link buffering and state cleanup
 perfect:

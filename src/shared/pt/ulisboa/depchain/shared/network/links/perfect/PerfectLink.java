@@ -153,7 +153,11 @@ public class PerfectLink implements AutoCloseable {
   private void sendTracked(long connectionId, DpchType type, boolean withAck, byte[] payload, InetAddress remoteIp, int remotePort) {
     ConnectionKey key = ConnectionKey.from(remoteIp, remotePort, connectionId);
     long now = System.currentTimeMillis();
-    int seq = sendSequences.computeIfAbsent(key, ignored -> new SenderState()).nextSequence(type, now); // Sequence is monotonic per (remote,connectionId,type).
+
+    // For control packets, keep one in-flight sequence per type so retries/copies map to a single ACK cancellation key.
+    boolean reusePendingControl = (type == DpchType.SYN || type == DpchType.FIN);
+    int seq = sendSequences.computeIfAbsent(key, ignored -> new SenderState()).nextOrPendingSequence(type, reusePendingControl, now); // Control retransmits reuse existing in-flight sequence to avoid duplicated handshake tracks.
+    
     Dpch packet = buildTrackedPacket(connectionId, type, withAck, seq, payload);
     stubbornLink.sendTracked(new TrackedMessage.Key(connectionId, seq, Byte.toUnsignedInt(type.code())), serializeUnchecked(packet), remoteIp, remotePort); // Tracking key must match ACK tuple used in handleAck.
     cleanStaleStatesIfNeeded(now);
