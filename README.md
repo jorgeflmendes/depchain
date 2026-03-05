@@ -1,312 +1,175 @@
-# DepChain (Dependable Chain) - Stage 1
+# DepChain (Highly Dependable Systems) - Stage 1
 
-This repository contains the Stage 1 foundation for the Highly Dependable Systems project, focused on the consensus layer of a permissioned blockchain.
+## Overview
+DepChain is a permissioned blockchain project for the Highly Dependable Systems course.  
+This repository contains the Stage 1 networking and transport foundation used by client and server processes.
 
-## 1. Project Scope and Goals
+Stage 1 target scope:
+- Basic HotStuff consensus (Algorithm 2 from the HotStuff paper).
+- Client-to-replica request/response flow.
+- Append-only in-memory state machine for committed values.
 
-The goal is to build a permissioned (closed membership), highly dependable blockchain system called **DepChain**.
+## Current Implementation Status
+Implemented:
+- Configuration parsing and validation (`config/config.yaml`, parser/factory utilities).
+- Universal `Dpch` envelope and serialization.
+- UDP transport stack:
+  - `FairLossLink`
+  - `StubbornLink`
+  - `PerfectLink`
+  - `HandshakedPerfectLink`
+- Client and server entrypoints wired to the transport stack.
+- Unit and integration test infrastructure.
 
-Stage 1 focuses on:
+Not implemented yet:
+- Basic HotStuff consensus protocol logic.
+- Full append-only blockchain execution semantics.
 
-- consensus using **Basic HotStuff** (Algorithm 2 from the reference paper);
-- client to blockchain request/response integration;
-- append-only in-memory storage for committed values.
+## System Assumptions
+- Static membership (`n`, `f`, and replica set fixed before startup).
+- PKI material is provisioned before execution.
+- Client library is trusted by the application.
+- A subset of replicas may be Byzantine.
+- UDP is the baseline transport; no TLS channels for Stage 1.
 
-Implementing **Chained HotStuff** (Section 5 of the paper) is optional and can be treated as an extra challenge.
-
-## 2. System Assumptions
-
-- **Static membership**: blockchain members and leader set are fixed before startup.
-- **PKI available at startup**: public/private keys are generated and distributed before execution.
-- **Threat model**: the local client library is trusted by the application, but a subset of blockchain members may be Byzantine.
-
-## 3. System Architecture
-
-The system is split into:
-
-1. **Blockchain members (replicas/servers)**: maintain state and run HotStuff consensus.
-2. **Client library**: embedded in the client application and maps app operations to blockchain requests.
-
-Required interaction:
-
-- client sends `<append, string>`;
-- system returns whether/when the request was executed;
-- when consensus reaches `DECIDE`, an upcall notifies the upper layer.
-
-The Stage 1 blockchain state is an append-only array/list of strings in memory.
-
-## 4. Networking and Communication Constraints
-
-- Base network behavior is unreliable (loss, delay, duplication, corruption).
-- Communication must use **UDP** as transport baseline.
-- Secure channels such as TLS are not allowed for this stage.
-- Reliability/authentication abstractions should be built on top of UDP (for example, Authenticated Perfect Links).
-
-Networking layering roadmap:
-
+## Communication Stack
 ```text
-             /\
-            /  \
-           / App\               Client + consensus logic (to implement)
-          /------\
-         /   APL  \             Authenticated Perfect Links (to implement)
-        /----------\
-       /     PL     \           Perfect Links semantics (already implemented)
-      /--------------\
-     /       SL       \         Stubborn Links (already implemented)
-    /------------------\
-   /      FairLoss      \       FairLossLink over UDP (already implemented)
-  /----------------------\
- /      UDP Datagram      \     Unreliable network baseline
-/__________________________\
++--------------------------------------------------+
+| Application / Consensus Logic                    |
++--------------------------------------------------+
+| APL (Authenticated Perfect Links) - planned      |
++--------------------------------------------------+
+| HPL (Handshaked Perfect Link) - implemented      |
++--------------------------------------------------+
+| PL (Perfect Link semantics) - implemented        |
++--------------------------------------------------+
+| SL (Stubborn retransmission) - implemented       |
++--------------------------------------------------+
+| FairLossLink over UDP - implemented              |
++--------------------------------------------------+
+| UDP Datagram baseline                            |
++--------------------------------------------------+
 ```
 
-Interpretation:
-
-- Current UDP stack in code: `FairLossLink` + `StubbornLink` + `PerfectLink` + `HandshakedPerfectLink` in `src/shared/.../network/links/`.
-- `StubbornLink` provides tracked retries with exponential backoff + jitter and retry-heap compaction; `PerfectLink` adds in-order/no-dup delivery with ACK-driven cancel; `HandshakedPerfectLink` adds connection lifecycle with `SYN/FIN`.
-- Authentication on top of this stack is still pending.
-
-## 5. Technical Stack
-
-- Language: **Java**.
-- Crypto: Java Crypto API.
-- Threshold signatures: `weavechain/threshold-sig` is suggested (alternatives are acceptable).
-- Design: modular layered abstractions, evaluated for correctness and practical efficiency.
-
-## 6. Repository Status and Layout
-
-Current status:
-
-- project structure builds with Java 21 and Gradle;
-- membership, client, timeout, stubborn-link, and network settings are centralized in `config/config.yaml`;
-- key directory structure exists in `config/keys/` (key files are not currently versioned);
-- universal `Dpch` envelope + serialization is implemented;
-- `FairLossLink`, `StubbornLink`, `PerfectLink`, and `HandshakedPerfectLink` are implemented and used by client/server mains;
-- strict configuration parsing/validation and automated tests are in place;
-- Basic HotStuff consensus and append-only blockchain state machine are still pending.
-
-Project layout:
-
-```text
-.
-|-- build.gradle
-|-- settings.gradle
-|-- README.md
-|-- scripts/
-|   `-- udp_pingpong_trace.py
-|-- docs/
-|   |-- hot-stuff-paper.pdf
-|   `-- project.pdf
-|-- config/
-|   |-- config.yaml
-|   `-- keys/
-`-- src/
-    |-- client/pt/ulisboa/depchain/client/Main.java
-    |-- server/pt/ulisboa/depchain/server/Main.java
-    |-- shared/pt/ulisboa/depchain/shared/
-    |   |-- config/ConfigParser.java
-    |   |-- config/LinkConfigFactory.java
-    |   |-- network/
-    |   |   |-- dpch/
-    |   |   |   |-- Dpch.java
-    |   |   |   |-- DpchSerialization.java
-    |   |   |   `-- DpchType.java
-    |   |   |-- links/
-    |   |   |   |-- fairloss/FairLossLink.java
-    |   |   |   |-- handshaked/
-    |   |   |   |   |-- ConnectionState.java
-    |   |   |   |   `-- HandshakedPerfectLink.java
-    |   |   |   |-- perfect/
-    |   |   |   |   |-- PerfectLink.java
-    |   |   |   |   |-- ReceiverState.java
-    |   |   |   |   `-- SenderState.java
-    |   |   |   `-- stubborn/
-    |   |   |       |-- ScheduledRetry.java
-    |   |   |       |-- StubbornLink.java
-    |   |   |       `-- TrackedMessage.java
-    |   |   `-- model/
-    |   |       |-- EndpointConnectionKey.java
-    |   |       `-- InboundMessage.java
-    |   `-- utils/
-    |       |-- BinarySerialization.java
-    |       `-- ValidationUtils.java
-    `-- test/java/pt/ulisboa/depchain/
-        |-- integration/ReplicaConnectivityTest.java
-        `-- shared/
-            |-- config/ConfigParserTest.java
-            |-- links/fairloss/
-            |   |-- DpchSerializationTest.java
-            |   `-- FairLossLinkTest.java
-            |-- messages/InboundMessageTest.java
-            `-- utils/BinarySerializationTest.java
-```
-
-What each file does:
-
-- `build.gradle`: Gradle setup (plugins, Java 21 toolchain, source sets, test tasks, and run defaults).
-- `settings.gradle`: Defines the Gradle root project name (`depchain`).
-- `config/config.yaml`: Static system configuration:
-  - system parameters (`n`, `f`, leader election, base view);
-  - replica endpoints (consensus/client ports and key paths);
-  - client settings (host, known replicas, request timeout);
-  - stubborn-link retry parameters (`baseDelayMs`, `maxDelayMs`, `jitterRatio`, `maxPending`, `heapCompactMinSize`);
-  - perfect-link buffering/cleanup parameters (`maxWindowSize`, `maxStreamStates`, `streamIdleTtlMs`);
-  - network limits (max packet size).
-- `config/keys/`: Key material directory structure (files are expected at runtime, but not versioned here).
-- `scripts/udp_pingpong_trace.py`: Runs client/server through a UDP proxy and generates a packet-level SVG trace with automatic per-connection failure scenarios.
-
-- `src/client/pt/ulisboa/depchain/client/Main.java`: CLI client entrypoint. Loads config, sends a request through `HandshakedPerfectLink.sendReliable(...)`, waits for matching response, and closes the logical connection with `FIN`.
-- `src/server/pt/ulisboa/depchain/server/Main.java`: Replica entrypoint. Binds `HandshakedPerfectLink` on `clientPort`, receives requests in a loop, and dispatches handlers on virtual threads.
-
-- `src/shared/pt/ulisboa/depchain/shared/config/ConfigParser.java`: Strict parser/validator for `config/config.yaml` with consistency checks (IDs, ports, thresholds, stubborn/perfect limits, packet size). Supports YAML comments with `#`.
-- `src/shared/pt/ulisboa/depchain/shared/config/LinkConfigFactory.java`: Maps parsed app configuration to link build configuration objects.
-
-- `src/shared/pt/ulisboa/depchain/shared/network/links/fairloss/FairLossLink.java`: Low-level UDP fair-loss transport over `DatagramSocket` with thread-safe send/receive paths.
-- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/StubbornLink.java`: Retry-capable link with tracked send/cancel, exponential backoff + jitter, and retry-heap compaction.
-- `src/shared/pt/ulisboa/depchain/shared/network/links/perfect/PerfectLink.java`: Perfect-link semantics on top of stubborn link (in-order delivery, deduplication, ACK-driven cancellation).
-- `src/shared/pt/ulisboa/depchain/shared/network/links/handshaked/HandshakedPerfectLink.java`: Connection lifecycle (`SYN`/`FIN`) on top of `PerfectLink`.
-- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/TrackedMessage.java`: Tracked message state and identity key used by `StubbornLink`.
-- `src/shared/pt/ulisboa/depchain/shared/network/links/stubborn/ScheduledRetry.java`: Retry scheduling item (`endpoint`, `key`, `dueAtMs`) used in the retry heap.
-- `src/shared/pt/ulisboa/depchain/shared/network/dpch/DpchSerialization.java`: Binary framing/unframing for the DPCH-L wire format (`magic_hi`, `magic_lo`, `version`, `flags`, `conn_id`, `pkt_num`, `payload`).
-- `src/shared/pt/ulisboa/depchain/shared/network/model/EndpointConnectionKey.java`: Shared key for stream identity by remote endpoint + connection ID.
-- `src/shared/pt/ulisboa/depchain/shared/network/model/InboundMessage.java`: Immutable envelope for one inbound DPCH packet plus sender endpoint metadata (`senderIp`, `senderPort`).
-- `src/shared/pt/ulisboa/depchain/shared/utils/BinarySerialization.java`: Reusable binary read/write helpers for primitive types, UUID, strings, and byte arrays.
-
-- `src/test/java/pt/ulisboa/depchain/shared/config/ConfigParserTest.java`: Unit tests for config parsing/validation.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/DpchSerializationTest.java`: Unit tests for packet codec round-trip, malformed headers, invalid slices, and payload boundary checks.
-- `src/test/java/pt/ulisboa/depchain/shared/utils/BinarySerializationTest.java`: Unit tests for primitive/structured binary field IO and invalid length checks.
-- `src/test/java/pt/ulisboa/depchain/shared/links/fairloss/FairLossLinkTest.java`: Unit tests for fair-loss send/receive behavior, malformed packet handling, and concurrent multi-client scenarios.
-- `src/test/java/pt/ulisboa/depchain/shared/messages/InboundMessageTest.java`: Unit tests for `InboundMessage` field preservation and constructor validation.
-- `src/test/java/pt/ulisboa/depchain/integration/ReplicaConnectivityTest.java`: Integration test that boots replicas as processes and verifies client connectivity to all of them.
-
-## 7. Universal DPCH Communication Packet
-
-All network communication uses the same envelope: `Dpch`.
-
-- `request`, `response`, `ack`, `syn`, `fin`, and other future control messages share the same binary structure.
-- `FairLossLink` only sends/receives this envelope; higher layers decide payload meaning.
-- Supported types are centralized in `DpchType`.
-
-Wire format:
-
+## DPCH Wire Format
 ```text
 DPCH Frame
 | magic_hi(1) | magic_lo(1) | version(1) | flags(1) | conn_id(8) | pkt_num(2) | payload(N) |
 ```
 
-Field details:
-
-- `magic_hi`, `magic_lo` (`2 bytes`): ASCII signature `DP` for DPCH-L packet identification.
-- `version` (`1 byte`): frame format version.
-- `flags` (`1 byte`): message semantics bits (`DATA`, `ACK`, `SYN`, `FIN`, `CTRL`).
+Field summary:
+- `magic_hi`, `magic_lo` (`2 bytes`): ASCII signature `DP`.
+- `version` (`1 byte`): frame version.
+- `flags` (`1 byte`): semantic bits (`DATA`, `ACK`, `SYN`, `FIN`) and combinations like `SYN|ACK`, `FIN|ACK`.
 - `conn_id` (`8 bytes`): logical connection identifier (`uint64`).
-- `pkt_num` (`2 bytes`, uint16): sequence number inside the connection flow.
-- `payload` (`N bytes`): remaining datagram bytes after the fixed 14-byte header.
+- `pkt_num` (`2 bytes`): per-connection packet number (`uint16`).
+- `payload` (`N bytes`): remaining datagram bytes.
 
-Practical use today:
+## Repository Layout
+```text
+config/
+  config.yaml
+  keys/                         # expected key hierarchy (not fully versioned)
+src/
+  client/pt/ulisboa/depchain/client/
+  server/pt/ulisboa/depchain/server/
+  shared/pt/ulisboa/depchain/shared/
+    config/
+    network/
+      dpch/
+      links/
+        fairloss/
+        stubborn/
+        perfect/
+        handshaked/
+  test/java/pt/ulisboa/depchain/
+docs/
+  project.pdf
+  hot-stuff-paper.pdf
+build.gradle
+settings.gradle
+gradlew / gradlew.bat
+```
 
-- Client request: currently encoded as `Dpch.data(...)`.
-- Server response: currently encoded as `Dpch.data(...)`.
-- Client/server payload content is currently plain UTF-8 text (no nested status envelope).
-- Current request path uses `HandshakedPerfectLink.sendReliable(...)` on client/server, with `SYN` on open and `FIN` on close.
-- `FairLossLink` remains a best-effort UDP primitive and is wrapped by `StubbornLink`, `PerfectLink`, and `HandshakedPerfectLink`.
-- ACK/SYN/FIN are supported by `Dpch`; current flow uses `ACK` (from perfect-link logic) plus `SYN/FIN` (from handshaked logic).
+Gradle source sets:
+- `main`: `src/server`, `src/client`, `src/shared`
+- `test`: `src/test/java`
 
-## 8. Prerequisites
-
+## Prerequisites
 - Java 21
-- Gradle (optional if using the included wrapper)
-
-This repository includes Gradle wrapper scripts (`gradlew` / `gradlew.bat`).
-
-Gradle source roots are configured as:
-
-- `src/server`
-- `src/client`
-- `src/shared`
-- `src/test/java`
-
-## 9. Local Setup, Build, and Test
+- Gradle wrapper (included: `gradlew`, `gradlew.bat`)
 
 Check Java:
-
 ```powershell
 java -version
 ```
 
-Build and test:
+## Configuration
+Main runtime configuration is in `config/config.yaml`, including:
+- system parameters (`n`, `f`, leader election, base view),
+- replica endpoints and key paths,
+- client settings and request timeout,
+- timeout values,
+- stubborn-link retry policy,
+- perfect-link buffering/cleanup policy,
+- network maximum packet size.
 
+Before running:
+- ensure key files exist at configured paths,
+- ensure configured ports are free,
+- keep config consistent across all replicas.
+
+## Build and Test
+Build everything:
 ```powershell
 .\gradlew.bat clean build
+```
+
+Run unit tests (excludes `integration` tag):
+```powershell
 .\gradlew.bat test
+```
+
+Run integration tests (includes only `integration` tag):
+```powershell
 .\gradlew.bat integrationTest
 ```
 
-Run one replica locally (defaults to `server1` and `config/config.yaml`):
-
+## Run Locally
+Run one server replica (default `server1`):
 ```powershell
 .\gradlew.bat run
 ```
 
-Run a specific replica/config:
-
+Run a specific replica:
 ```powershell
 .\gradlew.bat run -PreplicaId=server2 -PconfigPath=config/config.yaml
 ```
 
-## 10. Membership Configuration
+Run client manually after compiling:
+```powershell
+.\gradlew.bat classes
+java -cp build\classes\java\main pt.ulisboa.depchain.client.Main "hello" server1 config/config.yaml
+```
 
-`config/config.yaml` currently defines:
+Client usage:
+```text
+Main <value> <targetReplicaId> <configPath>
+```
 
-- `n = 4` replicas, `f = 1`;
-- localhost addresses and per-replica consensus/client ports;
-- client identity, host, request timeout, and known replica IDs (no dedicated client port);
-- timeout values for view changes and retransmissions;
-- stubborn retry parameters, perfect-link buffering/cleanup parameters, and network max packet size.
+Server usage:
+```text
+Main <serverId> <configPath>
+```
 
-Before execution, ensure:
-
-- key files exist at the configured paths;
-- required ports are free;
-- all replicas use the same membership/network/stubborn/perfect configuration.
-
-
-## 12. Recommended Implementation Roadmap
-
-1. Implement shared models and serialization in `src/shared`.
-2. Implement UDP networking plus authenticated/reliable link abstraction in `src/server`.
-3. Implement Basic HotStuff happy path (`prepare -> pre-commit -> commit -> decide`).
-4. Add crash-fault handling (timeouts and view change).
-5. Add Byzantine protections (signature checks, QC validation, equivocation detection).
-6. Implement client library flow and append service integration.
-7. Add intrusive tests in `src/test/java`.
-
-## 13. Testing and Validation Requirements
-
-Black-box tests are not enough. Test infrastructure should support fault injection, including:
-
-- message loss/delay/duplication/manipulation;
-- malicious or faulty leader behavior;
-- invalid signatures and forged messages;
-- conflicting proposals in the same view.
-
-## 14. Submission and Evaluation (From the Project Brief)
-
-- Deadline: **March 10 at 23:59** via Fenix.
-- Team ethics: work must be original to the group.
-- Required deliverables:
-  - ZIP with source code, dependencies, demos, and attack/byzantine simulations;
-  - README with explicit reproduction steps for tests and demos;
-  - Report (max 5 pages, Springer LNCS format) with:
-    - design decisions and justification;
-    - threat analysis;
-    - protection mechanisms;
-    - dependability guarantees.
+## Suggested Next Steps
+1. Implement Basic HotStuff happy path (`prepare -> pre-commit -> commit -> decide`).
+2. Add timeout-driven view change behavior.
+3. Add Byzantine protections (signature/QC checks, equivocation handling).
+4. Integrate append-only state machine execution with client acknowledgements.
+5. Expand fault-injection and adversarial integration tests.
 
 ## References
-
 1. HotStuff paper: <https://arxiv.org/pdf/1803.05069>
 2. Springer LNCS guidelines: <https://www.springer.com/gp/computer-science/lncs/conference-proceedings-guidelines>
 3. Threshold signatures (optional): <https://github.com/weavechain/threshold-sig>
-

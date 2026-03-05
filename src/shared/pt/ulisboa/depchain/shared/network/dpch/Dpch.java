@@ -2,10 +2,10 @@ package pt.ulisboa.depchain.shared.network.dpch;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Objects;
+
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class Dpch {
-  // Keep payload bounded to uint16-sized datagrams.
   public static final int MAX_PAYLOAD_LENGTH = 0xFFFF;
   public static final int MAX_PACKET_NUMBER = 0xFFFF;
 
@@ -15,56 +15,53 @@ public final class Dpch {
   private final int sequenceNumber;
   private final byte[] payload;
 
-  public Dpch(long connectionId, DpchType type, int sequenceNumber, byte[] payload) {
-    this(connectionId, DpchFlags.fromType(type), sequenceNumber, payload);
+  // Creates a DPCH from type without ACK.
+  public static Dpch from(long connectionId, DpchType type, int sequenceNumber, byte[] payload) {
+    return from(connectionId, type, false, sequenceNumber, payload);
   }
 
-  public Dpch(long connectionId, int flags, int sequenceNumber, byte[] payload) {
-    this(connectionId, validateFlags(flags), sequenceNumber, payload, true);
+  // Creates a DPCH from type combining with ACK if requested.
+  public static Dpch from(long connectionId, DpchType type, boolean withAck, int sequenceNumber, byte[] payload) {
+    ValidationUtils.requireNonNull(type, "type");
+    
+    int flags;
+    if (withAck) {
+      if (type != DpchType.SYN && type != DpchType.FIN) {
+        throw new IllegalArgumentException("ACK combination only supported for SYN/FIN for now");
+      }
+      flags = DpchFlags.withAck(type);
+    } else {
+      flags = DpchFlags.fromType(type);
+    }
+
+    return new Dpch(connectionId, flags, sequenceNumber, payload, true);
   }
 
+  // Private constructor to control the copying of the payload.
   private Dpch(long connectionId, int flags, int sequenceNumber, byte[] payload, boolean copyPayload) {
-    Objects.requireNonNull(payload, "payload cannot be null");
-    if (payload.length > MAX_PAYLOAD_LENGTH) {
-      throw new IllegalArgumentException("payload length exceeds uint16 max (%d > %d)".formatted(payload.length, MAX_PAYLOAD_LENGTH));
-    }
-    if (sequenceNumber < 0 || sequenceNumber > MAX_PACKET_NUMBER) {
-      throw new IllegalArgumentException("sequenceNumber must be in [0, %d]".formatted(MAX_PACKET_NUMBER));
-    }
+    ValidationUtils.requireNonNull(payload, "payload");
+    ValidationUtils.requireInClosedRangeInt(payload.length, 0, MAX_PAYLOAD_LENGTH, "payload.length");
+    ValidationUtils.requireInClosedRangeInt(sequenceNumber, 0, MAX_PACKET_NUMBER, "sequenceNumber");
 
     this.connectionId = connectionId;
-    this.flags = flags;
+    this.flags = validateFlags(flags);
     this.sequenceNumber = sequenceNumber;
-    this.payload = copyPayload ? Arrays.copyOf(payload, payload.length) : payload;
+    if (copyPayload) {
+      this.payload = Arrays.copyOf(payload, payload.length);
+    } else {
+      this.payload = payload;
+    }
   }
 
-  public static Dpch data(long connectionId, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, DpchType.DATA, sequenceNumber, payload);
+  // Checks if the DPCH has the specified type, considering both reliable and ACK types.
+  public boolean hasType(DpchType type) {
+    ValidationUtils.requireNonNull(type, "type");
+    return DpchFlags.hasType(flags, type);
   }
 
-  public static Dpch ack(long connectionId, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, DpchType.ACK, sequenceNumber, payload);
-  }
-
-  public static Dpch syn(long connectionId, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, DpchType.SYN, sequenceNumber, payload);
-  }
-
-  public static Dpch synAck(long connectionId, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, DpchFlags.withAck(DpchType.SYN), sequenceNumber, payload);
-  }
-
-  public static Dpch fin(long connectionId, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, DpchType.FIN, sequenceNumber, payload);
-  }
-
-  public static Dpch finAck(long connectionId, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, DpchFlags.withAck(DpchType.FIN), sequenceNumber, payload);
-  }
-
-  // Fast path for decoder: payload already belongs exclusively to this packet instance.
-  static Dpch decoded(long connectionId, int flags, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, flags, sequenceNumber, payload, false);
+  // Returns the reliable type if the DPCH is reliable, or null if it is an ACK.
+  public DpchType reliableTypeOrNull() {
+    return DpchFlags.reliableTypeOrNull(flags);
   }
 
   public long connectionId() {
@@ -75,36 +72,33 @@ public final class Dpch {
     return flags;
   }
 
+  public byte[] payload() {
+    return Arrays.copyOf(payload, payload.length);
+  }
+  
+  public int sequenceNumber() {
+    return sequenceNumber;
+  }
+
   public DpchType type() {
     DpchType reliable = DpchFlags.reliableTypeOrNull(flags);
     if (reliable != null) {
       return reliable;
     }
-    return DpchType.ACK;
+    return DpchType.ACK; // If it's not a reliable type, it's an ACK.
   }
 
-  public boolean hasType(DpchType type) {
-    Objects.requireNonNull(type, "type cannot be null");
-    return DpchFlags.hasType(flags, type);
+  // Fast path for decoder (without copying the payload)
+  static Dpch fromDecoded(long connectionId, int flags, int sequenceNumber, byte[] payload) {
+    return new Dpch(connectionId, flags, sequenceNumber, payload, false);
   }
 
-  public DpchType reliableTypeOrNull() {
-    return DpchFlags.reliableTypeOrNull(flags);
-  }
-
-  public int sequenceNumber() {
-    return sequenceNumber;
-  }
-
-  public byte[] payload() {
-    return Arrays.copyOf(payload, payload.length);
-  }
-
-  // Internal read-only use inside the dpch package to avoid repeated copying during serialization.
+  // Internal read-only use to void repeated copying during serialization.
   byte[] payloadInternal() {
     return payload;
   }
 
+  // Validates the flags and decodes them to ensure they are well-formed.
   private static int validateFlags(int flags) {
     if ((flags & ~0xFF) != 0) {
       throw new IllegalArgumentException("DPCH flags must be an unsigned byte");

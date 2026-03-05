@@ -9,12 +9,18 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 
 class InboundMessageTest {
   @Test
   void constructorPreservesFields() throws Exception {
-    Dpch packet = Dpch.data(ThreadLocalRandom.current().nextLong(), 2, "payload".getBytes(StandardCharsets.UTF_8));
+    Dpch packet =
+        Dpch.from(
+            ThreadLocalRandom.current().nextLong(),
+            DpchType.DATA,
+            2,
+            "payload".getBytes(StandardCharsets.UTF_8));
     InetAddress senderIp = InetAddress.getLoopbackAddress();
     InboundMessage inbound = new InboundMessage(packet, senderIp, 12000);
 
@@ -25,7 +31,12 @@ class InboundMessageTest {
 
   @Test
   void constructorRejectsInvalidArguments() {
-    Dpch packet = Dpch.data(ThreadLocalRandom.current().nextLong(), 2, "payload".getBytes(StandardCharsets.UTF_8));
+    Dpch packet =
+        Dpch.from(
+            ThreadLocalRandom.current().nextLong(),
+            DpchType.DATA,
+            2,
+            "payload".getBytes(StandardCharsets.UTF_8));
     InetAddress senderIp = InetAddress.getLoopbackAddress();
 
     assertThrows(NullPointerException.class, () -> new InboundMessage(null, senderIp, 12000));

@@ -110,7 +110,10 @@ class ReplicaConnectivityTest {
   private static String javaExecutable() {
     // Resolves the current Java binary path across OSes.
     String javaHome = System.getProperty("java.home");
-    String suffix = System.getProperty("os.name").toLowerCase().contains("win") ? ".exe" : "";
+    String suffix = "";
+    if (System.getProperty("os.name").toLowerCase().contains("win")) {
+      suffix = ".exe";
+    }
     return Path.of(javaHome, "bin", "java" + suffix).toString();
   }
 

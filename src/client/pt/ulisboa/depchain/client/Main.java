@@ -27,20 +27,22 @@ public final class Main {
     // Load the client configuration from the specified file path.
     ConfigParser config = ConfigParser.load(Path.of(configPath));
     ConfigParser.ReplicaSection targetReplicaConfig = config.requireReplica(targetReplicaId);
-    PerfectLink.BuildConfig linkConfig = LinkConfigFactory.from(config);
+    PerfectLink.BuildConfig linkConfig = LinkConfigFactory.toBuildConfig(config);
 
     // Resolve the target replica's address and port from the configuration, and get the request timeout.
     InetAddress targetAddress = InetAddress.getByName(targetReplicaConfig.host());
     int targetPort = targetReplicaConfig.clientPort();
     long timeoutMs = config.client().requestTimeoutMs();
 
-    try {
-      try (HandshakedPerfectLink transport = HandshakedPerfectLink.unbound(linkConfig)) {
-        String responsePayload = sendRequest(transport, value, targetAddress, targetPort, timeoutMs);
-        System.out.println("response = " + responsePayload);
-      }
-    } catch (Exception exception) {
+    try (HandshakedPerfectLink transport = HandshakedPerfectLink.unbound(linkConfig)) {
+      String responsePayload = sendRequest(transport, value, targetAddress, targetPort, timeoutMs);
+      System.out.println("response = " + responsePayload);
+    } catch (IOException | IllegalStateException exception) {
       System.out.printf("Packet exchange error = %s%n", exception.getMessage());
+      System.exit(2);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      System.out.printf("Packet exchange interrupted = %s%n", interrupted.getMessage());
       System.exit(2);
     }
   }
@@ -72,9 +74,10 @@ public final class Main {
     } finally {
       try {
         transport.closeConnection(connectionId, targetAddress, targetPort);
-      } catch (Exception ignored) {
+      } catch (RuntimeException ignored) {
         // Best-effort close.
       }
     }
   }
 }
+

@@ -29,7 +29,7 @@ public final class Main {
 
     // Resolve the replica's bind address and port from the configuration, and build the perfect-link configuration.
     InetAddress bindAddress = InetAddress.getByName(replicaConfig.host());
-    PerfectLink.BuildConfig linkConfig = LinkConfigFactory.from(config);
+    PerfectLink.BuildConfig linkConfig = LinkConfigFactory.toBuildConfig(config);
 
     // Virtual threads to handle each request concurrently without blocking OS threads.
     ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
@@ -46,14 +46,20 @@ public final class Main {
 
   // Request handler that just echoes back the received value
   private static void handleRequest(HandshakedPerfectLink transport, Dpch inbound, InetAddress senderIp, int senderPort) {
+    String sender = senderIp.getHostAddress() + ":" + senderPort;
     try {
       String payloadText = new String(inbound.payload(), StandardCharsets.UTF_8);
       byte[] responsePayload = ("Received " + payloadText).getBytes(StandardCharsets.UTF_8);
       transport.sendReliable(inbound.connectionId(), responsePayload, senderIp, senderPort);
-      transport.closeConnection(inbound.connectionId(), senderIp, senderPort);
-    } catch (Exception exception) {
-      String sender = senderIp.getHostAddress() + ":" + senderPort;
+    } catch (RuntimeException exception) {
       System.out.printf("Packet exchange error while handling conn=%s seq=%d from %s = %s%n", inbound.connectionId(), inbound.sequenceNumber(), sender, exception.getMessage());
+    } finally {
+      try {
+        transport.closeConnection(inbound.connectionId(), senderIp, senderPort);
+      } catch (RuntimeException closeError) {
+        System.out.printf("Close error while handling conn=%s seq=%d from %s = %s%n", inbound.connectionId(), inbound.sequenceNumber(), sender, closeError.getMessage());
+      }
     }
   }
 }
+

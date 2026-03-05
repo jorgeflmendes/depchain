@@ -18,7 +18,7 @@ class DpchSerializationTest {
   @Test
   void packetRoundTripPreservesFields() throws Exception {
     byte[] payload = "append-value".getBytes(StandardCharsets.UTF_8);
-    Dpch packet = Dpch.data(ThreadLocalRandom.current().nextLong(), 456, payload);
+    Dpch packet = Dpch.from(ThreadLocalRandom.current().nextLong(), DpchType.DATA, 456, payload);
 
     byte[] bytes = DpchSerialization.toBytes(packet);
     Object decoded = DpchSerialization.fromBytes(bytes, 0, bytes.length);
@@ -34,10 +34,26 @@ class DpchSerializationTest {
   void packetRoundTripSupportsAllDefinedTypes() throws Exception {
     Dpch[] packets =
         new Dpch[] {
-          Dpch.data(ThreadLocalRandom.current().nextLong(), 1, "d".getBytes(StandardCharsets.UTF_8)),
-          Dpch.ack(ThreadLocalRandom.current().nextLong(), 2, "a".getBytes(StandardCharsets.UTF_8)),
-          Dpch.syn(ThreadLocalRandom.current().nextLong(), 3, "s".getBytes(StandardCharsets.UTF_8)),
-          Dpch.fin(ThreadLocalRandom.current().nextLong(), 4, "f".getBytes(StandardCharsets.UTF_8))
+          Dpch.from(
+              ThreadLocalRandom.current().nextLong(),
+              DpchType.DATA,
+              1,
+              "d".getBytes(StandardCharsets.UTF_8)),
+          Dpch.from(
+              ThreadLocalRandom.current().nextLong(),
+              DpchType.ACK,
+              2,
+              "a".getBytes(StandardCharsets.UTF_8)),
+          Dpch.from(
+              ThreadLocalRandom.current().nextLong(),
+              DpchType.SYN,
+              3,
+              "s".getBytes(StandardCharsets.UTF_8)),
+          Dpch.from(
+              ThreadLocalRandom.current().nextLong(),
+              DpchType.FIN,
+              4,
+              "f".getBytes(StandardCharsets.UTF_8))
         };
 
     for (Dpch packet : packets) {
@@ -55,8 +71,8 @@ class DpchSerializationTest {
   void packetRoundTripSupportsCombinedControlAckFlags() throws Exception {
     Dpch[] packets =
         new Dpch[] {
-          Dpch.synAck(ThreadLocalRandom.current().nextLong(), 11, new byte[0]),
-          Dpch.finAck(ThreadLocalRandom.current().nextLong(), 12, new byte[0])
+          Dpch.from(ThreadLocalRandom.current().nextLong(), DpchType.SYN, true, 11, new byte[0]),
+          Dpch.from(ThreadLocalRandom.current().nextLong(), DpchType.FIN, true, 12, new byte[0])
         };
 
     for (Dpch packet : packets) {
@@ -73,7 +89,12 @@ class DpchSerializationTest {
 
   @Test
   void fromBytesSupportsOffsetAndLengthSlices() throws Exception {
-    Dpch packet = Dpch.data(ThreadLocalRandom.current().nextLong(), 99, "slice".getBytes(StandardCharsets.UTF_8));
+    Dpch packet =
+        Dpch.from(
+            ThreadLocalRandom.current().nextLong(),
+            DpchType.DATA,
+            99,
+            "slice".getBytes(StandardCharsets.UTF_8));
     byte[] encoded = DpchSerialization.toBytes(packet);
     byte[] wrapped = new byte[encoded.length + 16];
     Arrays.fill(wrapped, (byte) 0x33);
@@ -87,7 +108,12 @@ class DpchSerializationTest {
 
   @Test
   void fromBytesRejectsWrongMagicVersionAndFlags() throws Exception {
-    Dpch base = Dpch.data(ThreadLocalRandom.current().nextLong(), 2, "x".getBytes(StandardCharsets.UTF_8));
+    Dpch base =
+        Dpch.from(
+            ThreadLocalRandom.current().nextLong(),
+            DpchType.DATA,
+            2,
+            "x".getBytes(StandardCharsets.UTF_8));
     byte[] bytes = DpchSerialization.toBytes(base);
 
     byte[] wrongMagic = Arrays.copyOf(bytes, bytes.length);
@@ -113,6 +139,12 @@ class DpchSerializationTest {
     IOException comboError =
         assertThrows(IOException.class, () -> DpchSerialization.fromBytes(invalidReliableCombo, 0, invalidReliableCombo.length));
     assertTrue(comboError.getMessage().contains("reliable flags"));
+
+    byte[] reservedBitFourSet = Arrays.copyOf(bytes, bytes.length);
+    reservedBitFourSet[3] = (byte) 0b0001_0010; // ACK + reserved bit 4 set.
+    IOException reservedBitError =
+        assertThrows(IOException.class, () -> DpchSerialization.fromBytes(reservedBitFourSet, 0, reservedBitFourSet.length));
+    assertTrue(reservedBitError.getMessage().contains("reserved DPCH flags"));
   }
 
   @Test
@@ -124,11 +156,16 @@ class DpchSerializationTest {
     assertThrows(IllegalArgumentException.class, () -> DpchSerialization.fromBytes(bytes, 4, 0));
     assertThrows(IllegalArgumentException.class, () -> DpchSerialization.fromBytes(bytes, 1, 5));
 
-    Dpch packet = Dpch.data(ThreadLocalRandom.current().nextLong(), 1, "ok".getBytes(StandardCharsets.UTF_8));
+    Dpch packet =
+        Dpch.from(
+            ThreadLocalRandom.current().nextLong(),
+            DpchType.DATA,
+            1,
+            "ok".getBytes(StandardCharsets.UTF_8));
     byte[] encoded = DpchSerialization.toBytes(packet);
     IOException shortHeaderError =
         assertThrows(IOException.class, () -> DpchSerialization.fromBytes(encoded, 0, 13));
-    assertTrue(shortHeaderError.getMessage().contains("shorter than long header"));
+    assertTrue(shortHeaderError.getMessage().contains("shorter than header"));
   }
 
   @Test

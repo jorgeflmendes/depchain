@@ -7,9 +7,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 
+import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
+import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class ConfigParser {
@@ -76,7 +77,7 @@ public final class ConfigParser {
 
   // Static loader for YAML config files
   public static ConfigParser load(Path path) throws IOException {
-    Objects.requireNonNull(path, "path must not be null");
+    ValidationUtils.requireNonNull(path, "path");
     List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
     return new Parser(path, lines).parse();
   }
@@ -136,27 +137,18 @@ public final class ConfigParser {
         }
       }
 
-      if (system == null) {
-        throw new IllegalArgumentException("Missing required section 'system' in " + path);
-      }
-      if (replicas == null) {
-        throw new IllegalArgumentException("Missing required section 'replicas' in " + path);
-      }
-      if (client == null) {
-        throw new IllegalArgumentException("Missing required section 'client' in " + path);
-      }
-      if (timeouts == null) {
-        throw new IllegalArgumentException("Missing required section 'timeouts' in " + path);
-      }
-      if (stubborn == null) {
-        throw new IllegalArgumentException("Missing required section 'stubborn' in " + path);
-      }
-      if (perfect == null) {
-        throw new IllegalArgumentException("Missing required section 'perfect' in " + path);
-      }
-      if (network == null) {
-        throw new IllegalArgumentException("Missing required section 'network' in " + path);
-      }
+      system = ValidationUtils.requirePresent(system, "Missing required section 'system' in " + path);
+      replicas =
+          ValidationUtils.requirePresent(replicas, "Missing required section 'replicas' in " + path);
+      client = ValidationUtils.requirePresent(client, "Missing required section 'client' in " + path);
+      timeouts =
+          ValidationUtils.requirePresent(timeouts, "Missing required section 'timeouts' in " + path);
+      stubborn =
+          ValidationUtils.requirePresent(stubborn, "Missing required section 'stubborn' in " + path);
+      perfect =
+          ValidationUtils.requirePresent(perfect, "Missing required section 'perfect' in " + path);
+      network =
+          ValidationUtils.requirePresent(network, "Missing required section 'network' in " + path);
 
       SystemSection parsedSystem = system.toRecord(path);
       ClientSection parsedClient = client.toRecord(path);
@@ -390,9 +382,10 @@ public final class ConfigParser {
           case "heapCompactMinSize" ->
               result.heapCompactMinSize = parsePositiveInt(kv.value(), "stubborn.heapCompactMinSize");
           case "maxRetryAttempts" ->
-              result.maxRetryAttempts = parsePositiveInt(kv.value(), "stubborn.maxRetryAttempts");
+              result.maxRetryAttempts = parsePositiveIntOrUnlimited(kv.value(), "stubborn.maxRetryAttempts");
           case "maxTrackedLifetimeMs" ->
-              result.maxTrackedLifetimeMs = parsePositiveLong(kv.value(), "stubborn.maxTrackedLifetimeMs");
+              result.maxTrackedLifetimeMs =
+                  parsePositiveLongOrUnlimited(kv.value(), "stubborn.maxTrackedLifetimeMs");
           default -> fail("Unknown key in 'stubborn' section: '%s'".formatted(kv.key()));
         }
         index++;
@@ -554,6 +547,11 @@ public final class ConfigParser {
     if (network.maxPacketSize() > 65507) {
       throw new IllegalArgumentException("network.maxPacketSize must be <= 65507 for UDP payloads in " + path);
     }
+    if (network.maxPacketSize() < DpchSerialization.HEADER_SIZE) {
+      throw new IllegalArgumentException(
+          "network.maxPacketSize must be >= %d (DPCH header size) in %s"
+              .formatted(DpchSerialization.HEADER_SIZE, path));
+    }
   }
 
   // Parsing helpers
@@ -629,6 +627,14 @@ public final class ConfigParser {
     return ValidationUtils.requirePositiveInt(parsed, "Field '%s'".formatted(field));
   }
 
+  private static int parsePositiveIntOrUnlimited(String value, String field) {
+    int parsed = parseInteger(value, field);
+    if (parsed == StubbornLink.Config.UNLIMITED_RETRY_ATTEMPTS) {
+      return parsed;
+    }
+    return ValidationUtils.requirePositiveInt(parsed, "Field '%s'".formatted(field));
+  }
+
   private static int parsePort(String value, String field) {
     int port = parseInteger(value, field);
     return ValidationUtils.requireValidPort(port, "Field '%s'".formatted(field));
@@ -636,6 +642,14 @@ public final class ConfigParser {
 
   private static long parsePositiveLong(String value, String field) {
     long parsed = parseLong(value, field);
+    return ValidationUtils.requirePositiveLong(parsed, "Field '%s'".formatted(field));
+  }
+
+  private static long parsePositiveLongOrUnlimited(String value, String field) {
+    long parsed = parseLong(value, field);
+    if (parsed == StubbornLink.Config.UNLIMITED_TRACKED_LIFETIME_MS) {
+      return parsed;
+    }
     return ValidationUtils.requirePositiveLong(parsed, "Field '%s'".formatted(field));
   }
 
@@ -683,9 +697,8 @@ public final class ConfigParser {
     private Integer baseView;
 
     private SystemSection toRecord(Path path) {
-      if (name == null || environment == null || n == null || f == null || leaderElection == null || baseView == null) {
-        throw new IllegalArgumentException("Section 'system' is incomplete in " + path);
-      }
+      ValidationUtils.requireAllPresent(
+          "Section 'system' is incomplete in " + path, name, environment, n, f, leaderElection, baseView);
       return new SystemSection(name, environment, n, f, leaderElection, baseView);
     }
   }
@@ -698,9 +711,8 @@ public final class ConfigParser {
     private String publicKeyPath;
 
     private ReplicaSection toRecord(Path path) {
-      if (id == null || host == null || consensusPort == null || clientPort == null || publicKeyPath == null) {
-        throw new IllegalArgumentException("Replica entry is incomplete in " + path);
-      }
+      ValidationUtils.requireAllPresent(
+          "Replica entry is incomplete in " + path, id, host, consensusPort, clientPort, publicKeyPath);
       return new ReplicaSection(id, host, consensusPort, clientPort, publicKeyPath);
     }
   }
@@ -712,9 +724,8 @@ public final class ConfigParser {
     private final List<String> knownReplicas = new ArrayList<>();
 
     private ClientSection toRecord(Path path) {
-      if (id == null || host == null || requestTimeoutMs == null) {
-        throw new IllegalArgumentException("Section 'client' is incomplete in " + path);
-      }
+      ValidationUtils.requireAllPresent(
+          "Section 'client' is incomplete in " + path, id, host, requestTimeoutMs);
       return new ClientSection(id, host, requestTimeoutMs, List.copyOf(knownReplicas));
     }
   }
@@ -725,9 +736,8 @@ public final class ConfigParser {
     private Integer maxBackoffMs;
 
     private TimeoutsSection toRecord(Path path) {
-      if (viewChangeMs == null || retransmitMs == null || maxBackoffMs == null) {
-        throw new IllegalArgumentException("Section 'timeouts' is incomplete in " + path);
-      }
+      ValidationUtils.requireAllPresent(
+          "Section 'timeouts' is incomplete in " + path, viewChangeMs, retransmitMs, maxBackoffMs);
       return new TimeoutsSection(viewChangeMs, retransmitMs, maxBackoffMs);
     }
   }
@@ -742,9 +752,15 @@ public final class ConfigParser {
     private Long maxTrackedLifetimeMs;
 
     private StubbornSection toRecord(Path path) {
-      if (baseDelayMs == null || maxDelayMs == null || jitterRatio == null || maxPending == null || heapCompactMinSize == null || maxRetryAttempts == null || maxTrackedLifetimeMs == null) {
-        throw new IllegalArgumentException("Section 'stubborn' is incomplete in " + path);
-      }
+      ValidationUtils.requireAllPresent(
+          "Section 'stubborn' is incomplete in " + path,
+          baseDelayMs,
+          maxDelayMs,
+          jitterRatio,
+          maxPending,
+          heapCompactMinSize,
+          maxRetryAttempts,
+          maxTrackedLifetimeMs);
       return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize, maxRetryAttempts, maxTrackedLifetimeMs);
     }
   }
@@ -755,9 +771,8 @@ public final class ConfigParser {
     private Long streamIdleTtlMs;
 
     private PerfectSection toRecord(Path path) {
-      if (maxWindowSize == null || maxStreamStates == null || streamIdleTtlMs == null) {
-        throw new IllegalArgumentException("Section 'perfect' is incomplete in " + path);
-      }
+      ValidationUtils.requireAllPresent(
+          "Section 'perfect' is incomplete in " + path, maxWindowSize, maxStreamStates, streamIdleTtlMs);
       return new PerfectSection(maxWindowSize, maxStreamStates, streamIdleTtlMs);
     }
   }
@@ -766,9 +781,8 @@ public final class ConfigParser {
     private Integer maxPacketSize;
 
     private NetworkSection toRecord(Path path) {
-      if (maxPacketSize == null) {
-        throw new IllegalArgumentException("Section 'network' is incomplete in " + path);
-      }
+      maxPacketSize =
+          ValidationUtils.requirePresent(maxPacketSize, "Section 'network' is incomplete in " + path);
       return new NetworkSection(maxPacketSize);
     }
   }

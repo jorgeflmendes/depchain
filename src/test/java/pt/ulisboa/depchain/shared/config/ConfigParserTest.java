@@ -47,6 +47,41 @@ class ConfigParserTest {
     assertEquals(60_000L, config.perfect().streamIdleTtlMs());
   }
 
+  @Test
+  void loadRejectsNetworkMaxPacketSizeBelowDpchHeaderSize() throws Exception {
+    Path configPath = tempDir.resolve("config-small-packet.yaml");
+    Files.writeString(configPath, validConfig().replace("maxPacketSize: 8192", "maxPacketSize: 13"), StandardCharsets.UTF_8);
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
+
+    assertTrue(error.getMessage().contains("network.maxPacketSize must be >="));
+  }
+
+  @Test
+  void loadParsesUnlimitedStubbornRetrySettings() throws Exception {
+    Path configPath = tempDir.resolve("config-unlimited-stubborn.yaml");
+    Files.writeString(configPath, validConfig()
+        .replace("maxRetryAttempts: 12", "maxRetryAttempts: -1")
+        .replace("maxTrackedLifetimeMs: 30000", "maxTrackedLifetimeMs: -1"), StandardCharsets.UTF_8);
+
+    ConfigParser config = ConfigParser.load(configPath);
+    assertEquals(-1, config.stubborn().maxRetryAttempts());
+    assertEquals(-1L, config.stubborn().maxTrackedLifetimeMs());
+  }
+
+  @Test
+  void loadRejectsStubbornRetrySettingsBelowUnlimitedSentinel() throws Exception {
+    Path configPath = tempDir.resolve("config-invalid-unlimited-stubborn.yaml");
+    Files.writeString(configPath, validConfig()
+        .replace("maxRetryAttempts: 12", "maxRetryAttempts: -2"), StandardCharsets.UTF_8);
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
+
+    assertTrue(error.getMessage().contains("stubborn.maxRetryAttempts"));
+  }
+
   private static String configWithoutPublicKeyPath() {
     return """
         system:

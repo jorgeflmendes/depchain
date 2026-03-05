@@ -2,9 +2,53 @@ package pt.ulisboa.depchain.shared.utils;
 
 import java.util.Objects;
 
-// Utility class for validating various conditions and parameters.
 public final class ValidationUtils {
   private ValidationUtils() {}
+
+  // To hold a named argument for validation purposes.
+  public record NamedArg(String name, Object value) {
+    public NamedArg {
+      name = requireNonNull(name, "name");
+      if (name.isBlank()) {
+        throw new IllegalArgumentException("name must not be blank");
+      }
+    }
+  }
+
+  // Create a NamedArg instance for the given name and value.
+  public static NamedArg named(String name, Object value) {
+    return new NamedArg(name, value);
+  }
+
+  // Validate that the given value is not null, throwing a NullPointerException with the specified message if it is.
+  public static <T> T requireNonNull(T value, String fieldName) {
+    return Objects.requireNonNull(value, fieldName + " cannot be null");
+  }
+
+  // Validate that all the given NamedArg instances have non-null values, throwing a NullPointerException with the respective field name if any of them is null.
+  public static void requireAllNonNull(NamedArg... args) {
+    for (NamedArg namedArg : args) {
+      requireNonNull(namedArg.value(), namedArg.name());
+    }
+  }
+
+  // Validate that the given value is not null, throwing an IllegalArgumentException with the specified message if it is.
+  public static <T> T requirePresent(T value, String message) {
+    if (value == null) {
+      throw new IllegalArgumentException(message);
+    }
+    
+    return value;
+  }
+
+  // Validate that all the given values are not null, throwing an IllegalArgumentException with the specified message if any of them is null.
+  public static void requireAllPresent(String message, Object... values) {
+    for (Object value : values) {
+      if (value == null) {
+        throw new IllegalArgumentException(message);
+      }
+    }
+  }
 
   // Validate that the given port number is in the valid range [1, 65535].
   public static int requireValidPort(int port, String fieldName) {
@@ -60,9 +104,36 @@ public final class ValidationUtils {
     return value;
   }
 
+  // Validate that the given value is in the closed range [minimumInclusive, maximumInclusive].
+  public static int requireInClosedRangeInt(int value, int minimumInclusive, int maximumInclusive, String fieldName) {
+    if (value < minimumInclusive || value > maximumInclusive) {
+      throw new IllegalArgumentException("%s must be in range [%d, %d]".formatted(fieldName, minimumInclusive, maximumInclusive));
+    }
+    
+    return value;
+  }
+
+  // Validate that the given value is in the half-open range [minimumInclusive, maximumExclusive).
+  public static double requireInHalfOpenRangeDouble(double value, double minimumInclusive, double maximumExclusive, String fieldName) {
+    if (value < minimumInclusive || value >= maximumExclusive) {
+      throw new IllegalArgumentException("%s must be in range [%s, %s)".formatted(fieldName, minimumInclusive, maximumExclusive));
+    }
+
+    return value;
+  }
+
+  // Validate that the given value is at most the specified maximum (inclusive).
+  public static int requireAtMostInt(int value, int maximumInclusive, String fieldName) {
+    if (value > maximumInclusive) {
+      throw new IllegalArgumentException("%s must be <= %d".formatted(fieldName, maximumInclusive));
+    }
+
+    return value;
+  }
+
   // Validate that the given byte array slice is within bounds.
   public static void requireValidSlice(byte[] bytes, int offset, int length) {
-    Objects.requireNonNull(bytes, "bytes cannot be null");
+    requireNonNull(bytes, "bytes");
 
     if (offset < 0 || length < 0 || offset > bytes.length || (offset + length) > bytes.length) {
       throw new IllegalArgumentException("Invalid byte array slice");

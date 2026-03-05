@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
+import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.fairloss.InboundDatagram;
 
@@ -38,7 +39,12 @@ class FairLossLinkTest {
 
     try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
          FairLossLink clientTransport = FairLossLink.unbound(4096)) {
-      Dpch outbound = Dpch.data(ThreadLocalRandom.current().nextLong(), 7, "hello".getBytes(StandardCharsets.UTF_8));
+      Dpch outbound =
+          Dpch.from(
+              ThreadLocalRandom.current().nextLong(),
+              DpchType.DATA,
+              7,
+              "hello".getBytes(StandardCharsets.UTF_8));
       clientTransport.send(DpchSerialization.toBytes(outbound), loopback, port);
 
       InboundDatagram inboundRaw = serverTransport.receive();
@@ -49,8 +55,9 @@ class FairLossLinkTest {
       assertNotNull(inboundRaw.senderIp());
 
       Dpch response =
-          Dpch.data(
+          Dpch.from(
               inbound.connectionId(),
+              DpchType.DATA,
               inbound.sequenceNumber(),
               "matched".getBytes(StandardCharsets.UTF_8));
       serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.senderIp(), inboundRaw.senderPort());
@@ -93,6 +100,17 @@ class FairLossLinkTest {
   }
 
   @Test
+  void sendRejectsInvalidRemotePort() throws Exception {
+    InetAddress loopback = InetAddress.getLoopbackAddress();
+
+    try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
+      byte[] payload = new byte[] {1, 2, 3};
+      assertThrows(IllegalArgumentException.class, () -> clientTransport.send(payload, loopback, 0));
+      assertThrows(IllegalArgumentException.class, () -> clientTransport.send(payload, loopback, 65536));
+    }
+  }
+
+  @Test
   @Timeout(15)
   void multipleClientsCanExchangePacketsWithSingleServer() throws Exception {
     final int clientCount = 12;
@@ -115,8 +133,9 @@ class FairLossLinkTest {
                   received.put(key, text);
 
                   Dpch response =
-                      Dpch.data(
+                      Dpch.from(
                           inbound.connectionId(),
+                          DpchType.DATA,
                           inbound.sequenceNumber(),
                           ("ack:" + text).getBytes(StandardCharsets.UTF_8));
                   serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.senderIp(), inboundRaw.senderPort());
@@ -135,7 +154,11 @@ class FairLossLinkTest {
 
       for (int i = 0; i < clientCount; i++) {
         Dpch outbound =
-            Dpch.data(ThreadLocalRandom.current().nextLong(), i, ("client-" + i).getBytes(StandardCharsets.UTF_8));
+            Dpch.from(
+                ThreadLocalRandom.current().nextLong(),
+                DpchType.DATA,
+                i,
+                ("client-" + i).getBytes(StandardCharsets.UTF_8));
         outboundPackets.add(outbound);
         tasks.add(
             () -> {

@@ -54,8 +54,8 @@ stubborn:
   jitterRatio: 0.20
   maxPending: 50000
   heapCompactMinSize: 1024
-  maxRetryAttempts: 12
-  maxTrackedLifetimeMs: 30000
+  maxRetryAttempts: -1
+  maxTrackedLifetimeMs: -1
 
 # Parameters for perfect-link buffering and state cleanup
 perfect:

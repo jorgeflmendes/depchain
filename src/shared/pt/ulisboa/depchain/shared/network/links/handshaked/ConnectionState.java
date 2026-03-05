@@ -1,62 +1,92 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked;
 
 // Per-stream handshake lifecycle for local and remote sides.
-final class ConnectionState {
+public final class ConnectionState {
+  private enum SideState {
+    NEW,
+    ESTABLISHED,
+    FINISHED
+  }
+
+  private volatile long lastTouchedAtMs;
+
+  // Local and remote states for the handshake lifecycle of each side of the connection.
   private SideState local = SideState.NEW;
   private SideState remote = SideState.NEW;
-  private volatile long lastTouchedAtMs = System.currentTimeMillis();
 
-  void touch(long now) {
+  // If a local close has been requested by the application.
+  private boolean localCloseRequested;
+
+  public ConnectionState() {
+    this.localCloseRequested = false;
+    this.lastTouchedAtMs = System.currentTimeMillis();
+  }
+
+  public void touch(long now) {
     lastTouchedAtMs = now;
   }
 
-  boolean shouldSendSyn() {
-    return local == SideState.NEW;
-  }
-
-  void markLocalEstablished() {
+  public void markLocalEstablished() {
     if (local == SideState.NEW) {
       local = SideState.ESTABLISHED;
     }
   }
 
-  boolean isLocalFinished() {
-    return local == SideState.FINISHED;
+  public void requestLocalClose() {
+    localCloseRequested = true;
   }
 
-  boolean isRemoteFinished() {
-    return remote == SideState.FINISHED;
-  }
-
-  void markLocalFinished() {
+  public void markLocalFinished() {
     local = SideState.FINISHED;
   }
 
-  void markRemoteEstablishedIfNotFinished() {
+  public void markRemoteEstablishedIfNotFinished() {
     if (remote != SideState.FINISHED) {
       remote = SideState.ESTABLISHED;
     }
   }
 
-  void markRemoteFinished() {
+  public void markRemoteFinished() {
     remote = SideState.FINISHED;
   }
 
-  boolean isFullyEstablished() {
+  public boolean shouldSendSyn() {
+    return local == SideState.NEW;
+  }
+
+  public boolean shouldSendFin() {
+    return localCloseRequested && local != SideState.FINISHED;
+  }
+
+  public boolean isFullyEstablished() {
     return local == SideState.ESTABLISHED && remote == SideState.ESTABLISHED;
   }
 
-  boolean isStale(long now, long ttlMs) {
-    return (now - lastTouchedAtMs) >= ttlMs;
+  public boolean canExchangeData() {
+    return isFullyEstablished() && !isClosing();
   }
 
-  boolean isFinished() {
-    return local == SideState.FINISHED || remote == SideState.FINISHED;
+  public boolean isLocalFinished() {
+    return local == SideState.FINISHED;
   }
 
-  private enum SideState {
-    NEW,
-    ESTABLISHED,
-    FINISHED
+  public boolean isRemoteFinished() {
+    return remote == SideState.FINISHED;
+  }
+
+  public boolean isLocalCloseRequested() {
+    return localCloseRequested;
+  }
+
+  public boolean isStale(long now, long ttlMs) {
+    return (now - lastTouchedAtMs) >= ttlMs; // last touch is greater/equal to the configured TTL for staleness.
+  }
+
+  public boolean isCloseConverged() {
+    return local == SideState.FINISHED && remote == SideState.FINISHED;
+  }
+
+  public boolean isClosing() {
+    return localCloseRequested || local == SideState.FINISHED || remote == SideState.FINISHED;
   }
 }

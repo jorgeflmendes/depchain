@@ -1,12 +1,16 @@
 package pt.ulisboa.depchain.shared.network.dpch;
 
 public enum DpchType {
-  DATA((byte) 0), // DPCH packet containing data
-  ACK((byte) 1), // DPCH packet acknowledging receipt of a reliable packet
-  SYN((byte) 3), // DPCH packet used to synchronize the state of the sender and receiver
-  FIN((byte) 4); // DPCH packet used to indicate the end of a communication session
+  // TCP-like packet types.
+  DATA((byte) 0),
+  ACK((byte) 1),
+  SYN((byte) 3),
+  FIN((byte) 4);
 
   private final byte code;
+
+  // Lookup table for efficient byte to enum mapping.
+  private static final DpchType[] BY_UNSIGNED_CODE = buildLookup();
 
   DpchType(byte code) {
     this.code = code;
@@ -16,13 +20,22 @@ public enum DpchType {
     return code;
   }
 
+  // Maps a byte code to the corresponding enum value with validation
   public static DpchType fromCode(byte code) {
-    for (DpchType type : values()) {
-      if (type.code == code) {
-        return type;
-      }
+    int unsignedCode = Byte.toUnsignedInt(code);
+    DpchType type = BY_UNSIGNED_CODE[unsignedCode];
+    if (type == null) {
+      throw new IllegalArgumentException("Unsupported DPCH packet type: " + unsignedCode);
     }
+    return type;
+  }
 
-    throw new IllegalArgumentException("Unsupported DPCH packet type: " + Byte.toUnsignedInt(code));
+  // Pre-build a lookup table for byte to enum mapping.
+  private static DpchType[] buildLookup() {
+    DpchType[] lookup = new DpchType[256];
+    for (DpchType type : values()) {
+      lookup[Byte.toUnsignedInt(type.code)] = type;
+    }
+    return lookup;
   }
 }

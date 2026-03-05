@@ -1,43 +1,57 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked;
 
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.requireAllNonNull;
+
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.links.handshaked.coordinator.CloseHandshakeCoordinator;
+import pt.ulisboa.depchain.shared.network.links.handshaked.coordinator.StartHandshakeCoordinator;
+import pt.ulisboa.depchain.shared.network.links.handshaked.registry.ClosedConnectionsRegistry;
+import pt.ulisboa.depchain.shared.network.links.handshaked.registry.ConnectionStateRegistry;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
-import pt.ulisboa.depchain.shared.network.model.EndpointConnectionKey;
+import pt.ulisboa.depchain.shared.network.links.handshaked.InboundHandshakeDecider.ControlReply;
+import pt.ulisboa.depchain.shared.network.links.handshaked.InboundHandshakeDecider.InboundDecision;
+import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundMessage;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class HandshakedPerfectLink implements AutoCloseable {
-  // Avoid allocating a new empty array on every SYN/FIN send.
   private static final byte[] EMPTY_CONTROL_PAYLOAD = new byte[0];
 
   private final PerfectLink perfectLink;
-  private final int maxConnectionStates;
-  private final long connectionIdleTtlMs;
-  private final Map<EndpointConnectionKey, ConnectionState> connectionStates;
-  private final Map<EndpointConnectionKey, Long> closedConnections;
-  private final BlockingQueue<InboundMessage> deliveryQueue;
-  private final AtomicBoolean running;
+
+  // Connection state tracking maps
+  private final ConnectionStateRegistry connectionStateRegistry;
+  private final ClosedConnectionsRegistry closedConnectionsRegistry;
+  
+  // Coordinators for managing handshake processes
+  private final StartHandshakeCoordinator startCoordinator;
+  private final CloseHandshakeCoordinator closeCoordinator;
+
+  // Queue for delivering inbound messages to the application layer after handshake processing
+  private final BlockingQueue<InboundMessage> deliveryQueue = new LinkedBlockingQueue<>();
+
+  // Worker thread and running flag to allow graceful shutdown
+  private final AtomicBoolean running = new AtomicBoolean(true);
   private final Thread workerThread;
 
   private HandshakedPerfectLink(PerfectLink perfectLink, int maxConnectionStates, long connectionIdleTtlMs) {
-    this.perfectLink = Objects.requireNonNull(perfectLink, "perfectLink cannot be null");
-    this.maxConnectionStates = ValidationUtils.requirePositiveInt(maxConnectionStates, "maxConnectionStates");
-    this.connectionIdleTtlMs = ValidationUtils.requirePositiveLong(connectionIdleTtlMs, "connectionIdleTtlMs");
-    this.connectionStates = new ConcurrentHashMap<>();
-    this.closedConnections = new ConcurrentHashMap<>();
-    this.deliveryQueue = new LinkedBlockingQueue<>();
-    this.running = new AtomicBoolean(true);
+    this.perfectLink = ValidationUtils.requireNonNull(perfectLink, "perfectLink");
+    int checkedMaxConnectionStates = ValidationUtils.requirePositiveInt(maxConnectionStates, "maxConnectionStates");
+    long checkedConnectionIdleTtlMs = ValidationUtils.requirePositiveLong(connectionIdleTtlMs, "connectionIdleTtlMs");
+
+    this.connectionStateRegistry = new ConnectionStateRegistry(checkedMaxConnectionStates, checkedConnectionIdleTtlMs); // Active per-connection handshake state.
+    this.closedConnectionsRegistry = new ClosedConnectionsRegistry(checkedConnectionIdleTtlMs, checkedMaxConnectionStates);
+    this.startCoordinator = new StartHandshakeCoordinator(this.perfectLink, checkedConnectionIdleTtlMs);
+    this.closeCoordinator = new CloseHandshakeCoordinator(this.perfectLink, this.connectionStateRegistry, this.closedConnectionsRegistry, checkedConnectionIdleTtlMs);
+
     this.workerThread = Thread.ofVirtual().name("handshaked-perfect-link").start(this::runReceiveLoop);
   }
 
@@ -53,69 +67,16 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     return new HandshakedPerfectLink(perfect, perfectConfig.maxStreamStates(), perfectConfig.streamIdleTtlMs());
   }
 
-  // Send one DATA message after strict SYN/SYN establishment.
+  // Sends DATA through a started handshake session (or triggers SYN flow if needed).
   public void sendReliable(long connectionId, byte[] payload, InetAddress remoteIp, int remotePort) {
-    Objects.requireNonNull(payload, "payload cannot be null");
-    Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
+    requireAllNonNull(named("payload", payload), named("remoteIp", remoteIp));
     ValidationUtils.requireValidPort(remotePort, "remotePort");
 
-    EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
-    ConnectionState state = connectionStates.computeIfAbsent(key, ignored -> new ConnectionState());
-    long now = System.currentTimeMillis();
+    ConnectionKey connectionKey = ConnectionKey.from(remoteIp, remotePort, connectionId);
+    ConnectionState connectionState = connectionStateRegistry.getOrCreate(connectionKey); // Reuses stream state across DATA sends.
+    startCoordinator.sendReliable(connectionState, connectionId, payload, remoteIp, remotePort);
 
-    synchronized (state) {
-      state.touch(now);
-      ensureNotClosedForSend(state);
-      ensureSynSent(state, connectionId, remoteIp, remotePort);
-    }
-
-    // Strict handshake: DATA only after both sides are established.
-    waitUntilFullyEstablished(state);
-
-    synchronized (state) {
-      state.touch(System.currentTimeMillis());
-      ensureNotClosedForSend(state);
-      perfectLink.sendReliable(connectionId, payload, remoteIp, remotePort);
-    }
-
-    cleanStaleStatesIfNeeded();
-  }
-
-  public void closeConnection(long connectionId, InetAddress remoteIp, int remotePort) {
-    Objects.requireNonNull(remoteIp, "remoteIp cannot be null");
-    ValidationUtils.requireValidPort(remotePort, "remotePort");
-
-    EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
-    long now = System.currentTimeMillis();
-    if (isClosedRecently(key, now)) {
-      return;
-    }
-
-    ConnectionState state = connectionStates.get(key);
-    if (state == null) {
-      // Avoid resurrecting a stream with SYN/FIN when no active state exists.
-      markClosed(key, now);
-      cleanStaleStatesIfNeeded();
-      return;
-    }
-
-    synchronized (state) {
-      state.touch(now);
-      if (state.isLocalFinished() || state.isRemoteFinished()) {
-        connectionStates.remove(key, state);
-        markClosed(key, System.currentTimeMillis());
-        return;
-      }
-
-      ensureSynSent(state, connectionId, remoteIp, remotePort);
-      perfectLink.sendFin(connectionId, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
-      state.markLocalFinished();
-      state.notifyAll();
-    }
-    connectionStates.remove(key, state);
-    markClosed(key, System.currentTimeMillis());
-
-    cleanStaleStatesIfNeeded();
+    connectionStateRegistry.cleanup(System.currentTimeMillis(), closedConnectionsRegistry); // Opportunistic bounded-state cleanup.
   }
 
   public InboundMessage receive() throws InterruptedException {
@@ -123,15 +84,14 @@ public final class HandshakedPerfectLink implements AutoCloseable {
   }
 
   public InboundMessage receive(long timeoutMs) throws InterruptedException {
-    long sanitizedTimeoutMs = ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs");
-    return deliveryQueue.poll(sanitizedTimeoutMs, TimeUnit.MILLISECONDS);
+    return deliveryQueue.poll(ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs"), TimeUnit.MILLISECONDS);
   }
 
+  // Receives from PerfectLink, applies handshake gatekeeping, then forwards deliverable DATA.
   private void runReceiveLoop() {
     while (running.get()) {
       try {
-        InboundMessage inbound = perfectLink.receive();
-        InboundMessage delivered = processInbound(inbound);
+        InboundMessage delivered = handleInbound(perfectLink.receive());
         if (delivered != null) {
           deliveryQueue.offer(delivered);
         }
@@ -141,7 +101,7 @@ public final class HandshakedPerfectLink implements AutoCloseable {
         }
         Thread.currentThread().interrupt();
         break;
-      } catch (Exception exception) {
+      } catch (RuntimeException exception) {
         if (!running.get()) {
           break;
         }
@@ -150,141 +110,70 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     }
   }
 
-  private InboundMessage processInbound(InboundMessage inbound) {
-    DpchType type = inbound.packet().type();
-    if (type != DpchType.SYN && type != DpchType.FIN && type != DpchType.DATA) {
+  // Starts FIN flow using tracked state when available; otherwise closes using stateless fallback.
+  public void closeConnection(long connectionId, InetAddress remoteIp, int remotePort) {
+    ValidationUtils.requireNonNull(remoteIp, "remoteIp");
+    ValidationUtils.requireValidPort(remotePort, "remotePort");
+
+    ConnectionKey connectionKey = ConnectionKey.from(remoteIp, remotePort, connectionId);
+    ConnectionState connectionState = connectionStateRegistry.get(connectionKey);
+    if (connectionState == null) { // No active local state, still attempt remote close handshake.
+      closeCoordinator.closeConnectionWithoutState(connectionKey, connectionId, remoteIp, remotePort);
+      return;
+    }
+
+    closeCoordinator.closeActiveConnection(connectionKey, connectionState, connectionId, remoteIp, remotePort);
+  }
+
+  // Applies handshake state machine for inbound packet and decides whether DATA reaches the app.
+  private InboundMessage handleInbound(InboundMessage inbound) {
+    DpchType packetType = inbound.packet().type();
+    if (!InboundHandshakeDecider.handlesInboundType(packetType)) { // Defensive filter: ignore unsupported types.
       return null;
     }
 
     long connectionId = inbound.packet().connectionId();
+    int sequenceNumber = inbound.packet().sequenceNumber();
     InetAddress remoteIp = inbound.senderIp();
     int remotePort = inbound.senderPort();
-    EndpointConnectionKey key = connectionKey(connectionId, remoteIp, remotePort);
+    
+    ConnectionKey connectionKey = ConnectionKey.from(remoteIp, remotePort, connectionId);
     long now = System.currentTimeMillis();
-    if (isClosedRecently(key, now)) {
+    if (closedConnectionsRegistry.isClosedRecently(connectionKey, now)) { // Recently closed: only re-ACK control retries.
+      if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
+        sendControlReply(ControlReply.ACK, connectionId, sequenceNumber, packetType, remoteIp, remotePort);
+      }
       return null;
     }
 
-    ConnectionState state = connectionStates.computeIfAbsent(key, ignored -> new ConnectionState());
-    boolean deliverData = false;
-    boolean shouldRemoveState = false;
+    ConnectionState connectionState = connectionStateRegistry.getOrCreate(connectionKey);
+    InboundDecision decision;
+    synchronized (connectionState) { // Decision reads/mutates state atomically with sender wait/notify.
+      decision = InboundHandshakeDecider.decideInboundLocked(connectionState, packetType, now);
+    }
 
-    synchronized (state) {
-      state.touch(now);
-
-      if (type == DpchType.SYN) {
-        state.markRemoteEstablishedIfNotFinished();
-        // Passive handshake side: reply with plain SYN (ACK stays separate).
-        if (state.shouldSendSyn() && !state.isLocalFinished()) {
-          perfectLink.sendSyn(connectionId, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
-          state.markLocalEstablished();
-        }
-        state.notifyAll();
-      } else if (type == DpchType.FIN) {
-        state.markRemoteFinished();
-        state.notifyAll();
-        shouldRemoveState = true;
-      } else if (state.isFullyEstablished() && !state.isFinished()) {
-        deliverData = true;
+    sendControlReply(decision.reply(), connectionId, sequenceNumber, packetType, remoteIp, remotePort);
+    if (packetType == DpchType.SYN || packetType == DpchType.FIN) { // Wake threads waiting for handshake progression.
+      synchronized (connectionState) {
+        connectionState.notifyAll();
       }
     }
+    connectionStateRegistry.cleanup(System.currentTimeMillis(), closedConnectionsRegistry);
 
-    if (shouldRemoveState) {
-      connectionStates.remove(key, state);
-      markClosed(key, System.currentTimeMillis());
+    if (decision.deliverData()) { // Only data packets are delivered to the application layer
+      return inbound;
     }
-
-    cleanStaleStatesIfNeeded();
-    return deliverData ? inbound : null;
+    return null;
   }
 
-  private EndpointConnectionKey connectionKey(long connectionId, InetAddress remoteIp, int remotePort) {
-    return new EndpointConnectionKey(new InetSocketAddress(remoteIp, remotePort), connectionId);
-  }
-
-  private static void ensureNotClosedForSend(ConnectionState state) {
-    if (state.isLocalFinished() || state.isRemoteFinished()) {
-      throw new IllegalStateException("Connection already closed by FIN");
+  // Maps handshake decision reply to concrete control packet emission on PerfectLink.
+  private void sendControlReply(ControlReply reply, long connectionId, int sequenceNumber, DpchType inboundType, InetAddress remoteIp, int remotePort) {
+    switch (reply) {
+      case NONE -> {}
+      case ACK -> perfectLink.sendAck(connectionId, sequenceNumber, inboundType, remoteIp, remotePort);
+      case SYN_ACK -> perfectLink.send(connectionId, DpchType.SYN, true, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
+      case FIN_ACK -> perfectLink.send(connectionId, DpchType.FIN, true, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
     }
-  }
-
-  private void ensureSynSent(ConnectionState state, long connectionId, InetAddress remoteIp, int remotePort) {
-    if (state.shouldSendSyn()) {
-      perfectLink.sendSyn(connectionId, EMPTY_CONTROL_PAYLOAD, remoteIp, remotePort);
-      state.markLocalEstablished();
-      state.notifyAll();
-    }
-  }
-
-  private void waitUntilFullyEstablished(ConnectionState state) {
-    long deadlineMs = System.currentTimeMillis() + connectionIdleTtlMs;
-    synchronized (state) {
-      while (!state.isFullyEstablished()) {
-        if (state.isFinished()) {
-          throw new IllegalStateException("Connection closed during handshake");
-        }
-
-        long remainingMs = deadlineMs - System.currentTimeMillis();
-        if (remainingMs <= 0L) {
-          throw new IllegalStateException("Connection handshake timed out");
-        }
-
-        try {
-          state.wait(remainingMs);
-        } catch (InterruptedException interrupted) {
-          Thread.currentThread().interrupt();
-          throw new IllegalStateException("Interrupted while waiting for handshake", interrupted);
-        }
-      }
-    }
-  }
-
-  // Keep memory bounded without dropping active states arbitrarily.
-  private void cleanStaleStatesIfNeeded() {
-    long now = System.currentTimeMillis();
-    pruneClosedConnections(now);
-
-    if (connectionStates.size() > maxConnectionStates) {
-      connectionStates.entrySet().removeIf(entry -> entry.getValue().isStale(now, connectionIdleTtlMs));
-      if (connectionStates.size() > maxConnectionStates) {
-        connectionStates.entrySet().removeIf(entry -> entry.getValue().isFinished());
-      }
-    }
-  }
-
-  private void markClosed(EndpointConnectionKey key, long now) {
-    closedConnections.put(key, now);
-  }
-
-  private boolean isClosedRecently(EndpointConnectionKey key, long now) {
-    Long closedAt = closedConnections.get(key);
-    if (closedAt == null) {
-      return false;
-    }
-
-    if ((now - closedAt) > connectionIdleTtlMs) {
-      closedConnections.remove(key, closedAt);
-      return false;
-    }
-    return true;
-  }
-
-  private void pruneClosedConnections(long now) {
-    if (closedConnections.isEmpty()) {
-      return;
-    }
-
-    closedConnections.entrySet().removeIf(entry -> (now - entry.getValue()) > connectionIdleTtlMs);
-    if (closedConnections.size() <= maxConnectionStates) {
-      return;
-    }
-
-    closedConnections.entrySet().removeIf(entry -> {
-      if (closedConnections.size() <= maxConnectionStates) {
-        return false;
-      }
-      return !connectionStates.containsKey(entry.getKey());
-    });
   }
 
   @Override
@@ -292,7 +181,6 @@ public final class HandshakedPerfectLink implements AutoCloseable {
     if (!running.compareAndSet(true, false)) {
       return;
     }
-
     try {
       perfectLink.close();
     } finally {
