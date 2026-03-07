@@ -8,12 +8,10 @@ import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 
 // Registry to track active connection states and manage their lifecycle, including cleanup of stale states
 public final class ConnectionStateRegistry {
-  private final int maxConnectionStates;
   private final long connectionIdleTtlMs;
   private final Map<ConnectionKey, ConnectionState> states = new ConcurrentHashMap<>();
 
-  public ConnectionStateRegistry(int maxConnectionStates, long connectionIdleTtlMs) {
-    this.maxConnectionStates = maxConnectionStates;
+  public ConnectionStateRegistry(long connectionIdleTtlMs) {
     this.connectionIdleTtlMs = connectionIdleTtlMs;
   }
 
@@ -30,13 +28,7 @@ public final class ConnectionStateRegistry {
   }
 
   public void cleanup(long now, ClosedConnectionsRegistry closedConnections) {
-    closedConnections.cleanup(now, states);
-
-    if (states.size() > maxConnectionStates) {
-      states.entrySet().removeIf(entry -> entry.getValue().isStale(now, connectionIdleTtlMs));
-      if (states.size() > maxConnectionStates) {
-        states.entrySet().removeIf(entry -> entry.getValue().isCloseConverged());
-      }
-    }
+    closedConnections.cleanup(now);
+    states.entrySet().removeIf(entry -> entry.getValue().isStale(now, connectionIdleTtlMs));
   }
 }

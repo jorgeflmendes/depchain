@@ -107,10 +107,12 @@ Main runtime configuration is in `config/config.yaml`, including:
 - system parameters (`n`, `f`, leader election, base view),
 - replica endpoints and key paths,
 - client settings and request timeout,
-- timeout values,
-- stubborn-link retry policy,
-- perfect-link buffering/cleanup policy,
-- network maximum packet size.
+- timeout values.
+
+Link-layer networking parameters are defined in code defaults:
+- `StubbornLink.DEFAULT_*` (retry policy),
+- `PerfectLink.DEFAULT_*` (buffering/cleanup),
+- `FairLossLink.DEFAULT_MAX_PACKET_SIZE` (network packet size).
 
 Before running:
 - ensure key files exist at configured paths,

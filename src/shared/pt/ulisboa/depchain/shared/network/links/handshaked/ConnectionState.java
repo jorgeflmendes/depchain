@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked;
 
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
+
 // Per-stream handshake lifecycle for local and remote sides.
 public final class ConnectionState {
   private enum SideState {
@@ -79,7 +81,7 @@ public final class ConnectionState {
   }
 
   public boolean isStale(long now, long ttlMs) {
-    return (now - lastTouchedAtMs) >= ttlMs; // last touch is greater/equal to the configured TTL for staleness.
+    return TimeUtil.hasElapsedAtLeast(now, lastTouchedAtMs, ttlMs); // Last touch is greater/equal to the configured TTL for staleness.
   }
 
   public boolean isCloseConverged() {

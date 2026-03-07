@@ -9,8 +9,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
-import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class ConfigParser {
@@ -18,18 +16,12 @@ public final class ConfigParser {
   private final List<ReplicaSection> replicas;
   private final ClientSection client;
   private final TimeoutsSection timeouts;
-  private final StubbornSection stubborn;
-  private final PerfectSection perfect;
-  private final NetworkSection network;
 
-  private ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, PerfectSection perfect, NetworkSection network) {
+  private ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts) {
     this.system = system;
     this.replicas = List.copyOf(replicas);
     this.client = client;
     this.timeouts = timeouts;
-    this.stubborn = stubborn;
-    this.perfect = perfect;
-    this.network = network;
   }
   
   public SystemSection system() {
@@ -46,18 +38,6 @@ public final class ConfigParser {
 
   public TimeoutsSection timeouts() {
     return timeouts;
-  }
-
-  public StubbornSection stubborn() {
-    return stubborn;
-  }
-
-  public PerfectSection perfect() {
-    return perfect;
-  }
-
-  public NetworkSection network() {
-    return network;
   }
 
   public ReplicaSection requireReplica(String replicaId) {
@@ -98,9 +78,6 @@ public final class ConfigParser {
       List<ReplicaSection> replicas = null;
       MutableClientSection client = null;
       MutableTimeoutsSection timeouts = null;
-      MutableStubbornSection stubborn = null;
-      MutablePerfectSection perfect = null;
-      MutableNetworkSection network = null;
       Set<String> seenTopLevelSections = new HashSet<>();
 
       while (hasMoreLines()) {
@@ -130,9 +107,6 @@ public final class ConfigParser {
           case "replicas" -> replicas = parseReplicasSection();
           case "client" -> client = parseClientSection();
           case "timeouts" -> timeouts = parseTimeoutsSection();
-          case "stubborn" -> stubborn = parseStubbornSection();
-          case "perfect" -> perfect = parsePerfectSection();
-          case "network" -> network = parseNetworkSection();
           default -> fail("Unknown top-level section '%s'".formatted(sectionName));
         }
       }
@@ -143,22 +117,13 @@ public final class ConfigParser {
       client = ValidationUtils.requirePresent(client, "Missing required section 'client' in " + path);
       timeouts =
           ValidationUtils.requirePresent(timeouts, "Missing required section 'timeouts' in " + path);
-      stubborn =
-          ValidationUtils.requirePresent(stubborn, "Missing required section 'stubborn' in " + path);
-      perfect =
-          ValidationUtils.requirePresent(perfect, "Missing required section 'perfect' in " + path);
-      network =
-          ValidationUtils.requirePresent(network, "Missing required section 'network' in " + path);
 
       SystemSection parsedSystem = system.toRecord(path);
       ClientSection parsedClient = client.toRecord(path);
       TimeoutsSection parsedTimeouts = timeouts.toRecord(path);
-      StubbornSection parsedStubborn = stubborn.toRecord(path);
-      PerfectSection parsedPerfect = perfect.toRecord(path);
-      NetworkSection parsedNetwork = network.toRecord(path);
 
-      validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedPerfect, parsedNetwork, path);
-      return new ConfigParser(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedPerfect, parsedNetwork);
+      validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, path);
+      return new ConfigParser(parsedSystem, replicas, parsedClient, parsedTimeouts);
     }
 
     // YAML section: system-
@@ -354,108 +319,6 @@ public final class ConfigParser {
       return result;
     }
 
-    // YAML section: stubborn
-    private MutableStubbornSection parseStubbornSection() {
-      MutableStubbornSection result = new MutableStubbornSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'stubborn' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "baseDelayMs" -> result.baseDelayMs = parsePositiveLong(kv.value(), "stubborn.baseDelayMs");
-          case "maxDelayMs" -> result.maxDelayMs = parsePositiveLong(kv.value(), "stubborn.maxDelayMs");
-          case "jitterRatio" -> result.jitterRatio = parseNonNegativeDouble(kv.value(), "stubborn.jitterRatio");
-          case "maxPending" -> result.maxPending = parsePositiveInt(kv.value(), "stubborn.maxPending");
-          case "heapCompactMinSize" ->
-              result.heapCompactMinSize = parsePositiveInt(kv.value(), "stubborn.heapCompactMinSize");
-          case "maxRetryAttempts" ->
-              result.maxRetryAttempts = parsePositiveIntOrUnlimited(kv.value(), "stubborn.maxRetryAttempts");
-          case "maxTrackedLifetimeMs" ->
-              result.maxTrackedLifetimeMs =
-                  parsePositiveLongOrUnlimited(kv.value(), "stubborn.maxTrackedLifetimeMs");
-          default -> fail("Unknown key in 'stubborn' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
-    // YAML section: perfect
-    private MutablePerfectSection parsePerfectSection() {
-      MutablePerfectSection result = new MutablePerfectSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'perfect' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "maxWindowSize" -> result.maxWindowSize = parsePositiveInt(kv.value(), "perfect.maxWindowSize");
-          case "maxStreamStates" -> result.maxStreamStates = parsePositiveInt(kv.value(), "perfect.maxStreamStates");
-          case "streamIdleTtlMs" -> result.streamIdleTtlMs = parsePositiveLong(kv.value(), "perfect.streamIdleTtlMs");
-          default -> fail("Unknown key in 'perfect' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
-    // YAML section: network
-    private MutableNetworkSection parseNetworkSection() {
-      MutableNetworkSection result = new MutableNetworkSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'network' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "maxPacketSize" -> result.maxPacketSize = parsePositiveInt(kv.value(), "network.maxPacketSize");
-          default -> fail("Unknown key in 'network' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
     // Common parser helpers-
     private void assignReplicaKey(MutableReplicaSection replica, KeyValue kv) {
       switch (kv.key()) {
@@ -487,7 +350,7 @@ public final class ConfigParser {
   }
 
   // Cross-section validation
-  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, PerfectSection perfect, NetworkSection network, Path path) {
+  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, Path path) {
     if (system.n() != replicas.size()) {
       throw new IllegalArgumentException("system.n (%d) must match number of replicas (%d) in %s".formatted(system.n(), replicas.size(), path));
     }
@@ -534,24 +397,6 @@ public final class ConfigParser {
       throw new IllegalArgumentException(exception.getMessage() + " in " + path, exception);
     }
 
-    try {
-      ValidationUtils.requireAtLeast(stubborn.maxDelayMs(), stubborn.baseDelayMs(), "stubborn.maxDelayMs", "stubborn.baseDelayMs");
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException(exception.getMessage() + " in " + path, exception);
-    }
-
-    if (stubborn.jitterRatio() >= 1.0d) {
-      throw new IllegalArgumentException("stubborn.jitterRatio must be < 1.0 in " + path);
-    }
-
-    if (network.maxPacketSize() > 65507) {
-      throw new IllegalArgumentException("network.maxPacketSize must be <= 65507 for UDP payloads in " + path);
-    }
-    if (network.maxPacketSize() < DpchSerialization.HEADER_SIZE) {
-      throw new IllegalArgumentException(
-          "network.maxPacketSize must be >= %d (DPCH header size) in %s"
-              .formatted(DpchSerialization.HEADER_SIZE, path));
-    }
   }
 
   // Parsing helpers
@@ -627,38 +472,9 @@ public final class ConfigParser {
     return ValidationUtils.requirePositiveInt(parsed, "Field '%s'".formatted(field));
   }
 
-  private static int parsePositiveIntOrUnlimited(String value, String field) {
-    int parsed = parseInteger(value, field);
-    if (parsed == StubbornLink.Config.UNLIMITED_RETRY_ATTEMPTS) {
-      return parsed;
-    }
-    return ValidationUtils.requirePositiveInt(parsed, "Field '%s'".formatted(field));
-  }
-
   private static int parsePort(String value, String field) {
     int port = parseInteger(value, field);
     return ValidationUtils.requireValidPort(port, "Field '%s'".formatted(field));
-  }
-
-  private static long parsePositiveLong(String value, String field) {
-    long parsed = parseLong(value, field);
-    return ValidationUtils.requirePositiveLong(parsed, "Field '%s'".formatted(field));
-  }
-
-  private static long parsePositiveLongOrUnlimited(String value, String field) {
-    long parsed = parseLong(value, field);
-    if (parsed == StubbornLink.Config.UNLIMITED_TRACKED_LIFETIME_MS) {
-      return parsed;
-    }
-    return ValidationUtils.requirePositiveLong(parsed, "Field '%s'".formatted(field));
-  }
-
-  private static double parseNonNegativeDouble(String value, String field) {
-    double parsed = parseDouble(value, field);
-    if (parsed < 0.0d) {
-      throw new IllegalArgumentException("Field '%s' must be >= 0".formatted(field));
-    }
-    return parsed;
   }
 
   private static int parseInteger(String value, String field) {
@@ -666,22 +482,6 @@ public final class ConfigParser {
       return Integer.parseInt(value);
     } catch (NumberFormatException e) {
       throw new IllegalArgumentException("Field '%s' is not a valid integer: %s".formatted(field, value), e);
-    }
-  }
-
-  private static long parseLong(String value, String field) {
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Field '%s' is not a valid long: %s".formatted(field, value), e);
-    }
-  }
-
-  private static double parseDouble(String value, String field) {
-    try {
-      return Double.parseDouble(value);
-    } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Field '%s' is not a valid decimal number: %s".formatted(field, value), e);
     }
   }
 
@@ -742,51 +542,6 @@ public final class ConfigParser {
     }
   }
 
-  private static final class MutableStubbornSection {
-    private Long baseDelayMs;
-    private Long maxDelayMs;
-    private Double jitterRatio;
-    private Integer maxPending;
-    private Integer heapCompactMinSize;
-    private Integer maxRetryAttempts;
-    private Long maxTrackedLifetimeMs;
-
-    private StubbornSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Section 'stubborn' is incomplete in " + path,
-          baseDelayMs,
-          maxDelayMs,
-          jitterRatio,
-          maxPending,
-          heapCompactMinSize,
-          maxRetryAttempts,
-          maxTrackedLifetimeMs);
-      return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize, maxRetryAttempts, maxTrackedLifetimeMs);
-    }
-  }
-
-  private static final class MutablePerfectSection {
-    private Integer maxWindowSize;
-    private Integer maxStreamStates;
-    private Long streamIdleTtlMs;
-
-    private PerfectSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Section 'perfect' is incomplete in " + path, maxWindowSize, maxStreamStates, streamIdleTtlMs);
-      return new PerfectSection(maxWindowSize, maxStreamStates, streamIdleTtlMs);
-    }
-  }
-
-  private static final class MutableNetworkSection {
-    private Integer maxPacketSize;
-
-    private NetworkSection toRecord(Path path) {
-      maxPacketSize =
-          ValidationUtils.requirePresent(maxPacketSize, "Section 'network' is incomplete in " + path);
-      return new NetworkSection(maxPacketSize);
-    }
-  }
-
   // Immutable parsed sections
   public record SystemSection(String name, String environment, int n, int f, String leaderElection, int baseView) {}
 
@@ -795,10 +550,4 @@ public final class ConfigParser {
   public record ClientSection(String id, String host, int requestTimeoutMs, List<String> knownReplicas) {}
 
   public record TimeoutsSection(int viewChangeMs, int retransmitMs, int maxBackoffMs) {}
-
-  public record StubbornSection(long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize, int maxRetryAttempts, long maxTrackedLifetimeMs) {}
-
-  public record PerfectSection(int maxWindowSize, int maxStreamStates, long streamIdleTtlMs) {}
-
-  public record NetworkSection(int maxPacketSize) {}
 }

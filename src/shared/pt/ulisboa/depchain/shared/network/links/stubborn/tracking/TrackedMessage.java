@@ -1,29 +1,21 @@
-package pt.ulisboa.depchain.shared.network.links.stubborn.model;
+package pt.ulisboa.depchain.shared.network.links.stubborn.tracking;
 
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.requireAllNonNull;
 
 import java.util.Arrays;
 
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-// Represents a message being tracked for potential retries in the stubborn link protocol.
+// Represents a message being tracked for potential retries.
 public final class TrackedMessage {
-  // Key to identify a message uniquely for tracking purposes.
-  public record Key(long connectionId, int sequenceNumber, int messageTag) {
-    public Key {
-      ValidationUtils.requireInClosedRangeInt(messageTag, 0, 0xFF, "messageTag");
-    }
-  }
-
-  private final Key key;
+  private final TrackedKey key;
   private final byte[] payload;
   private final long createdAtMs;
   private int retryAttempt;
   private long nextRetryAtMs;
 
-  public TrackedMessage(Key key, byte[] payload, int retryAttempt, long createdAtMs, long nextRetryAtMs) {
-    requireAllNonNull(named("key", key), named("payload", payload));
+  public TrackedMessage(TrackedKey key, byte[] payload, int retryAttempt, long createdAtMs, long nextRetryAtMs) {
+    ValidationUtils.requireAllNonNull(named("key", key), named("payload", payload));
     this.key = key;
     this.payload = Arrays.copyOf(payload, payload.length);
     this.retryAttempt = ValidationUtils.requireNonNegativeInt(retryAttempt, "retryAttempt");
@@ -37,7 +29,7 @@ public final class TrackedMessage {
     nextRetryAtMs = newNextRetryAtMs;
   }
 
-  public Key key() {
+  public TrackedKey key() {
     return key;
   }
 

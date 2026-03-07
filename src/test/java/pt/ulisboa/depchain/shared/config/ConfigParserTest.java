@@ -35,51 +35,20 @@ class ConfigParserTest {
     assertEquals(4, config.system().n());
     assertEquals(4, config.replicas().size());
     assertEquals("server1", config.replicas().getFirst().id());
-    assertEquals(100L, config.stubborn().baseDelayMs());
-    assertEquals(5_000L, config.stubborn().maxDelayMs());
-    assertEquals(0.20d, config.stubborn().jitterRatio());
-    assertEquals(50_000, config.stubborn().maxPending());
-    assertEquals(1_024, config.stubborn().heapCompactMinSize());
-    assertEquals(12, config.stubborn().maxRetryAttempts());
-    assertEquals(30_000L, config.stubborn().maxTrackedLifetimeMs());
-    assertEquals(1_000, config.perfect().maxWindowSize());
-    assertEquals(4_096, config.perfect().maxStreamStates());
-    assertEquals(60_000L, config.perfect().streamIdleTtlMs());
+    assertEquals(1500, config.timeouts().viewChangeMs());
+    assertEquals(250, config.timeouts().retransmitMs());
+    assertEquals(10_000, config.timeouts().maxBackoffMs());
   }
 
   @Test
-  void loadRejectsNetworkMaxPacketSizeBelowDpchHeaderSize() throws Exception {
-    Path configPath = tempDir.resolve("config-small-packet.yaml");
-    Files.writeString(configPath, validConfig().replace("maxPacketSize: 8192", "maxPacketSize: 13"), StandardCharsets.UTF_8);
+  void loadRejectsLegacyLinkSectionsInYaml() throws Exception {
+    Path configPath = tempDir.resolve("config-legacy-link-sections.yaml");
+    Files.writeString(configPath, validConfig() + "\n" + legacyLinkSections(), StandardCharsets.UTF_8);
 
     IllegalArgumentException error =
         assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
 
-    assertTrue(error.getMessage().contains("network.maxPacketSize must be >="));
-  }
-
-  @Test
-  void loadParsesUnlimitedStubbornRetrySettings() throws Exception {
-    Path configPath = tempDir.resolve("config-unlimited-stubborn.yaml");
-    Files.writeString(configPath, validConfig()
-        .replace("maxRetryAttempts: 12", "maxRetryAttempts: -1")
-        .replace("maxTrackedLifetimeMs: 30000", "maxTrackedLifetimeMs: -1"), StandardCharsets.UTF_8);
-
-    ConfigParser config = ConfigParser.load(configPath);
-    assertEquals(-1, config.stubborn().maxRetryAttempts());
-    assertEquals(-1L, config.stubborn().maxTrackedLifetimeMs());
-  }
-
-  @Test
-  void loadRejectsStubbornRetrySettingsBelowUnlimitedSentinel() throws Exception {
-    Path configPath = tempDir.resolve("config-invalid-unlimited-stubborn.yaml");
-    Files.writeString(configPath, validConfig()
-        .replace("maxRetryAttempts: 12", "maxRetryAttempts: -2"), StandardCharsets.UTF_8);
-
-    IllegalArgumentException error =
-        assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
-
-    assertTrue(error.getMessage().contains("stubborn.maxRetryAttempts"));
+    assertTrue(error.getMessage().contains("Unknown top-level section"));
   }
 
   private static String configWithoutPublicKeyPath() {
@@ -128,22 +97,6 @@ class ConfigParserTest {
           retransmitMs: 250
           maxBackoffMs: 10000
 
-        stubborn:
-          baseDelayMs: 100
-          maxDelayMs: 5000
-          jitterRatio: 0.20
-          maxPending: 50000
-          heapCompactMinSize: 1024
-          maxRetryAttempts: 12
-          maxTrackedLifetimeMs: 30000
-
-        perfect:
-          maxWindowSize: 1000
-          maxStreamStates: 4096
-          streamIdleTtlMs: 60000
-
-        network:
-          maxPacketSize: 8192
         """;
   }
 
@@ -194,14 +147,19 @@ class ConfigParserTest {
           retransmitMs: 250
           maxBackoffMs: 10000
 
+        """;
+  }
+
+  private static String legacyLinkSections() {
+    return """
         stubborn:
-          baseDelayMs: 100
-          maxDelayMs: 5000
+          baseDelayMs: 80
+          maxDelayMs: 1500
           jitterRatio: 0.20
           maxPending: 50000
           heapCompactMinSize: 1024
-          maxRetryAttempts: 12
-          maxTrackedLifetimeMs: 30000
+          maxRetryAttempts: 8
+          maxTrackedLifetimeMs: 20000
 
         perfect:
           maxWindowSize: 1000

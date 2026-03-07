@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -28,7 +29,7 @@ import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
-import pt.ulisboa.depchain.shared.network.links.fairloss.InboundDatagram;
+import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 
 class FairLossLinkTest {
   @Test
@@ -36,8 +37,9 @@ class FairLossLinkTest {
   void sendAndReceivePacketBetweenClientAndServer() throws Exception {
     InetAddress loopback = InetAddress.getLoopbackAddress();
     int port = pickFreeUdpPort(loopback);
+    InetSocketAddress serverEndpoint = new InetSocketAddress(loopback, port);
 
-    try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
+    try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096);
          FairLossLink clientTransport = FairLossLink.unbound(4096)) {
       Dpch outbound =
           Dpch.from(
@@ -45,14 +47,14 @@ class FairLossLinkTest {
               DpchType.DATA,
               7,
               "hello".getBytes(StandardCharsets.UTF_8));
-      clientTransport.send(DpchSerialization.toBytes(outbound), loopback, port);
+      clientTransport.send(DpchSerialization.toBytes(outbound), serverEndpoint);
 
-      InboundDatagram inboundRaw = serverTransport.receive();
+      InboundBytes inboundRaw = serverTransport.receive();
       Dpch inbound = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
       assertEquals(outbound.connectionId(), inbound.connectionId());
       assertEquals(outbound.sequenceNumber(), inbound.sequenceNumber());
       assertEquals("hello", new String(inbound.payload(), StandardCharsets.UTF_8));
-      assertNotNull(inboundRaw.senderIp());
+      assertNotNull(inboundRaw.sender());
 
       Dpch response =
           Dpch.from(
@@ -60,9 +62,9 @@ class FairLossLinkTest {
               DpchType.DATA,
               inbound.sequenceNumber(),
               "matched".getBytes(StandardCharsets.UTF_8));
-      serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.senderIp(), inboundRaw.senderPort());
+      serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.sender());
 
-      InboundDatagram replyRaw = clientTransport.receive();
+      InboundBytes replyRaw = clientTransport.receive();
       Dpch reply = DpchSerialization.fromBytes(replyRaw.payload(), 0, replyRaw.payload().length);
       assertEquals("matched", new String(reply.payload(), StandardCharsets.UTF_8));
       assertEquals(outbound.connectionId(), reply.connectionId());
@@ -75,12 +77,13 @@ class FairLossLinkTest {
   void receiveReturnsRawMalformedPacket() throws Exception {
     InetAddress loopback = InetAddress.getLoopbackAddress();
     int port = pickFreeUdpPort(loopback);
+    InetSocketAddress serverEndpoint = new InetSocketAddress(loopback, port);
 
-    try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096);
+    try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096);
          DatagramSocket sender = new DatagramSocket(0, loopback)) {
       byte[] malformed = new byte[] {0x01, 0x02, 0x03};
       sender.send(new DatagramPacket(malformed, malformed.length, loopback, port));
-      InboundDatagram inbound = serverTransport.receive();
+      InboundBytes inbound = serverTransport.receive();
       assertEquals(malformed.length, inbound.payload().length);
     }
   }
@@ -94,7 +97,7 @@ class FairLossLinkTest {
       IOException error =
           assertThrows(
               IOException.class,
-              () -> clientTransport.send(oversized, loopback, 9999));
+              () -> clientTransport.send(oversized, new InetSocketAddress(loopback, 9999)));
       assertTrue(error.getMessage().contains("exceeds maxPacketSize"));
     }
   }
@@ -105,8 +108,12 @@ class FairLossLinkTest {
 
     try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
       byte[] payload = new byte[] {1, 2, 3};
-      assertThrows(IllegalArgumentException.class, () -> clientTransport.send(payload, loopback, 0));
-      assertThrows(IllegalArgumentException.class, () -> clientTransport.send(payload, loopback, 65536));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> clientTransport.send(payload, new InetSocketAddress(loopback, 0)));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> clientTransport.send(payload, new InetSocketAddress(loopback, 65536)));
     }
   }
 
@@ -116,6 +123,7 @@ class FairLossLinkTest {
     final int clientCount = 12;
     final InetAddress loopback = InetAddress.getLoopbackAddress();
     final int port = pickFreeUdpPort(loopback);
+    final InetSocketAddress serverEndpoint = new InetSocketAddress(loopback, port);
     final CountDownLatch serverReady = new CountDownLatch(1);
     final Map<String, String> received = new ConcurrentHashMap<>();
 
@@ -123,10 +131,10 @@ class FairLossLinkTest {
     Future<?> serverWorker =
         serverExecutor.submit(
             () -> {
-              try (FairLossLink serverTransport = FairLossLink.bind(loopback, port, 4096)) {
+              try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096)) {
                 serverReady.countDown();
                 for (int i = 0; i < clientCount; i++) {
-                  InboundDatagram inboundRaw = serverTransport.receive();
+                  InboundBytes inboundRaw = serverTransport.receive();
                   Dpch inbound = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
                   String text = new String(inbound.payload(), StandardCharsets.UTF_8);
                   String key = inbound.connectionId() + ":" + inbound.sequenceNumber();
@@ -138,7 +146,7 @@ class FairLossLinkTest {
                           DpchType.DATA,
                           inbound.sequenceNumber(),
                           ("ack:" + text).getBytes(StandardCharsets.UTF_8));
-                  serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.senderIp(), inboundRaw.senderPort());
+                  serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.sender());
                 }
               } catch (Exception exception) {
                 throw new RuntimeException(exception);
@@ -163,9 +171,9 @@ class FairLossLinkTest {
         tasks.add(
             () -> {
               try (FairLossLink clientTransport = FairLossLink.unbound(4096)) {
-                clientTransport.send(DpchSerialization.toBytes(outbound), loopback, port);
+                clientTransport.send(DpchSerialization.toBytes(outbound), serverEndpoint);
                 while (true) {
-                  InboundDatagram inboundRaw = clientTransport.receive();
+                  InboundBytes inboundRaw = clientTransport.receive();
                   Dpch candidate = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
                   boolean sameConnectionId = candidate.connectionId() == outbound.connectionId();
                   boolean sameSequence = candidate.sequenceNumber() == outbound.sequenceNumber();

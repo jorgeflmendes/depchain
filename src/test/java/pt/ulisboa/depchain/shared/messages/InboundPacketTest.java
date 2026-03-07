@@ -4,15 +4,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
-import pt.ulisboa.depchain.shared.network.model.InboundMessage;
+import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
-class InboundMessageTest {
+class InboundPacketTest {
   @Test
   void constructorPreservesFields() throws Exception {
     Dpch packet =
@@ -21,12 +22,11 @@ class InboundMessageTest {
             DpchType.DATA,
             2,
             "payload".getBytes(StandardCharsets.UTF_8));
-    InetAddress senderIp = InetAddress.getLoopbackAddress();
-    InboundMessage inbound = new InboundMessage(packet, senderIp, 12000);
+    InetSocketAddress sender = new InetSocketAddress(InetAddress.getLoopbackAddress(), 12000);
+    InboundPacket inbound = new InboundPacket(sender, packet);
 
+    assertEquals(sender, inbound.sender());
     assertEquals(packet, inbound.packet());
-    assertEquals(senderIp, inbound.senderIp());
-    assertEquals(12000, inbound.senderPort());
   }
 
   @Test
@@ -37,11 +37,13 @@ class InboundMessageTest {
             DpchType.DATA,
             2,
             "payload".getBytes(StandardCharsets.UTF_8));
-    InetAddress senderIp = InetAddress.getLoopbackAddress();
+    InetSocketAddress sender = new InetSocketAddress(InetAddress.getLoopbackAddress(), 12000);
 
-    assertThrows(NullPointerException.class, () -> new InboundMessage(null, senderIp, 12000));
-    assertThrows(NullPointerException.class, () -> new InboundMessage(packet, null, 12000));
-    assertThrows(IllegalArgumentException.class, () -> new InboundMessage(packet, senderIp, 0));
-    assertThrows(IllegalArgumentException.class, () -> new InboundMessage(packet, senderIp, 65536));
+    assertThrows(NullPointerException.class, () -> new InboundPacket(null, packet));
+    assertThrows(NullPointerException.class, () -> new InboundPacket(sender, null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new InboundPacket(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), packet));
   }
 }
+

@@ -2,16 +2,16 @@ package pt.ulisboa.depchain.client;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.concurrent.ThreadLocalRandom;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
-import pt.ulisboa.depchain.shared.config.LinkConfigFactory;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink;
-import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
-import pt.ulisboa.depchain.shared.network.model.InboundMessage;
+import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -27,15 +27,15 @@ public final class Main {
     // Load the client configuration from the specified file path.
     ConfigParser config = ConfigParser.load(Path.of(configPath));
     ConfigParser.ReplicaSection targetReplicaConfig = config.requireReplica(targetReplicaId);
-    PerfectLink.BuildConfig linkConfig = LinkConfigFactory.toBuildConfig(config);
 
     // Resolve the target replica's address and port from the configuration, and get the request timeout.
-    InetAddress targetAddress = InetAddress.getByName(targetReplicaConfig.host());
-    int targetPort = targetReplicaConfig.clientPort();
+    InetSocketAddress targetEndpoint =
+        new InetSocketAddress(
+            InetAddress.getByName(targetReplicaConfig.host()), targetReplicaConfig.clientPort());
     long timeoutMs = config.client().requestTimeoutMs();
 
-    try (HandshakedPerfectLink transport = HandshakedPerfectLink.unbound(linkConfig)) {
-      String responsePayload = sendRequest(transport, value, targetAddress, targetPort, timeoutMs);
+    try (HandshakedPerfectLink transport = HandshakedPerfectLink.unbound()) {
+      String responsePayload = sendRequest(transport, value, targetEndpoint, timeoutMs);
       System.out.println("response = " + responsePayload);
     } catch (IOException | IllegalStateException exception) {
       System.out.printf("Packet exchange error = %s%n", exception.getMessage());
@@ -48,20 +48,25 @@ public final class Main {
   }
 
   // Sends one request and waits for the matching response.
-  private static String sendRequest(HandshakedPerfectLink transport, String value, InetAddress targetAddress, int targetPort, long timeoutMs) throws IOException, InterruptedException {
+  private static String sendRequest(
+      HandshakedPerfectLink transport,
+      String value,
+      InetSocketAddress targetEndpoint,
+      long timeoutMs)
+      throws IOException, InterruptedException {
     long connectionId = ThreadLocalRandom.current().nextLong();
-    transport.sendReliable(connectionId, value.getBytes(StandardCharsets.UTF_8), targetAddress, targetPort);
+    transport.send(connectionId, value.getBytes(StandardCharsets.UTF_8), targetEndpoint);
 
     try {
-      long deadlineMs = System.currentTimeMillis() + timeoutMs;
+      long deadlineMs = TimeUtil.deadlineAfter(timeoutMs);
 
       while (true) {
-        long remainingMs = deadlineMs - System.currentTimeMillis();
+        long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
         if (remainingMs <= 0L) {
           throw new IOException("Request timed out after " + timeoutMs + " ms");
         }
 
-        InboundMessage inbound = transport.receive(remainingMs);
+        InboundPacket inbound = transport.receive(remainingMs);
         if (inbound == null) {
           throw new IOException("Request timed out after " + timeoutMs + " ms");
         }
@@ -73,11 +78,12 @@ public final class Main {
       }
     } finally {
       try {
-        transport.closeConnection(connectionId, targetAddress, targetPort);
+        transport.closeConnection(connectionId, targetEndpoint);
       } catch (RuntimeException ignored) {
         // Best-effort close.
       }
     }
   }
 }
+
 

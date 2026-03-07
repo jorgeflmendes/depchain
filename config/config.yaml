@@ -1,4 +1,4 @@
-# Configuration file for the DepChain consensus protocol implementation, specifying system parameters, replica details, client settings, timeouts, and network configurations.
+# Configuration file for the DepChain consensus protocol implementation, specifying system parameters, replica details, client settings, and timeouts.
 system:
   name: depchain
   environment: local
@@ -46,23 +46,3 @@ timeouts:
   viewChangeMs: 1500
   retransmitMs: 250
   maxBackoffMs: 10000
-
-# Parameters for the stubborn retransmission mechanism used by replicas to resend messages to peers
-stubborn:
-  baseDelayMs: 80
-  maxDelayMs: 1500
-  jitterRatio: 0.20
-  maxPending: 50000
-  heapCompactMinSize: 1024
-  maxRetryAttempts: 8
-  maxTrackedLifetimeMs: 20000
-
-# Parameters for perfect-link buffering and state cleanup
-perfect:
-  maxWindowSize: 1000
-  maxStreamStates: 4096
-  streamIdleTtlMs: 60000
-
-# Network configuration parameters, including the maximum packet size for messages sent between replicas and clients
-network:
-  maxPacketSize: 8192
