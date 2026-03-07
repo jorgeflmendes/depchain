@@ -39,14 +39,8 @@ class FairLossLinkTest {
     int port = pickFreeUdpPort(loopback);
     InetSocketAddress serverEndpoint = new InetSocketAddress(loopback, port);
 
-    try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096);
-         FairLossLink clientTransport = FairLossLink.unbound(4096)) {
-      Dpch outbound =
-          Dpch.from(
-              ThreadLocalRandom.current().nextLong(),
-              DpchType.DATA,
-              7,
-              "hello".getBytes(StandardCharsets.UTF_8));
+    try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096); FairLossLink clientTransport = FairLossLink.unbound(4096)) {
+      Dpch outbound = Dpch.from(ThreadLocalRandom.current().nextLong(), DpchType.DATA, 7, "hello".getBytes(StandardCharsets.UTF_8));
       clientTransport.send(DpchSerialization.toBytes(outbound), serverEndpoint);
 
       InboundBytes inboundRaw = serverTransport.receive();
@@ -56,12 +50,7 @@ class FairLossLinkTest {
       assertEquals("hello", new String(inbound.payload(), StandardCharsets.UTF_8));
       assertNotNull(inboundRaw.sender());
 
-      Dpch response =
-          Dpch.from(
-              inbound.connectionId(),
-              DpchType.DATA,
-              inbound.sequenceNumber(),
-              "matched".getBytes(StandardCharsets.UTF_8));
+      Dpch response = Dpch.from(inbound.connectionId(), DpchType.DATA, inbound.sequenceNumber(), "matched".getBytes(StandardCharsets.UTF_8));
       serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.sender());
 
       InboundBytes replyRaw = clientTransport.receive();
@@ -79,9 +68,8 @@ class FairLossLinkTest {
     int port = pickFreeUdpPort(loopback);
     InetSocketAddress serverEndpoint = new InetSocketAddress(loopback, port);
 
-    try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096);
-         DatagramSocket sender = new DatagramSocket(0, loopback)) {
-      byte[] malformed = new byte[] {0x01, 0x02, 0x03};
+    try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096); DatagramSocket sender = new DatagramSocket(0, loopback)) {
+      byte[] malformed = new byte[]{0x01, 0x02, 0x03};
       sender.send(new DatagramPacket(malformed, malformed.length, loopback, port));
       InboundBytes inbound = serverTransport.receive();
       assertEquals(malformed.length, inbound.payload().length);
@@ -94,10 +82,7 @@ class FairLossLinkTest {
 
     try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
       byte[] oversized = new byte[8_192];
-      IOException error =
-          assertThrows(
-              IOException.class,
-              () -> clientTransport.send(oversized, new InetSocketAddress(loopback, 9999)));
+      IOException error = assertThrows(IOException.class, () -> clientTransport.send(oversized, new InetSocketAddress(loopback, 9999)));
       assertTrue(error.getMessage().contains("exceeds maxPacketSize"));
     }
   }
@@ -107,13 +92,9 @@ class FairLossLinkTest {
     InetAddress loopback = InetAddress.getLoopbackAddress();
 
     try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
-      byte[] payload = new byte[] {1, 2, 3};
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> clientTransport.send(payload, new InetSocketAddress(loopback, 0)));
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> clientTransport.send(payload, new InetSocketAddress(loopback, 65536)));
+      byte[] payload = new byte[]{1, 2, 3};
+      assertThrows(IllegalArgumentException.class, () -> clientTransport.send(payload, new InetSocketAddress(loopback, 0)));
+      assertThrows(IllegalArgumentException.class, () -> clientTransport.send(payload, new InetSocketAddress(loopback, 65536)));
     }
   }
 
@@ -128,30 +109,23 @@ class FairLossLinkTest {
     final Map<String, String> received = new ConcurrentHashMap<>();
 
     ExecutorService serverExecutor = Executors.newSingleThreadExecutor();
-    Future<?> serverWorker =
-        serverExecutor.submit(
-            () -> {
-              try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096)) {
-                serverReady.countDown();
-                for (int i = 0; i < clientCount; i++) {
-                  InboundBytes inboundRaw = serverTransport.receive();
-                  Dpch inbound = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
-                  String text = new String(inbound.payload(), StandardCharsets.UTF_8);
-                  String key = inbound.connectionId() + ":" + inbound.sequenceNumber();
-                  received.put(key, text);
+    Future<?> serverWorker = serverExecutor.submit(() -> {
+      try (FairLossLink serverTransport = FairLossLink.bind(serverEndpoint, 4096)) {
+        serverReady.countDown();
+        for (int i = 0; i < clientCount; i++) {
+          InboundBytes inboundRaw = serverTransport.receive();
+          Dpch inbound = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
+          String text = new String(inbound.payload(), StandardCharsets.UTF_8);
+          String key = inbound.connectionId() + ":" + inbound.sequenceNumber();
+          received.put(key, text);
 
-                  Dpch response =
-                      Dpch.from(
-                          inbound.connectionId(),
-                          DpchType.DATA,
-                          inbound.sequenceNumber(),
-                          ("ack:" + text).getBytes(StandardCharsets.UTF_8));
-                  serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.sender());
-                }
-              } catch (Exception exception) {
-                throw new RuntimeException(exception);
-              }
-            });
+          Dpch response = Dpch.from(inbound.connectionId(), DpchType.DATA, inbound.sequenceNumber(), ("ack:" + text).getBytes(StandardCharsets.UTF_8));
+          serverTransport.send(DpchSerialization.toBytes(response), inboundRaw.sender());
+        }
+      } catch (Exception exception) {
+        throw new RuntimeException(exception);
+      }
+    });
 
     assertTrue(serverReady.await(3, TimeUnit.SECONDS), "Server did not start in time");
 
@@ -161,28 +135,22 @@ class FairLossLinkTest {
       List<Dpch> outboundPackets = new ArrayList<>();
 
       for (int i = 0; i < clientCount; i++) {
-        Dpch outbound =
-            Dpch.from(
-                ThreadLocalRandom.current().nextLong(),
-                DpchType.DATA,
-                i,
-                ("client-" + i).getBytes(StandardCharsets.UTF_8));
+        Dpch outbound = Dpch.from(ThreadLocalRandom.current().nextLong(), DpchType.DATA, i, ("client-" + i).getBytes(StandardCharsets.UTF_8));
         outboundPackets.add(outbound);
-        tasks.add(
-            () -> {
-              try (FairLossLink clientTransport = FairLossLink.unbound(4096)) {
-                clientTransport.send(DpchSerialization.toBytes(outbound), serverEndpoint);
-                while (true) {
-                  InboundBytes inboundRaw = clientTransport.receive();
-                  Dpch candidate = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
-                  boolean sameConnectionId = candidate.connectionId() == outbound.connectionId();
-                  boolean sameSequence = candidate.sequenceNumber() == outbound.sequenceNumber();
-                  if (sameConnectionId && sameSequence) {
-                    return candidate;
-                  }
-                }
+        tasks.add(() -> {
+          try (FairLossLink clientTransport = FairLossLink.unbound(4096)) {
+            clientTransport.send(DpchSerialization.toBytes(outbound), serverEndpoint);
+            while (true) {
+              InboundBytes inboundRaw = clientTransport.receive();
+              Dpch candidate = DpchSerialization.fromBytes(inboundRaw.payload(), 0, inboundRaw.payload().length);
+              boolean sameConnectionId = candidate.connectionId() == outbound.connectionId();
+              boolean sameSequence = candidate.sequenceNumber() == outbound.sequenceNumber();
+              if (sameConnectionId && sameSequence) {
+                return candidate;
               }
-            });
+            }
+          }
+        });
       }
 
       List<Future<Dpch>> futures = clientExecutor.invokeAll(tasks);

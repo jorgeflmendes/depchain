@@ -16,12 +16,7 @@ import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 class InboundPacketTest {
   @Test
   void constructorPreservesFields() throws Exception {
-    Dpch packet =
-        Dpch.from(
-            ThreadLocalRandom.current().nextLong(),
-            DpchType.DATA,
-            2,
-            "payload".getBytes(StandardCharsets.UTF_8));
+    Dpch packet = Dpch.from(ThreadLocalRandom.current().nextLong(), DpchType.DATA, 2, "payload".getBytes(StandardCharsets.UTF_8));
     InetSocketAddress sender = new InetSocketAddress(InetAddress.getLoopbackAddress(), 12000);
     InboundPacket inbound = new InboundPacket(sender, packet);
 
@@ -31,19 +26,11 @@ class InboundPacketTest {
 
   @Test
   void constructorRejectsInvalidArguments() {
-    Dpch packet =
-        Dpch.from(
-            ThreadLocalRandom.current().nextLong(),
-            DpchType.DATA,
-            2,
-            "payload".getBytes(StandardCharsets.UTF_8));
+    Dpch packet = Dpch.from(ThreadLocalRandom.current().nextLong(), DpchType.DATA, 2, "payload".getBytes(StandardCharsets.UTF_8));
     InetSocketAddress sender = new InetSocketAddress(InetAddress.getLoopbackAddress(), 12000);
 
     assertThrows(NullPointerException.class, () -> new InboundPacket(null, packet));
     assertThrows(NullPointerException.class, () -> new InboundPacket(sender, null));
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new InboundPacket(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), packet));
+    assertThrows(IllegalArgumentException.class, () -> new InboundPacket(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), packet));
   }
 }
-

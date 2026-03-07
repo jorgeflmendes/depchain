@@ -19,8 +19,7 @@ class ConfigParserTest {
     Path configPath = tempDir.resolve("config.yaml");
     Files.writeString(configPath, configWithoutPublicKeyPath(), StandardCharsets.UTF_8);
 
-    IllegalArgumentException error =
-        assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
+    IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
 
     assertTrue(error.getMessage().contains("Replica entry is incomplete"));
   }
@@ -45,8 +44,7 @@ class ConfigParserTest {
     Path configPath = tempDir.resolve("config-legacy-link-sections.yaml");
     Files.writeString(configPath, validConfig() + "\n" + legacyLinkSections(), StandardCharsets.UTF_8);
 
-    IllegalArgumentException error =
-        assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
+    IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> ConfigParser.load(configPath));
 
     assertTrue(error.getMessage().contains("Unknown top-level section"));
   }
