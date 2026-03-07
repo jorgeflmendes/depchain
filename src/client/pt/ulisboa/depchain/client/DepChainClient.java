@@ -1,7 +1,7 @@
 package pt.ulisboa.depchain.client;
 
 import java.io.IOException;
-import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -25,43 +25,33 @@ public class DepChainClient {
   public String append(String value, String replicaId) throws Exception {
     ConfigParser.ReplicaSection targetReplica = configParser.requireReplica(replicaId);
 
-    InetAddress targetAddress = InetAddress.getByName(targetReplica.host());
-    int targetPort = targetReplica.clientPort();
-
-    long timeout = configParser.client().requestTimeoutMs();
+    InetSocketAddress targetAddress = new InetSocketAddress(
+      targetReplica.host(),
+      targetReplica.clientPort()
+    );
 
     try (HandshakedPerfectLink transport = HandshakedPerfectLink.unbound(linkConfig)) {
-      return sendRequest(transport, value, targetAddress, targetPort, timeout);
+      return sendRequest(transport, value, targetAddress);
     }
   }
 
   private String sendRequest(
     HandshakedPerfectLink transport,
     String value,
-    InetAddress targetAddress,
-    int targetPort,
-    long timeout
+    InetSocketAddress targetAddress
   ) throws IOException, InterruptedException {
 
     long connectionId = ThreadLocalRandom.current().nextLong();
 
     byte[] payload = ClientCodec.encodeRequest(new ClientRequest(value));
 
-    transport.sendReliable(connectionId, payload, targetAddress, targetPort);
-
-    long deadline = System.currentTimeMillis() + timeout;
+    transport.sendReliable(connectionId, payload, targetAddress.getAddress(), targetAddress.getPort());
 
     try {
       while (true) {
-
-        long remainingTime = deadline - System.currentTimeMillis();
-        if (remainingTime <= 0) {
-          throw new IOException("Request timed out");
-        }
-
-        InboundMessage message = transport.receive(remainingTime);
+        InboundMessage message = transport.receive();
         if (message == null) {
-          throw new IOException("Request timed out");
+          continue;
         }
 
         Dpch packet = message.packet();
@@ -73,7 +63,7 @@ public class DepChainClient {
       }
     } finally {
       try {
-        transport.closeConnection(connectionId, targetAddress, targetPort);
+        transport.closeConnection(connectionId, targetAddress.getAddress(), targetAddress.getPort());
       } catch (RuntimeException ignored) {
       }
     }
