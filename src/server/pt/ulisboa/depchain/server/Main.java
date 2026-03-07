@@ -50,7 +50,7 @@ public final class Main {
     try {
       String payloadText = new String(inbound.payload(), StandardCharsets.UTF_8);
 
-      System.out.println("Received request: " + payloadText);
+      System.out.printf("Received request conn=%s seq=%d from %s%n", inbound.connectionId(), inbound.sequenceNumber(), sender);
       byte[] responsePayload = ("Received " + payloadText).getBytes(StandardCharsets.UTF_8);
       transport.sendReliable(inbound.connectionId(), responsePayload, senderIp, senderPort);
     } catch (RuntimeException exception) {
