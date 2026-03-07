@@ -1,16 +1,16 @@
 package pt.ulisboa.depchain.client;
 
-import java.nio.charset.StandardCharsets;
+import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 
 public final class ClientCodec {
 
   private ClientCodec() {}
 
   public static byte[] encodeRequest(ClientRequest req) {
-    return req.value().getBytes(StandardCharsets.UTF_8);
+    return SerializationUtil.encodeString(req.value());
   }
 
   public static ClientReply decodeReply(byte[] payload) {
-    return new ClientReply(new String(payload, StandardCharsets.UTF_8));
+    return new ClientReply(SerializationUtil.decodeString(payload));
   }
 }
