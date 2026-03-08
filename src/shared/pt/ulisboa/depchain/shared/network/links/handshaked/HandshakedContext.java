@@ -5,7 +5,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import pt.ulisboa.depchain.shared.network.links.handshaked.registry.ClosedConnectionsRegistry;
 import pt.ulisboa.depchain.shared.network.links.handshaked.registry.ConnectionStateRegistry;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
@@ -14,16 +13,12 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 final class HandshakedContext {
   final PerfectLink perfectLink;
   final ConnectionStateRegistry connectionStateRegistry;
-  final ClosedConnectionsRegistry closedConnectionsRegistry;
   final BlockingQueue<InboundPacket> deliveryQueue = new LinkedBlockingQueue<>();
   final AtomicBoolean running = new AtomicBoolean(true);
 
-  HandshakedContext(PerfectLink perfectLink, long connectionIdleTtlMs) {
+  HandshakedContext(PerfectLink perfectLink) {
     this.perfectLink = ValidationUtils.requireNonNull(perfectLink, "perfectLink");
-    long checkedConnectionIdleTtlMs = ValidationUtils.requirePositiveLong(connectionIdleTtlMs, "connectionIdleTtlMs");
-
-    this.connectionStateRegistry = new ConnectionStateRegistry(checkedConnectionIdleTtlMs);
-    this.closedConnectionsRegistry = new ClosedConnectionsRegistry(checkedConnectionIdleTtlMs);
+    this.connectionStateRegistry = new ConnectionStateRegistry();
   }
 
   InboundPacket receive() throws InterruptedException {

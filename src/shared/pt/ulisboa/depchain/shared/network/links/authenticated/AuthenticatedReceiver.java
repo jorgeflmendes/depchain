@@ -45,10 +45,40 @@ final class AuthenticatedReceiver {
     if (context.hasSharedSecret(connectionKey)) { // Already Handshaked
       return handleSecureData(connectionKey, inbound);
     } else if (context.hasEphemeralPrivateKey(connectionKey)) { // Handshake initiated, waiting for reply
-      return handleHandshakeReply(connectionKey, inbound);
+      return handleHandshakeAfterInit(connectionKey, inbound);
     } else { // No handshake, expecting initiation
       return handleHandshakeInit(connectionKey, inbound);
     }
+  }
+
+  // If both sides sent INIT, the higher senderId keeps the initiator role.
+  private InboundPacket handleHandshakeAfterInit(ConnectionKey connectionKey, InboundPacket inbound) {
+    if (inbound.packet().type() != DpchType.DATA) {
+      return null;
+    }
+
+    DecodedEcdsaPayload decodedPayload;
+    try {
+      decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
+    } catch (IllegalArgumentException ignored) {
+      return null;
+    }
+
+    if (decodedPayload.opcode() == AuthOpcode.REPLY) {
+      return handleHandshakeReply(connectionKey, inbound);
+    }
+
+    if (decodedPayload.opcode() != AuthOpcode.INIT) {
+      return null;
+    }
+
+    // When both sides initiate at the same time, the higher senderId keeps the initiator role.
+    if (decodedPayload.senderId() <= context.localSenderId) {
+      return null;
+    }
+
+    context.removeEphemeralPrivateKey(connectionKey);
+    return handleHandshakeInit(connectionKey, inbound);
   }
 
   private InboundPacket handleHandshakeInit(ConnectionKey connectionKey, InboundPacket inbound) {
@@ -57,7 +87,13 @@ final class AuthenticatedReceiver {
     }
 
     // The first packet must contain an ECDSA-signed ephemeral key.
-    DecodedEcdsaPayload decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
+    DecodedEcdsaPayload decodedPayload;
+    try {
+      decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
+    } catch (IllegalArgumentException ignored) {
+      return null;
+    }
+
     if (decodedPayload.opcode() != AuthOpcode.INIT) {
       return null;
     }
@@ -85,7 +121,7 @@ final class AuthenticatedReceiver {
     try {
       peerEphemeralPKey = PublicKeyLoader.decodePublicKey(decodedPayload.publicKeyBytes());
     } catch (Exception exception) {
-      throw new IllegalArgumentException("Invalid encoded public key", exception);
+      return null;
     }
 
     // Generate our own ephemeral key pair for this handshake.
@@ -110,6 +146,7 @@ final class AuthenticatedReceiver {
     sender.sendHandshakeReply(connectionKey, localEKeys, inbound.sender());
     context.putSharedSecret(connectionKey, sharedSecret);
     context.ensureNonceState(connectionKey);
+    sender.flushPendingPayloads(connectionKey, inbound.sender());
     return null;
   }
 
@@ -119,7 +156,13 @@ final class AuthenticatedReceiver {
     }
 
     // The reply must contain an ECDSA-signed ephemeral key.
-    DecodedEcdsaPayload decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
+    DecodedEcdsaPayload decodedPayload;
+    try {
+      decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
+    } catch (IllegalArgumentException ignored) {
+      return null;
+    }
+
     if (decodedPayload.opcode() != AuthOpcode.REPLY) {
       return null;
     }
@@ -147,7 +190,7 @@ final class AuthenticatedReceiver {
     try {
       peerEphemeralPKey = PublicKeyLoader.decodePublicKey(decodedPayload.publicKeyBytes());
     } catch (Exception exception) {
-      throw new IllegalArgumentException("Invalid encoded public key", exception);
+      return null;
     }
 
     // Retrieve our pending ephemeral private key generated during HANDSHAKE_INIT.
@@ -182,7 +225,13 @@ final class AuthenticatedReceiver {
     }
 
     // Secure data must contain an HMAC-protected payload.
-    DecodedHmacPayload decodedPayload = AuthenticatedPayload.decodeHmac(inbound.packet().payload());
+    DecodedHmacPayload decodedPayload;
+    try {
+      decodedPayload = AuthenticatedPayload.decodeHmac(inbound.packet().payload());
+    } catch (IllegalArgumentException ignored) {
+      return null;
+    }
+
     if (decodedPayload.opcode() != AuthOpcode.DATA) {
       return null;
     }

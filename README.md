@@ -53,6 +53,18 @@ Not implemented yet:
 +--------------------------------------------------+
 ```
 
+## Error Handling Policy
+The transport stack follows a simple and uniform error-handling policy:
+
+- Caller misuse or violated local preconditions raise exceptions (`IllegalArgumentException` or `IllegalStateException`).
+- Invalid or unauthentic packets received from the network are dropped silently by the protocol layer that detects them.
+- Real local failures inside a layer (for example, local send failures, serialization failures, cryptographic failures, or exhausted tracked retries) are propagated as exceptions instead of being silently ignored.
+
+In short:
+- caller error -> throw
+- invalid network input -> drop
+- real local layer failure -> throw
+
 ## DPCH Wire Format
 ```text
 DPCH Frame

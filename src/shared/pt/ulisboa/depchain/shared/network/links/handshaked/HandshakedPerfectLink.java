@@ -8,16 +8,14 @@ import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
 public final class HandshakedPerfectLink implements BlockingLink<InboundPacket> {
-  private static final long DEFAULT_CONNECTION_IDLE_TTL_MS = PerfectLink.DEFAULT_STREAM_IDLE_TTL_MS;
-
   private final HandshakedContext context;
   private final HandshakedSender sender;
   private final HandshakedReceiver receiver;
   private final Thread workerThread;
 
-  private HandshakedPerfectLink(PerfectLink perfectLink, long connectionIdleTtlMs) {
-    this.context = new HandshakedContext(perfectLink, connectionIdleTtlMs);
-    this.sender = new HandshakedSender(context, connectionIdleTtlMs);
+  private HandshakedPerfectLink(PerfectLink perfectLink) {
+    this.context = new HandshakedContext(perfectLink);
+    this.sender = new HandshakedSender(context);
     this.receiver = new HandshakedReceiver(context, sender);
 
     this.workerThread = Thread.ofVirtual().name("handshaked-perfect-link").start(receiver::runInboundLoop);
@@ -25,12 +23,12 @@ public final class HandshakedPerfectLink implements BlockingLink<InboundPacket> 
 
   public static HandshakedPerfectLink bind(InetSocketAddress bindEndpoint) throws IOException {
     PerfectLink perfect = PerfectLink.bind(bindEndpoint);
-    return new HandshakedPerfectLink(perfect, DEFAULT_CONNECTION_IDLE_TTL_MS);
+    return new HandshakedPerfectLink(perfect);
   }
 
   public static HandshakedPerfectLink unbound() throws IOException {
     PerfectLink perfect = PerfectLink.unbound();
-    return new HandshakedPerfectLink(perfect, DEFAULT_CONNECTION_IDLE_TTL_MS);
+    return new HandshakedPerfectLink(perfect);
   }
 
   public void send(long connectionId, byte[] payload, InetSocketAddress remoteEndpoint) {

@@ -11,6 +11,7 @@ import java.util.TreeMap;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
@@ -48,21 +49,31 @@ final class PerfectSender {
     return context.waitUntilNoPendingType(connectionId, remoteEndpoint, packetType, timeoutMs);
   }
 
-  long trackedNoPendingTimeoutMs() {
-    return context.trackedNoPendingTimeoutMs();
+  void cancelPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) {
+    ConnectionKey key = new ConnectionKey(remoteEndpoint, connectionId);
+    List<TrackedKey> cancellations = new ArrayList<>();
+
+    // Drop pending tracked packets of this type for this connection.
+    context.sendSequences.computeIfPresent(key, (ignored, senderState) -> {
+      cancellations.addAll(senderState.cancelPendingType(connectionId, packetType));
+      return senderState;
+    });
+
+    for (TrackedKey trackedKey : cancellations) {
+      context.stubbornLink.cancelTracked(trackedKey, remoteEndpoint);
+    }
   }
 
   void sendAckBestEffort(long connectionId, int sequenceNumber, InetSocketAddress remote, byte[] ackPayload) {
     try {
       context.stubbornLink.send(PerfectContext.serializePacket(Dpch.from(connectionId, DpchType.ACK, sequenceNumber, ackPayload)), remote);
     } catch (IOException exception) {
-      // TODO: use logger
+      throw new IllegalStateException("Failed to send ACK for connection " + connectionId + " seq=" + sequenceNumber, exception);
     }
   }
 
   private void sendTracked(long connectionId, DpchType type, boolean withAck, byte[] payload, InetSocketAddress remoteEndpoint) {
     ConnectionKey key = new ConnectionKey(remoteEndpoint, connectionId);
-    long now = TimeUtil.nowMs();
     boolean reusePendingControl = (type == DpchType.SYN || type == DpchType.FIN);
     int[] sequenceNumberHolder = new int[1];
 
@@ -73,24 +84,21 @@ final class PerfectSender {
         senderState = new SenderState();
       }
 
-      sequenceNumberHolder[0] = senderState.nextOrPendingSequence(type, reusePendingControl, now);
+      sequenceNumberHolder[0] = senderState.nextOrPendingSequence(type, reusePendingControl);
       return senderState;
     });
     int sequenceNumber = sequenceNumberHolder[0];
 
     Dpch packet = Dpch.from(connectionId, type, withAck, sequenceNumber, payload);
     context.stubbornLink.sendTracked(new TrackedKey(connectionId, sequenceNumber, Byte.toUnsignedInt(type.code())), PerfectContext.serializePacket(packet), remoteEndpoint);
-    context.cleanStaleStatesIfNeeded(now);
   }
 
   // TODO: maybe move this to another file
   static final class SenderState {
     private int nextSequence;
     private final NavigableMap<Integer, DpchType> inFlightBySeq = new TreeMap<>();
-    private volatile long lastTouchedAtMs = System.currentTimeMillis();
 
-    synchronized int nextOrPendingSequence(DpchType type, boolean reusePendingSameType, long now) {
-      touch(now);
+    synchronized int nextOrPendingSequence(DpchType type, boolean reusePendingSameType) {
       if (reusePendingSameType) {
         for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
           if (entry.getValue() == type) {
@@ -109,8 +117,7 @@ final class PerfectSender {
       return sequence;
     }
 
-    synchronized List<TrackedKey> acknowledge(long connectionId, int sequenceNumber, DpchType acknowledgedType, long now) {
-      touch(now);
+    synchronized List<TrackedKey> acknowledge(long connectionId, int sequenceNumber, DpchType acknowledgedType) {
       List<TrackedKey> cancellations = new ArrayList<>();
 
       if (acknowledgedType == DpchType.FIN) {
@@ -136,27 +143,39 @@ final class PerfectSender {
       return cancellations;
     }
 
-    synchronized boolean waitUntilNoPending(DpchType type, long deadlineMs) throws InterruptedException {
+    synchronized List<TrackedKey> cancelPendingType(long connectionId, DpchType packetType) {
+      List<TrackedKey> cancellations = new ArrayList<>();
+      Iterator<Map.Entry<Integer, DpchType>> iterator = inFlightBySeq.entrySet().iterator();
+
+      while (iterator.hasNext()) {
+        Map.Entry<Integer, DpchType> entry = iterator.next();
+        if (entry.getValue() != packetType) {
+          continue;
+        }
+
+        cancellations.add(new TrackedKey(connectionId, entry.getKey(), Byte.toUnsignedInt(packetType.code())));
+        iterator.remove();
+      }
+
+      notifyAll();
+      return cancellations;
+    }
+
+    synchronized boolean waitUntilNoPending(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchType type, long deadlineMs)
+        throws InterruptedException {
       while (hasPending(type)) {
+        LinkFailureException failure = failureForTypeOrNull(context, connectionId, remoteEndpoint, type);
+        if (failure != null) {
+          throw failure;
+        }
+
         long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
         if (remainingMs <= 0L) {
           return false;
         }
-        wait(remainingMs);
+        wait(Math.min(remainingMs, 100L));
       }
       return true;
-    }
-
-    synchronized boolean hasNoPendingMessages() {
-      return inFlightBySeq.isEmpty();
-    }
-
-    boolean isStale(long now, long ttlMs) {
-      return TimeUtil.hasElapsedAtLeast(now, lastTouchedAtMs, ttlMs);
-    }
-
-    private void touch(long now) {
-      lastTouchedAtMs = now;
     }
 
     private boolean hasPending(DpchType type) {
@@ -166,6 +185,21 @@ final class PerfectSender {
         }
       }
       return false;
+    }
+
+    synchronized LinkFailureException failureForTypeOrNull(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchType type) {
+      for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
+        if (entry.getValue() != type) {
+          continue;
+        }
+
+        LinkFailureException failure = context.trackedFailureOrNull(connectionId, remoteEndpoint, entry.getKey(), entry.getValue());
+        if (failure != null) {
+          return failure;
+        }
+      }
+
+      return null;
     }
   }
 }

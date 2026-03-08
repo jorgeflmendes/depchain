@@ -2,6 +2,7 @@ package pt.ulisboa.depchain.shared.network.links.stubborn;
 
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
+import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedTargetKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
@@ -32,8 +33,6 @@ final class StubbornRetryEngine {
           if (!context.running.get()) {
             break;
           }
-        } catch (RuntimeException exception) {
-          System.out.printf("Stubborn retry loop error = %s%n", exception.getMessage());
         }
       }
     } finally {
@@ -72,6 +71,7 @@ final class StubbornRetryEngine {
 
         if (context.shouldStopTracking(tracked, now)) { // The tracked message has reached the maximum retry attempts, so stop tracking and skip.
           context.retryRegistry.removeTracked(targetKey);
+          context.retryRegistry.recordFailed(targetKey, new LinkFailureException("Tracked message failed after max retries: " + targetKey));
           continue;
         }
 
