@@ -2,10 +2,7 @@ package pt.ulisboa.depchain.client;
 
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 
-public final class ClientCodec {
-
-  private ClientCodec() {}
-
+public final class ClientSerialization {
   public static byte[] encodeRequest(ClientRequest req) {
     return SerializationUtil.encodeString(req.value());
   }

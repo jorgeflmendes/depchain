@@ -52,3 +52,5 @@ scripts/udp_pingpong_trace.py
 
 # Generated keys
 config/keys/
+
+bin
