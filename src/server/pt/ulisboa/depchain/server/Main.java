@@ -57,6 +57,8 @@ public final class Main {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
     try {
       String payloadText = new String(inbound.payload(), StandardCharsets.UTF_8);
+
+      System.out.printf("Received request conn=%s seq=%d from %s%n", inbound.connectionId(), inbound.sequenceNumber(), sender);
       byte[] responsePayload = ("Received " + payloadText).getBytes(StandardCharsets.UTF_8);
       transport.send(inbound.connectionId(), responsePayload, sender);
     } catch (RuntimeException exception) {
