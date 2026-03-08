@@ -24,7 +24,7 @@ class ReplicaConnectivityTest {
   @Timeout(60)
   void clientCanReachAllReplicas() throws Exception {
     // Loads the integration config used by server and client processes.
-    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
+    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.properties").toAbsolutePath();
     assertTrue(Files.exists(configPath), "Missing config file: " + configPath);
 
     // Starts all replica processes before sending client requests.
@@ -43,9 +43,7 @@ class ReplicaConnectivityTest {
         ProcessResult result = runClient(message, replicaId, configPath);
 
         assertEquals(0, result.exitCode(), "Client exited with error for " + replicaId + ": " + result.output());
-        assertTrue(
-            result.output().contains("response = Received " + message),
-            "Unexpected client output for " + replicaId + ": " + result.output());
+        assertTrue(result.output().contains("response = Received " + message), "Unexpected client output for " + replicaId + ": " + result.output());
       }
     } finally {
       // Stops all spawned server processes even if assertions fail.
@@ -57,20 +55,21 @@ class ReplicaConnectivityTest {
     // Launches a replica JVM process bound to the configured replica id.
     ProcessBuilder pb = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.server.Main", replicaId, configPath.toString());
     pb.redirectErrorStream(true);
-    
+
     return pb.start();
   }
 
   private static ProcessResult runClient(String value, String targetReplicaId, Path configPath) throws IOException, InterruptedException {
     // Launches a client JVM process that sends a value to one target replica.
-    ProcessBuilder pb = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.client.Main", value, targetReplicaId, configPath.toString());
+    ProcessBuilder pb = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.client.Main", value, targetReplicaId,
+        configPath.toString());
     pb.redirectErrorStream(true);
 
     Process process = pb.start();
 
     // Waits for the client process to finish within a fixed timeout.
     boolean finished = process.waitFor(Duration.ofSeconds(10).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
-    
+
     if (!finished) {
       process.destroyForcibly();
       return new ProcessResult(124, "Client timeout");
@@ -124,5 +123,6 @@ class ReplicaConnectivityTest {
     return output.toString(StandardCharsets.UTF_8);
   }
 
-  private record ProcessResult(int exitCode, String output) {}
+  private record ProcessResult(int exitCode, String output) {
+  }
 }

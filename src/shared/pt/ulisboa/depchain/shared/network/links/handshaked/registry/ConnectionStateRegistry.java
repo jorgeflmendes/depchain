@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked.registry;
 
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -8,12 +9,10 @@ import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 
 // Registry to track active connection states and manage their lifecycle, including cleanup of stale states
 public final class ConnectionStateRegistry {
-  private final int maxConnectionStates;
   private final long connectionIdleTtlMs;
   private final Map<ConnectionKey, ConnectionState> states = new ConcurrentHashMap<>();
 
-  public ConnectionStateRegistry(int maxConnectionStates, long connectionIdleTtlMs) {
-    this.maxConnectionStates = maxConnectionStates;
+  public ConnectionStateRegistry(long connectionIdleTtlMs) {
     this.connectionIdleTtlMs = connectionIdleTtlMs;
   }
 
@@ -30,13 +29,19 @@ public final class ConnectionStateRegistry {
   }
 
   public void cleanup(long now, ClosedConnectionsRegistry closedConnections) {
-    closedConnections.cleanup(now, states);
+    closedConnections.cleanup(now);
+    // Re-check staleness under the state lock before removing a connection state.
+    for (ConnectionKey connectionKey : new ArrayList<>(states.keySet())) {
+      states.computeIfPresent(connectionKey, (ignored, state) -> {
+        synchronized (state) {
+          if (state.hasActiveOperations() || !state.isStale(now, connectionIdleTtlMs)) {
+            return state;
+          }
 
-    if (states.size() > maxConnectionStates) {
-      states.entrySet().removeIf(entry -> entry.getValue().isStale(now, connectionIdleTtlMs));
-      if (states.size() > maxConnectionStates) {
-        states.entrySet().removeIf(entry -> entry.getValue().isCloseConverged());
-      }
+          state.notifyAll();
+          return null;
+        }
+      });
     }
   }
 }

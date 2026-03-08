@@ -3,7 +3,8 @@ package pt.ulisboa.depchain.shared.utils;
 import java.util.Objects;
 
 public final class ValidationUtils {
-  private ValidationUtils() {}
+  private ValidationUtils() {
+  }
 
   // To hold a named argument for validation purposes.
   public record NamedArg(String name, Object value) {
@@ -20,28 +21,43 @@ public final class ValidationUtils {
     return new NamedArg(name, value);
   }
 
-  // Validate that the given value is not null, throwing a NullPointerException with the specified message if it is.
+  // Validate that the given value is not null, throwing a NullPointerException with the specified
+  // message if it is.
   public static <T> T requireNonNull(T value, String fieldName) {
     return Objects.requireNonNull(value, fieldName + " cannot be null");
   }
 
-  // Validate that all the given NamedArg instances have non-null values, throwing a NullPointerException with the respective field name if any of them is null.
+  // Validate that all the given NamedArg instances have non-null values, throwing a
+  // NullPointerException with the respective field name if any of them is null.
   public static void requireAllNonNull(NamedArg... args) {
     for (NamedArg namedArg : args) {
       requireNonNull(namedArg.value(), namedArg.name());
     }
   }
 
-  // Validate that the given value is not null, throwing an IllegalArgumentException with the specified message if it is.
+  // Validate that the given value is not null, throwing an IllegalArgumentException with the
+  // specified message if it is.
   public static <T> T requirePresent(T value, String message) {
     if (value == null) {
       throw new IllegalArgumentException(message);
     }
-    
+
     return value;
   }
 
-  // Validate that all the given values are not null, throwing an IllegalArgumentException with the specified message if any of them is null.
+  // Validate that the given string is not blank.
+  public static String requireNonBlank(String value, String fieldName) {
+    requireNonNull(value, fieldName);
+
+    if (value.isBlank()) {
+      throw new IllegalArgumentException("%s must not be blank".formatted(fieldName));
+    }
+
+    return value;
+  }
+
+  // Validate that all the given values are not null, throwing an IllegalArgumentException with the
+  // specified message if any of them is null.
   public static void requireAllPresent(String message, Object... values) {
     for (Object value : values) {
       if (value == null) {
@@ -55,7 +71,7 @@ public final class ValidationUtils {
     if (port < 1 || port > 65535) {
       throw new IllegalArgumentException("%s must be in range [1, 65535]".formatted(fieldName));
     }
-    
+
     return port;
   }
 
@@ -104,12 +120,21 @@ public final class ValidationUtils {
     return value;
   }
 
+  // Validate that the given int value is at least the specified minimum (inclusive).
+  public static int requireAtLeastInt(int value, int minimum, String fieldName, String minimumLabel) {
+    if (value < minimum) {
+      throw new IllegalArgumentException("%s must be >= %s".formatted(fieldName, minimumLabel));
+    }
+
+    return value;
+  }
+
   // Validate that the given value is in the closed range [minimumInclusive, maximumInclusive].
   public static int requireInClosedRangeInt(int value, int minimumInclusive, int maximumInclusive, String fieldName) {
     if (value < minimumInclusive || value > maximumInclusive) {
       throw new IllegalArgumentException("%s must be in range [%d, %d]".formatted(fieldName, minimumInclusive, maximumInclusive));
     }
-    
+
     return value;
   }
 
@@ -126,6 +151,26 @@ public final class ValidationUtils {
   public static int requireAtMostInt(int value, int maximumInclusive, String fieldName) {
     if (value > maximumInclusive) {
       throw new IllegalArgumentException("%s must be <= %d".formatted(fieldName, maximumInclusive));
+    }
+
+    return value;
+  }
+
+  // Validate that the given int value matches the expected value exactly.
+  public static int requireExactInt(int value, int expectedValue, String fieldName) {
+    if (value != expectedValue) {
+      throw new IllegalArgumentException("%s must be %d".formatted(fieldName, expectedValue));
+    }
+
+    return value;
+  }
+
+  // Validate that the given collection is not empty.
+  public static <T extends java.util.Collection<?>> T requireNonEmpty(T value, String fieldName) {
+    requireNonNull(value, fieldName);
+
+    if (value.isEmpty()) {
+      throw new IllegalArgumentException("%s must not be empty".formatted(fieldName));
     }
 
     return value;

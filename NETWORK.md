@@ -7,7 +7,7 @@ This document explains, for each implemented link layer, where inbound packet de
 ### Inbound decision
 - Class: `pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink`
 - Method: `receive()`
-- Behavior: no protocol decision is made at this layer. It reads one UDP datagram from `DatagramSocket` and returns `InboundDatagram(payload, senderIp, senderPort)`.
+- Behavior: no protocol decision is made at this layer. It reads one UDP datagram from `DatagramSocket` and returns `InboundBytes(sender, payload)`.
 
 ### Send path
 - Class: `FairLossLink`
@@ -37,7 +37,7 @@ This document explains, for each implemented link layer, where inbound packet de
 
 ### Inbound decision
 - Class: `pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink`
-- Entry methods: `runReceiveLoop() -> processInbound(InboundMessage inbound)`
+- Entry methods: `runReceiveLoop() -> processInbound(InboundPacket inbound)`
 - Decision points:
 1. `processInbound(...)` splits handling into ACK path and reliable path.
 2. `handleAck(...)` decodes acknowledged type/sequence and cancels matching tracked sends (`stubbornLink.cancelTracked(...)`).
@@ -59,7 +59,7 @@ This document explains, for each implemented link layer, where inbound packet de
 
 ### Inbound decision
 - Classes: `pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink`, `InboundHandshakeDecider`
-- Entry methods: `runReceiveLoop() -> handleInbound(InboundMessage inbound)`
+- Entry methods: `runReceiveLoop() -> handleInbound(InboundPacket inbound)`
 - Decision flow:
 1. `handleInbound(...)` filters handled types (`SYN`, `FIN`, `DATA`) and checks `ClosedConnectionsRegistry`.
 2. For active connections, it obtains `ConnectionState` and calls `InboundHandshakeDecider.decideInboundLocked(...)` while synchronized on that state.
@@ -96,15 +96,15 @@ Recommended public API for application code is `HandshakedPerfectLink`.
 
 ### Setup patterns
 
-1. Server side: `HandshakedPerfectLink.bind(bindAddress, port, buildConfig)`
-2. Client side: `HandshakedPerfectLink.unbound(buildConfig)`
+1. Server side: `HandshakedPerfectLink.bind(bindAddress, port)`
+2. Client side: `HandshakedPerfectLink.unbound()`
 
 ### Receive one message (server-style)
 
-1. Call `receive()` (or `receive(timeoutMs)`) to get `InboundMessage`.
-2. Read `inbound.packet().payload()` and sender metadata (`senderIp`, `senderPort`).
-3. Reply with `sendReliable(inbound.packet().connectionId(), responsePayload, senderIp, senderPort)`.
-4. Optionally close with `closeConnection(connectionId, senderIp, senderPort)` when done.
+1. Call `receive()` (or `receive(timeoutMs)`) to get `InboundPacket`.
+2. Read `inbound.packet().payload()` and sender metadata (`InetSocketAddress sender = inbound.sender()`).
+3. Reply with `sendReliable(inbound.packet().connectionId(), responsePayload, sender.getAddress(), sender.getPort())`.
+4. Optionally close with `closeConnection(connectionId, sender.getAddress(), sender.getPort())` when done.
 
 ### Send one message (client-style)
 
@@ -127,3 +127,4 @@ Recommended public API for application code is `HandshakedPerfectLink`.
 1. Reuse the same `connectionId` for all messages in the same logical session.
 2. Use `receive(timeoutMs)` in higher layers to avoid blocking forever.
 3. Always close the transport (`try-with-resources` or `close()`) on shutdown.
+

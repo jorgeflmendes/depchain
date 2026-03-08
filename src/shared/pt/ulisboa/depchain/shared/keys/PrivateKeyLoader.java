@@ -1,0 +1,54 @@
+package pt.ulisboa.depchain.shared.keys;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+
+import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.utils.KeyUtil;
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+
+public final class PrivateKeyLoader {
+  private static final String PEM_BEGIN_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----";
+  private static final String PEM_END_PRIVATE_KEY = "-----END PRIVATE KEY-----";
+
+  private PrivateKeyLoader() {
+  }
+
+  public static PrivateKey loadPrivateKey(Path path) throws Exception {
+    ValidationUtils.requireNonNull(path, "path");
+
+    byte[] fileBytes = Files.readAllBytes(path);
+    return decodePrivateKey(fileBytes);
+  }
+
+  public static PrivateKey decodePrivateKey(byte[] bytes) throws Exception {
+    ValidationUtils.requireNonNull(bytes, "bytes");
+
+    byte[] encodedKey = KeyUtil.decodePemIfNeeded(bytes, PEM_BEGIN_PRIVATE_KEY, PEM_END_PRIVATE_KEY);
+    KeyFactory keyFactory = KeyFactory.getInstance("EC");
+    return keyFactory.generatePrivate(new PKCS8EncodedKeySpec(encodedKey));
+  }
+
+  public static PrivateKey loadReplicaPrivateKey(ConfigParser config, long senderId) throws Exception {
+    ValidationUtils.requireNonNull(config, "config");
+
+    for (ConfigParser.ReplicaSection replica : config.replicas()) {
+      if (replica.senderId() == senderId) {
+        Path privateKeyPath = Path.of(replica.privateKeyPath());
+        return loadPrivateKey(privateKeyPath);
+      }
+    }
+
+    throw new IllegalArgumentException("Replica senderId '%s' not found in config".formatted(senderId));
+  }
+
+  public static PrivateKey loadClientPrivateKey(ConfigParser config) throws Exception {
+    ValidationUtils.requireNonNull(config, "config");
+
+    Path privateKeyPath = Path.of(config.client().privateKeyPath());
+    return loadPrivateKey(privateKeyPath);
+  }
+}

@@ -11,14 +11,16 @@ Stage 1 target scope:
 
 ## Current Implementation Status
 Implemented:
-- Configuration parsing and validation (`config/config.yaml`, parser/factory utilities).
+- Configuration parsing and validation (`config/config.properties`).
 - Universal `Dpch` envelope and serialization.
 - UDP transport stack:
   - `FairLossLink`
   - `StubbornLink`
   - `PerfectLink`
   - `HandshakedPerfectLink`
-- Client and server entrypoints wired to the transport stack.
+  - `AuthenticatedLink`
+- Static key generation and key loading utilities.
+- Client and server entrypoints wired to the authenticated transport stack.
 - Unit and integration test infrastructure.
 
 Not implemented yet:
@@ -37,7 +39,7 @@ Not implemented yet:
 +--------------------------------------------------+
 | Application / Consensus Logic                    |
 +--------------------------------------------------+
-| APL (Authenticated Perfect Links) - planned      |
+| APL (Authenticated Perfect Links) - implemented  |
 +--------------------------------------------------+
 | HPL (Handshaked Perfect Link) - implemented      |
 +--------------------------------------------------+
@@ -68,20 +70,24 @@ Field summary:
 ## Repository Layout
 ```text
 config/
-  config.yaml
+  config.properties
   keys/                         # expected key hierarchy (not fully versioned)
 src/
   client/pt/ulisboa/depchain/client/
+  populate/pt/ulisboa/depchain/populate/
   server/pt/ulisboa/depchain/server/
   shared/pt/ulisboa/depchain/shared/
     config/
+    keys/
     network/
       dpch/
       links/
+        authenticated/
         fairloss/
-        stubborn/
-        perfect/
         handshaked/
+        perfect/
+        stubborn/
+    utils/
   test/java/pt/ulisboa/depchain/
 docs/
   project.pdf
@@ -90,7 +96,7 @@ pom.xml
 ```
 
 Maven source mapping:
-- `main`: `src/server`, `src/client`, `src/shared`
+- `main`: `src/server`, `src/client`, `src/populate`, `src/shared`
 - `test`: `src/test/java`
 
 ## Prerequisites
@@ -103,14 +109,11 @@ java -version
 ```
 
 ## Configuration
-Main runtime configuration is in `config/config.yaml`, including:
+Main runtime configuration is in `config/config.properties`, including:
 - system parameters (`n`, `f`, leader election, base view),
-- replica endpoints and key paths,
-- client settings and request timeout,
-- timeout values,
-- stubborn-link retry policy,
-- perfect-link buffering/cleanup policy,
-- network maximum packet size.
+- replica sender ids, endpoints, and key paths,
+- client sender id, settings, and request timeout,
+- timeout values.
 
 Before running:
 - ensure key files exist at configured paths,
@@ -141,17 +144,22 @@ mvn -DskipTests package
 
 Run one server replica:
 ```powershell
-java -cp target/classes pt.ulisboa.depchain.server.Main server1 config/config.yaml
+java -cp target/classes pt.ulisboa.depchain.server.Main server1 config/config.properties
 ```
 
 Run another replica:
 ```powershell
-java -cp target/classes pt.ulisboa.depchain.server.Main server2 config/config.yaml
+java -cp target/classes pt.ulisboa.depchain.server.Main server2 config/config.properties
 ```
 
 Run client:
 ```powershell
-java -cp target/classes pt.ulisboa.depchain.client.Main "hello" server1 config/config.yaml
+java -cp target/classes pt.ulisboa.depchain.client.Main "hello" server1 config/config.properties
+```
+
+Populate key files from config:
+```powershell
+mvn exec:java@populate
 ```
 
 Client usage:

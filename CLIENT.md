@@ -32,7 +32,7 @@ client/
 ├── DepChainClient.java
 ├── ClientRequest.java
 ├── ClientReply.java
-└── ClientCodec.java
+└── ClientSerialization.java
 ```
 
 Each class has a specific responsibility.

@@ -10,6 +10,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.11.4</junit.version>
     <surefire.version>3.3.1</surefire.version>
+    <spotless.version>2.43.0</spotless.version>
   </properties>
 
   <dependencies>
@@ -36,6 +37,7 @@
             </goals>
             <configuration>
               <sources>
+                <source>src/populate</source>
                 <source>src/server</source>
                 <source>src/client</source>
                 <source>src/shared</source>
@@ -81,6 +83,52 @@
             <goals>
               <goal>integration-test</goal>
               <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <executions>
+          <execution>
+            <id>populate</id>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <version>${spotless.version}</version>
+        <configuration>
+          <java>
+            <includes>
+              <include>src/populate/**/*.java</include>
+              <include>src/shared/**/*.java</include>
+              <include>src/server/**/*.java</include>
+              <include>src/client/**/*.java</include>
+              <include>src/test/**/*.java</include>
+            </includes>
+            <eclipse>
+              <file>${project.basedir}/eclipse-java-formatter.xml</file>
+            </eclipse>
+          </java>
+        </configuration>
+        <executions>
+          <execution>
+            <id>format-java</id>
+            <phase>process-sources</phase>
+            <goals>
+              <goal>apply</goal>
             </goals>
           </execution>
         </executions>

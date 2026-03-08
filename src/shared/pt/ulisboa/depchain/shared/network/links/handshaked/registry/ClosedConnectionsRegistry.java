@@ -3,18 +3,16 @@ package pt.ulisboa.depchain.shared.network.links.handshaked.registry;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import pt.ulisboa.depchain.shared.network.links.handshaked.ConnectionState;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 // Registry to track recently closed connections to prevent immediate re-establishment and potential resource exhaustion
 public final class ClosedConnectionsRegistry {
   private final long connectionIdleTtlMs;
-  private final int maxConnectionStates;
   private final Map<ConnectionKey, Long> closedStates = new ConcurrentHashMap<>();
 
-  public ClosedConnectionsRegistry(long connectionIdleTtlMs, int maxConnectionStates) {
+  public ClosedConnectionsRegistry(long connectionIdleTtlMs) {
     this.connectionIdleTtlMs = connectionIdleTtlMs;
-    this.maxConnectionStates = maxConnectionStates;
   }
 
   public void markClosed(ConnectionKey key, long now) {
@@ -26,28 +24,20 @@ public final class ClosedConnectionsRegistry {
     if (closedAtMs == null) {
       return false;
     }
-    if ((now - closedAtMs) > connectionIdleTtlMs) {
+
+    if (TimeUtil.hasElapsedMoreThan(now, closedAtMs, connectionIdleTtlMs)) { // Expired.
       closedStates.remove(key, closedAtMs);
       return false;
     }
+
     return true;
   }
 
-  public void cleanup(long now, Map<ConnectionKey, ConnectionState> connectionStates) {
+  public void cleanup(long now) {
     if (closedStates.isEmpty()) {
       return;
     }
 
-    closedStates.entrySet().removeIf(entry -> (now - entry.getValue()) > connectionIdleTtlMs);
-    if (closedStates.size() <= maxConnectionStates) {
-      return;
-    }
-
-    closedStates.entrySet().removeIf(entry -> {
-      if (closedStates.size() <= maxConnectionStates) {
-        return false;
-      }
-      return !connectionStates.containsKey(entry.getKey());
-    });
+    closedStates.entrySet().removeIf(entry -> TimeUtil.hasElapsedMoreThan(now, entry.getValue(), connectionIdleTtlMs));
   }
 }

@@ -11,11 +11,10 @@ public final class Main {
     String targetReplicaId = args[1];
     String configPath = args[2];
 
-    DepChainClient client = new DepChainClient(configPath);
+    DpchClient client = new DpchClient(configPath);
 
     String response = client.append(value, targetReplicaId);
 
     System.out.println("response = " + response);
   }
 }
-

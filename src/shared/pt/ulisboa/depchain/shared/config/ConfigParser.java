@@ -1,804 +1,142 @@
 package pt.ulisboa.depchain.shared.config;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
-import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
-import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public final class ConfigParser {
-  private final SystemSection system;
-  private final List<ReplicaSection> replicas;
-  private final ClientSection client;
-  private final TimeoutsSection timeouts;
-  private final StubbornSection stubborn;
-  private final PerfectSection perfect;
-  private final NetworkSection network;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
 
-  private ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, PerfectSection perfect, NetworkSection network) {
-    this.system = system;
-    this.replicas = List.copyOf(replicas);
-    this.client = client;
-    this.timeouts = timeouts;
-    this.stubborn = stubborn;
-    this.perfect = perfect;
-    this.network = network;
-  }
-  
-  public SystemSection system() {
-    return system;
+public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts) {
+  public record SystemSection(int n, int f, String leaderElection, int baseView) {
   }
 
-  public List<ReplicaSection> replicas() {
-    return replicas;
+  public record ReplicaSection(String id, long senderId, String host, int consensusPort, int clientPort, String publicKeyPath, String privateKeyPath) {
   }
 
-  public ClientSection client() {
-    return client;
+  public record ClientSection(String id, long senderId, String host, String publicKeyPath, String privateKeyPath, int requestTimeoutMs, List<String> knownReplicas) {
   }
 
-  public TimeoutsSection timeouts() {
-    return timeouts;
-  }
-
-  public StubbornSection stubborn() {
-    return stubborn;
-  }
-
-  public PerfectSection perfect() {
-    return perfect;
-  }
-
-  public NetworkSection network() {
-    return network;
+  public record TimeoutsSection(int viewChangeMs, int retransmitMs, int maxBackoffMs) {
   }
 
   public ReplicaSection requireReplica(String replicaId) {
-    return replicas.stream()
-        .filter(r -> r.id().equals(replicaId))
-        .findFirst()
-        .orElseThrow(
-            () -> new IllegalArgumentException("Replica '%s' not found in config".formatted(replicaId)));
+    return replicas.stream().filter(r -> r.id().equals(replicaId)).findFirst().orElseThrow(() -> new IllegalArgumentException("Replica '%s' not found".formatted(replicaId)));
   }
-  
+
   public ReplicaSection firstKnownReplicaForClient() {
     if (client.knownReplicas().isEmpty()) {
       throw new IllegalArgumentException("No knownReplicas configured in client section");
     }
+
     return requireReplica(client.knownReplicas().getFirst());
   }
 
-  // Static loader for YAML config files
   public static ConfigParser load(Path path) throws IOException {
     ValidationUtils.requireNonNull(path, "path");
-    List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-    return new Parser(path, lines).parse();
+
+    Properties props = new Properties();
+    try (var reader = Files.newBufferedReader(path)) {
+      props.load(reader);
+    }
+
+    var reader = new PropertyReader(props, path);
+    var system = readSystem(reader);
+    var replicas = readReplicas(reader);
+    var client = readClient(reader);
+    var timeouts = readTimeouts(reader);
+
+    validateConsistency(system, replicas, client, timeouts, path);
+    return new ConfigParser(system, replicas, client, timeouts);
   }
 
-  // YAML parser
-  private static final class Parser {
-    private final Path path;
-    private final List<String> lines;
-    private int index = 0;
+  private static SystemSection readSystem(PropertyReader reader) {
+    return new SystemSection(ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("system.n")), "system.n"),
+        ValidationUtils.requireNonNegativeInt(Integer.parseInt(reader.str("system.f")), "system.f"), reader.str("system.leaderElection"),
+        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("system.baseView")), "system.baseView"));
+  }
 
-    private Parser(Path path, List<String> lines) {
-      this.path = path;
-      this.lines = lines;
-    }
+  private static List<ReplicaSection> readReplicas(PropertyReader reader) {
+    return reader.list("replicas").stream().map(id -> readReplica(reader, id)).toList();
+  }
 
-    private ConfigParser parse() {
-      MutableSystemSection system = null;
-      List<ReplicaSection> replicas = null;
-      MutableClientSection client = null;
-      MutableTimeoutsSection timeouts = null;
-      MutableStubbornSection stubborn = null;
-      MutablePerfectSection perfect = null;
-      MutableNetworkSection network = null;
-      Set<String> seenTopLevelSections = new HashSet<>();
+  private static ReplicaSection readReplica(PropertyReader reader, String replicaId) {
+    String prefix = "replica." + replicaId + ".";
 
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
+    return new ReplicaSection(replicaId, ValidationUtils.requireNonNegativeLong(Long.parseLong(reader.str(prefix + "senderId")), prefix + "senderId"), reader.str(prefix + "host"),
+        ValidationUtils.requireValidPort(Integer.parseInt(reader.str(prefix + "consensusPort")), prefix + "consensusPort"),
+        ValidationUtils.requireValidPort(Integer.parseInt(reader.str(prefix + "clientPort")), prefix + "clientPort"), reader.str(prefix + "publicKeyPath"),
+        reader.str(prefix + "privateKeyPath"));
+  }
 
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent != 0) {
-          fail("Top-level section must start at column 1");
-        }
+  private static ClientSection readClient(PropertyReader reader) {
+    return new ClientSection(reader.str("client.id"), ValidationUtils.requireNonNegativeLong(Long.parseLong(reader.str("client.senderId")), "client.senderId"),
+        reader.str("client.host"), reader.str("client.publicKeyPath"), reader.str("client.privateKeyPath"),
+        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("client.requestTimeoutMs")), "client.requestTimeoutMs"), reader.list("client.knownReplicas"));
+  }
 
-        if (!line.trim().endsWith(":")) {
-          fail("Expected top-level section ending with ':'");
-        }
+  private static TimeoutsSection readTimeouts(PropertyReader reader) {
+    return new TimeoutsSection(ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.viewChangeMs")), "timeouts.viewChangeMs"),
+        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.retransmitMs")), "timeouts.retransmitMs"),
+        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.maxBackoffMs")), "timeouts.maxBackoffMs"));
+  }
 
-        String sectionName = line.trim().substring(0, line.trim().length() - 1);
-        if (!seenTopLevelSections.add(sectionName)) {
-          fail("Duplicate top-level section '%s'".formatted(sectionName));
-        }
-
-        index++;
-        switch (sectionName) {
-          case "system" -> system = parseSystemSection();
-          case "replicas" -> replicas = parseReplicasSection();
-          case "client" -> client = parseClientSection();
-          case "timeouts" -> timeouts = parseTimeoutsSection();
-          case "stubborn" -> stubborn = parseStubbornSection();
-          case "perfect" -> perfect = parsePerfectSection();
-          case "network" -> network = parseNetworkSection();
-          default -> fail("Unknown top-level section '%s'".formatted(sectionName));
-        }
+  private record PropertyReader(Properties props, Path path) {
+    String str(String key) {
+      String rawValue = props.getProperty(key);
+      if (rawValue == null) {
+        throw new IllegalArgumentException("Missing property '%s' in %s".formatted(key, path));
       }
 
-      system = ValidationUtils.requirePresent(system, "Missing required section 'system' in " + path);
-      replicas =
-          ValidationUtils.requirePresent(replicas, "Missing required section 'replicas' in " + path);
-      client = ValidationUtils.requirePresent(client, "Missing required section 'client' in " + path);
-      timeouts =
-          ValidationUtils.requirePresent(timeouts, "Missing required section 'timeouts' in " + path);
-      stubborn =
-          ValidationUtils.requirePresent(stubborn, "Missing required section 'stubborn' in " + path);
-      perfect =
-          ValidationUtils.requirePresent(perfect, "Missing required section 'perfect' in " + path);
-      network =
-          ValidationUtils.requirePresent(network, "Missing required section 'network' in " + path);
-
-      SystemSection parsedSystem = system.toRecord(path);
-      ClientSection parsedClient = client.toRecord(path);
-      TimeoutsSection parsedTimeouts = timeouts.toRecord(path);
-      StubbornSection parsedStubborn = stubborn.toRecord(path);
-      PerfectSection parsedPerfect = perfect.toRecord(path);
-      NetworkSection parsedNetwork = network.toRecord(path);
-
-      validateConsistency(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedPerfect, parsedNetwork, path);
-      return new ConfigParser(parsedSystem, replicas, parsedClient, parsedTimeouts, parsedStubborn, parsedPerfect, parsedNetwork);
+      String trimmedValue = rawValue.trim();
+      return ValidationUtils.requireNonBlank(trimmedValue, propertyLabel(key));
     }
 
-    // YAML section: system-
-    private MutableSystemSection parseSystemSection() {
-      MutableSystemSection result = new MutableSystemSection();
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'system' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "name" -> result.name = requireNonBlank(kv.value(), "system.name");
-          case "environment" -> result.environment = requireNonBlank(kv.value(), "system.environment");
-          case "n" -> result.n = parsePositiveInt(kv.value(), "system.n");
-          case "f" -> result.f = parseNonNegativeInt(kv.value(), "system.f");
-          case "leaderElection" -> result.leaderElection = requireNonBlank(kv.value(), "system.leaderElection");
-          case "baseView" -> result.baseView = parsePositiveInt(kv.value(), "system.baseView");
-          default -> fail("Unknown key in 'system' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-      return result;
+    List<String> list(String key) {
+      String rawList = str(key);
+      List<String> values = Arrays.stream(rawList.split(",")).map(String::trim).filter(value -> !value.isBlank()).toList();
+      return ValidationUtils.requireNonEmpty(values, propertyLabel(key));
     }
 
-    // YAML section: replicas
-    private List<ReplicaSection> parseReplicasSection() {
-      List<ReplicaSection> result = new ArrayList<>();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'replicas' section (expected 2 spaces for list items)");
-        }
-
-        String trimmed = line.trim();
-        if (!trimmed.startsWith("-")) {
-          fail("Expected list item in 'replicas' section");
-        }
-
-        MutableReplicaSection replica = new MutableReplicaSection();
-        String inlineContent = trimmed.substring(1).trim();
-        if (!inlineContent.isBlank()) {
-          KeyValue firstKeyValue = parseKeyValue(inlineContent);
-          assignReplicaKey(replica, firstKeyValue);
-        }
-        index++;
-
-        while (hasMoreLines()) {
-          String childLine = normalizeLine(currentRawLine(), currentLineNumber());
-          if (childLine.isBlank()) {
-            index++;
-            continue;
-          }
-
-          int childIndent = indentationOf(childLine, currentLineNumber());
-          if (childIndent <= 2) {
-            break;
-          }
-          if (childIndent != 4) {
-            fail("Invalid indentation for replica fields (expected 4 spaces)");
-          }
-
-          KeyValue kv = parseKeyValue(childLine.trim());
-          assignReplicaKey(replica, kv);
-          index++;
-        }
-
-        result.add(replica.toRecord(path));
-      }
-
-      if (result.isEmpty()) {
-        throw new IllegalArgumentException("Section 'replicas' must contain at least one replica in " + path);
-      }
-      return List.copyOf(result);
-    }
-
-    // YAML section: client 
-    private MutableClientSection parseClientSection() {
-      MutableClientSection result = new MutableClientSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'client' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        if (kv.key().equals("knownReplicas")) {
-          if (!kv.value().isBlank()) {
-            fail("'client.knownReplicas' must be declared as a YAML list");
-          }
-          index++;
-          while (hasMoreLines()) {
-            String itemLine = normalizeLine(currentRawLine(), currentLineNumber());
-            if (itemLine.isBlank()) {
-              index++;
-              continue;
-            }
-            int itemIndent = indentationOf(itemLine, currentLineNumber());
-            if (itemIndent <= 2) {
-              break;
-            }
-            if (itemIndent != 4) {
-              fail("Invalid indentation for knownReplicas items (expected 4 spaces)");
-            }
-
-            String itemTrimmed = itemLine.trim();
-            if (!itemTrimmed.startsWith("- ")) {
-              fail("Expected list item under 'client.knownReplicas'");
-            }
-
-            String replicaId = unquote(itemTrimmed.substring(2).trim());
-            if (replicaId.isBlank()) {
-              fail("knownReplicas item cannot be blank");
-            }
-            result.knownReplicas.add(replicaId);
-            index++;
-          }
-          continue;
-        }
-
-        switch (kv.key()) {
-          case "id" -> result.id = requireNonBlank(kv.value(), "client.id");
-          case "host" -> result.host = requireNonBlank(kv.value(), "client.host");
-          case "requestTimeoutMs" ->
-              result.requestTimeoutMs = parsePositiveInt(kv.value(), "client.requestTimeoutMs");
-          default -> fail("Unknown key in 'client' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
-    // YAML section: timeouts
-    private MutableTimeoutsSection parseTimeoutsSection() {
-      MutableTimeoutsSection result = new MutableTimeoutsSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'timeouts' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "viewChangeMs" -> result.viewChangeMs = parsePositiveInt(kv.value(), "timeouts.viewChangeMs");
-          case "retransmitMs" -> result.retransmitMs = parsePositiveInt(kv.value(), "timeouts.retransmitMs");
-          case "maxBackoffMs" -> result.maxBackoffMs = parsePositiveInt(kv.value(), "timeouts.maxBackoffMs");
-          default -> fail("Unknown key in 'timeouts' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
-    // YAML section: stubborn
-    private MutableStubbornSection parseStubbornSection() {
-      MutableStubbornSection result = new MutableStubbornSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'stubborn' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "baseDelayMs" -> result.baseDelayMs = parsePositiveLong(kv.value(), "stubborn.baseDelayMs");
-          case "maxDelayMs" -> result.maxDelayMs = parsePositiveLong(kv.value(), "stubborn.maxDelayMs");
-          case "jitterRatio" -> result.jitterRatio = parseNonNegativeDouble(kv.value(), "stubborn.jitterRatio");
-          case "maxPending" -> result.maxPending = parsePositiveInt(kv.value(), "stubborn.maxPending");
-          case "heapCompactMinSize" ->
-              result.heapCompactMinSize = parsePositiveInt(kv.value(), "stubborn.heapCompactMinSize");
-          case "maxRetryAttempts" ->
-              result.maxRetryAttempts = parsePositiveIntOrUnlimited(kv.value(), "stubborn.maxRetryAttempts");
-          case "maxTrackedLifetimeMs" ->
-              result.maxTrackedLifetimeMs =
-                  parsePositiveLongOrUnlimited(kv.value(), "stubborn.maxTrackedLifetimeMs");
-          default -> fail("Unknown key in 'stubborn' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
-    // YAML section: perfect
-    private MutablePerfectSection parsePerfectSection() {
-      MutablePerfectSection result = new MutablePerfectSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'perfect' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "maxWindowSize" -> result.maxWindowSize = parsePositiveInt(kv.value(), "perfect.maxWindowSize");
-          case "maxStreamStates" -> result.maxStreamStates = parsePositiveInt(kv.value(), "perfect.maxStreamStates");
-          case "streamIdleTtlMs" -> result.streamIdleTtlMs = parsePositiveLong(kv.value(), "perfect.streamIdleTtlMs");
-          default -> fail("Unknown key in 'perfect' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
-    // YAML section: network
-    private MutableNetworkSection parseNetworkSection() {
-      MutableNetworkSection result = new MutableNetworkSection();
-
-      while (hasMoreLines()) {
-        String line = normalizeLine(currentRawLine(), currentLineNumber());
-        if (line.isBlank()) {
-          index++;
-          continue;
-        }
-
-        int indent = indentationOf(line, currentLineNumber());
-        if (indent == 0) {
-          break;
-        }
-        if (indent != 2) {
-          fail("Invalid indentation in 'network' section (expected 2 spaces)");
-        }
-
-        KeyValue kv = parseKeyValue(line.trim());
-        switch (kv.key()) {
-          case "maxPacketSize" -> result.maxPacketSize = parsePositiveInt(kv.value(), "network.maxPacketSize");
-          default -> fail("Unknown key in 'network' section: '%s'".formatted(kv.key()));
-        }
-        index++;
-      }
-
-      return result;
-    }
-
-    // Common parser helpers-
-    private void assignReplicaKey(MutableReplicaSection replica, KeyValue kv) {
-      switch (kv.key()) {
-        case "id" -> replica.id = requireNonBlank(kv.value(), "replicas.id");
-        case "host" -> replica.host = requireNonBlank(kv.value(), "replicas.host");
-        case "consensusPort" -> replica.consensusPort = parsePort(kv.value(), "replicas.consensusPort");
-        case "clientPort" -> replica.clientPort = parsePort(kv.value(), "replicas.clientPort");
-        case "publicKeyPath" -> replica.publicKeyPath = requireNonBlank(kv.value(), "replicas.publicKeyPath");
-        default -> fail("Unknown key in 'replicas' item: '%s'".formatted(kv.key()));
-      }
-    }
-
-    private String currentRawLine() {
-      return lines.get(index);
-    }
-
-    private int currentLineNumber() {
-      return index + 1;
-    }
-
-    private boolean hasMoreLines() {
-      return index < lines.size();
-    }
-
-    private void fail(String message) {
-      throw new IllegalArgumentException(
-          "Invalid config at %s:%d: %s".formatted(path, currentLineNumber(), message));
+    private String propertyLabel(String key) {
+      return "Property '%s' in %s".formatted(key, path);
     }
   }
 
-  // Cross-section validation
-  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StubbornSection stubborn, PerfectSection perfect, NetworkSection network, Path path) {
-    if (system.n() != replicas.size()) {
-      throw new IllegalArgumentException("system.n (%d) must match number of replicas (%d) in %s".formatted(system.n(), replicas.size(), path));
-    }
+  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, Path path) {
+    ValidationUtils.requireExactInt(system.n(), replicas.size(), "system.n");
+    ValidationUtils.requireAtLeastInt(system.n(), (3 * system.f()) + 1, "system.n", "3f + 1");
 
-    if (system.n() < (3 * system.f()) + 1) {
-      throw new IllegalArgumentException("Invalid Byzantine threshold in %s: require n >= 3f + 1 (got n=%d, f=%d)".formatted(path, system.n(), system.f()));
-    }
+    Set<String> ids = new HashSet<>(), endpoints = new HashSet<>();
+    Set<Long> senderIds = new HashSet<>();
 
-    Set<String> replicaIds = new HashSet<>();
-    Set<String> endpoints = new HashSet<>();
-    for (ReplicaSection replica : replicas) {
-      if (!replicaIds.add(replica.id())) {
-        throw new IllegalArgumentException("Duplicate replica id '%s' in %s".formatted(replica.id(), path));
+    for (ReplicaSection r : replicas) {
+      if (!ids.add(r.id())) {
+        throw new IllegalArgumentException("Duplicate replica id: " + r.id());
       }
-
-      String consensusEndpoint = replica.host() + ":" + replica.consensusPort();
-      if (!endpoints.add(consensusEndpoint)) {
-        throw new IllegalArgumentException("Duplicate replica consensus endpoint '%s' in %s".formatted(consensusEndpoint, path));
+      if (!senderIds.add(r.senderId())) {
+        throw new IllegalArgumentException("Duplicate senderId: " + r.senderId());
       }
-
-      String clientEndpoint = replica.host() + ":" + replica.clientPort();
-      if (!endpoints.add(clientEndpoint)) {
-        throw new IllegalArgumentException("Duplicate replica client endpoint '%s' in %s".formatted(clientEndpoint, path));
+      if (!endpoints.add(r.host() + ":" + r.consensusPort()) || !endpoints.add(r.host() + ":" + r.clientPort())) {
+        throw new IllegalArgumentException("Duplicate endpoint in replica: " + r.id());
       }
     }
 
-    if (client.knownReplicas().isEmpty()) {
-      throw new IllegalArgumentException("client.knownReplicas must not be empty in " + path);
+    if (senderIds.contains(client.senderId())) {
+      throw new IllegalArgumentException("client.senderId conflicts with replica");
     }
+    ValidationUtils.requireNonEmpty(client.knownReplicas(), "client.knownReplicas");
 
-    Set<String> uniqueKnownReplicas = new HashSet<>();
+    Set<String> seenKnownReplicas = new HashSet<>();
     for (String replicaId : client.knownReplicas()) {
-      if (!replicaIds.contains(replicaId)) {
-        throw new IllegalArgumentException("client.knownReplicas contains unknown replica '%s' in %s".formatted(replicaId, path));
+      if (!ids.contains(replicaId)) {
+        throw new IllegalArgumentException("client.knownReplicas contains unknown replica '%s'".formatted(replicaId));
       }
-      if (!uniqueKnownReplicas.add(replicaId)) {
-        throw new IllegalArgumentException("Duplicate id '%s' in client.knownReplicas in %s".formatted(replicaId, path));
-      }
-    }
-
-    try {
-      ValidationUtils.requireAtLeast(timeouts.maxBackoffMs(), timeouts.retransmitMs(), "timeouts.maxBackoffMs", "timeouts.retransmitMs");
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException(exception.getMessage() + " in " + path, exception);
-    }
-
-    try {
-      ValidationUtils.requireAtLeast(stubborn.maxDelayMs(), stubborn.baseDelayMs(), "stubborn.maxDelayMs", "stubborn.baseDelayMs");
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException(exception.getMessage() + " in " + path, exception);
-    }
-
-    if (stubborn.jitterRatio() >= 1.0d) {
-      throw new IllegalArgumentException("stubborn.jitterRatio must be < 1.0 in " + path);
-    }
-
-    if (network.maxPacketSize() > 65507) {
-      throw new IllegalArgumentException("network.maxPacketSize must be <= 65507 for UDP payloads in " + path);
-    }
-    if (network.maxPacketSize() < DpchSerialization.HEADER_SIZE) {
-      throw new IllegalArgumentException(
-          "network.maxPacketSize must be >= %d (DPCH header size) in %s"
-              .formatted(DpchSerialization.HEADER_SIZE, path));
-    }
-  }
-
-  // Parsing helpers
-  private static String normalizeLine(String rawLine, int lineNumber) {
-    if (rawLine.indexOf('\t') >= 0) {
-      throw new IllegalArgumentException("Invalid config at line " + lineNumber + ": tabs are not allowed");
-    }
-    return stripInlineComment(rawLine).stripTrailing();
-  }
-
-  private static int indentationOf(String line, int lineNumber) {
-    int spaces = 0;
-    while (spaces < line.length() && line.charAt(spaces) == ' ') {
-      spaces++;
-    }
-    if (spaces % 2 != 0) {
-      throw new IllegalArgumentException("Invalid config at line " + lineNumber + ": indentation must use multiples of 2 spaces");
-    }
-    return spaces;
-  }
-
-  private static KeyValue parseKeyValue(String trimmedLine) {
-    int separator = trimmedLine.indexOf(':');
-    if (separator <= 0) {
-      throw new IllegalArgumentException("Expected key/value entry, got: " + trimmedLine);
-    }
-
-    String key = trimmedLine.substring(0, separator).trim();
-    String rawValue = trimmedLine.substring(separator + 1).trim();
-    return new KeyValue(key, unquote(rawValue));
-  }
-
-  private static String stripInlineComment(String line) {
-    boolean inSingleQuotes = false;
-    boolean inDoubleQuotes = false;
-
-    for (int i = 0; i < line.length(); i++) {
-      char c = line.charAt(i);
-      if (c == '\'' && !inDoubleQuotes) {
-        inSingleQuotes = !inSingleQuotes;
-      } else if (c == '"' && !inSingleQuotes) {
-        inDoubleQuotes = !inDoubleQuotes;
-      } else if (c == '#' && !inSingleQuotes && !inDoubleQuotes) {
-        return line.substring(0, i);
+      if (!seenKnownReplicas.add(replicaId)) {
+        throw new IllegalArgumentException("Duplicate id '%s' in client.knownReplicas".formatted(replicaId));
       }
     }
-    return line;
+
+    ValidationUtils.requireAtLeast(timeouts.maxBackoffMs(), timeouts.retransmitMs(), "maxBackoffMs", "retransmitMs");
   }
-
-  private static String unquote(String value) {
-    if (value.length() >= 2) {
-      if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
-        return value.substring(1, value.length() - 1);
-      }
-    }
-    return value;
-  }
-
-  private static String requireNonBlank(String value, String field) {
-    if (value == null || value.isBlank()) {
-      throw new IllegalArgumentException("Field '%s' must not be blank".formatted(field));
-    }
-    return value;
-  }
-
-  private static int parseNonNegativeInt(String value, String field) {
-    int parsed = parseInteger(value, field);
-    return ValidationUtils.requireNonNegativeInt(parsed, "Field '%s'".formatted(field));
-  }
-
-  private static int parsePositiveInt(String value, String field) {
-    int parsed = parseInteger(value, field);
-    return ValidationUtils.requirePositiveInt(parsed, "Field '%s'".formatted(field));
-  }
-
-  private static int parsePositiveIntOrUnlimited(String value, String field) {
-    int parsed = parseInteger(value, field);
-    if (parsed == StubbornLink.Config.UNLIMITED_RETRY_ATTEMPTS) {
-      return parsed;
-    }
-    return ValidationUtils.requirePositiveInt(parsed, "Field '%s'".formatted(field));
-  }
-
-  private static int parsePort(String value, String field) {
-    int port = parseInteger(value, field);
-    return ValidationUtils.requireValidPort(port, "Field '%s'".formatted(field));
-  }
-
-  private static long parsePositiveLong(String value, String field) {
-    long parsed = parseLong(value, field);
-    return ValidationUtils.requirePositiveLong(parsed, "Field '%s'".formatted(field));
-  }
-
-  private static long parsePositiveLongOrUnlimited(String value, String field) {
-    long parsed = parseLong(value, field);
-    if (parsed == StubbornLink.Config.UNLIMITED_TRACKED_LIFETIME_MS) {
-      return parsed;
-    }
-    return ValidationUtils.requirePositiveLong(parsed, "Field '%s'".formatted(field));
-  }
-
-  private static double parseNonNegativeDouble(String value, String field) {
-    double parsed = parseDouble(value, field);
-    if (parsed < 0.0d) {
-      throw new IllegalArgumentException("Field '%s' must be >= 0".formatted(field));
-    }
-    return parsed;
-  }
-
-  private static int parseInteger(String value, String field) {
-    try {
-      return Integer.parseInt(value);
-    } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Field '%s' is not a valid integer: %s".formatted(field, value), e);
-    }
-  }
-
-  private static long parseLong(String value, String field) {
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Field '%s' is not a valid long: %s".formatted(field, value), e);
-    }
-  }
-
-  private static double parseDouble(String value, String field) {
-    try {
-      return Double.parseDouble(value);
-    } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Field '%s' is not a valid decimal number: %s".formatted(field, value), e);
-    }
-  }
-
-  private record KeyValue(String key, String value) {}
-
-  // Mutable section builders
-  private static final class MutableSystemSection {
-    private String name;
-    private String environment;
-    private Integer n;
-    private Integer f;
-    private String leaderElection;
-    private Integer baseView;
-
-    private SystemSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Section 'system' is incomplete in " + path, name, environment, n, f, leaderElection, baseView);
-      return new SystemSection(name, environment, n, f, leaderElection, baseView);
-    }
-  }
-
-  private static final class MutableReplicaSection {
-    private String id;
-    private String host;
-    private Integer consensusPort;
-    private Integer clientPort;
-    private String publicKeyPath;
-
-    private ReplicaSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Replica entry is incomplete in " + path, id, host, consensusPort, clientPort, publicKeyPath);
-      return new ReplicaSection(id, host, consensusPort, clientPort, publicKeyPath);
-    }
-  }
-
-  private static final class MutableClientSection {
-    private String id;
-    private String host;
-    private Integer requestTimeoutMs;
-    private final List<String> knownReplicas = new ArrayList<>();
-
-    private ClientSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Section 'client' is incomplete in " + path, id, host, requestTimeoutMs);
-      return new ClientSection(id, host, requestTimeoutMs, List.copyOf(knownReplicas));
-    }
-  }
-
-  private static final class MutableTimeoutsSection {
-    private Integer viewChangeMs;
-    private Integer retransmitMs;
-    private Integer maxBackoffMs;
-
-    private TimeoutsSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Section 'timeouts' is incomplete in " + path, viewChangeMs, retransmitMs, maxBackoffMs);
-      return new TimeoutsSection(viewChangeMs, retransmitMs, maxBackoffMs);
-    }
-  }
-
-  private static final class MutableStubbornSection {
-    private Long baseDelayMs;
-    private Long maxDelayMs;
-    private Double jitterRatio;
-    private Integer maxPending;
-    private Integer heapCompactMinSize;
-    private Integer maxRetryAttempts;
-    private Long maxTrackedLifetimeMs;
-
-    private StubbornSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Section 'stubborn' is incomplete in " + path,
-          baseDelayMs,
-          maxDelayMs,
-          jitterRatio,
-          maxPending,
-          heapCompactMinSize,
-          maxRetryAttempts,
-          maxTrackedLifetimeMs);
-      return new StubbornSection(baseDelayMs, maxDelayMs, jitterRatio, maxPending, heapCompactMinSize, maxRetryAttempts, maxTrackedLifetimeMs);
-    }
-  }
-
-  private static final class MutablePerfectSection {
-    private Integer maxWindowSize;
-    private Integer maxStreamStates;
-    private Long streamIdleTtlMs;
-
-    private PerfectSection toRecord(Path path) {
-      ValidationUtils.requireAllPresent(
-          "Section 'perfect' is incomplete in " + path, maxWindowSize, maxStreamStates, streamIdleTtlMs);
-      return new PerfectSection(maxWindowSize, maxStreamStates, streamIdleTtlMs);
-    }
-  }
-
-  private static final class MutableNetworkSection {
-    private Integer maxPacketSize;
-
-    private NetworkSection toRecord(Path path) {
-      maxPacketSize =
-          ValidationUtils.requirePresent(maxPacketSize, "Section 'network' is incomplete in " + path);
-      return new NetworkSection(maxPacketSize);
-    }
-  }
-
-  // Immutable parsed sections
-  public record SystemSection(String name, String environment, int n, int f, String leaderElection, int baseView) {}
-
-  public record ReplicaSection(String id, String host, int consensusPort, int clientPort, String publicKeyPath) {}
-
-  public record ClientSection(String id, String host, int requestTimeoutMs, List<String> knownReplicas) {}
-
-  public record TimeoutsSection(int viewChangeMs, int retransmitMs, int maxBackoffMs) {}
-
-  public record StubbornSection(long baseDelayMs, long maxDelayMs, double jitterRatio, int maxPending, int heapCompactMinSize, int maxRetryAttempts, long maxTrackedLifetimeMs) {}
-
-  public record PerfectSection(int maxWindowSize, int maxStreamStates, long streamIdleTtlMs) {}
-
-  public record NetworkSection(int maxPacketSize) {}
 }

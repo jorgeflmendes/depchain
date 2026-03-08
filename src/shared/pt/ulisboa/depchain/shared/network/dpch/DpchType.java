@@ -2,10 +2,7 @@ package pt.ulisboa.depchain.shared.network.dpch;
 
 public enum DpchType {
   // TCP-like packet types.
-  DATA((byte) 0),
-  ACK((byte) 1),
-  SYN((byte) 3),
-  FIN((byte) 4);
+  DATA((byte) 0), ACK((byte) 1), SYN((byte) 3), FIN((byte) 4);
 
   private final byte code;
 

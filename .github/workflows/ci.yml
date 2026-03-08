@@ -22,8 +22,8 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Build and run tests
-        run: mvn --batch-mode --no-transfer-progress clean verify
+      - name: Build, populate keys, and run tests
+        run: mvn --batch-mode --no-transfer-progress clean compile exec:java@populate verify
 
       - name: Collect test reports
         if: always()
