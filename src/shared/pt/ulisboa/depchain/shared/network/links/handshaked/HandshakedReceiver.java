@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked;
 
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+
 import java.net.InetSocketAddress;
 
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
@@ -8,14 +10,16 @@ import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HandshakedReceiver {
-  private record InboundDecision(boolean deliverData, HandshakeReply reply) {}
+  private record InboundDecision(boolean deliverData, HandshakeReply reply) {
+  }
 
   private final HandshakedContext context;
   private final HandshakedSender sender;
 
   HandshakedReceiver(HandshakedContext context, HandshakedSender sender) {
-    this.context = ValidationUtils.requireNonNull(context, "context");
-    this.sender = ValidationUtils.requireNonNull(sender, "sender");
+    ValidationUtils.requireAllNonNull(named("context", context), named("sender", sender));
+    this.context = context;
+    this.sender = sender;
   }
 
   void runInboundLoop() {
@@ -60,26 +64,31 @@ final class HandshakedReceiver {
     }
 
     ConnectionState connectionState = context.connectionStateRegistry.getOrCreate(connectionKey);
-    InboundDecision decision;
-    synchronized (connectionState) {
-      decision = decideInboundLocked(connectionState, packetType, inbound.packet().hasType(DpchType.ACK), now);
-    }
-
-    sender.sendControlReply(decision.reply(), connectionId, sequenceNumber, packetType, remote);
-    if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
+    // Mark the state as active so cleanup cannot remove it mid-receive.
+    markConnectionStateInUse(connectionState);
+    try {
+      InboundDecision decision;
       synchronized (connectionState) {
-        connectionState.notifyAll();
+        decision = decideInboundLocked(connectionState, packetType, inbound.packet().hasType(DpchType.ACK), now);
       }
+
+      sender.sendControlReply(decision.reply(), connectionId, sequenceNumber, packetType, remote);
+      if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
+        synchronized (connectionState) {
+          connectionState.notifyAll();
+        }
+      }
+      context.connectionStateRegistry.cleanup(System.currentTimeMillis(), context.closedConnectionsRegistry);
+      if (decision.deliverData()) {
+        return inbound;
+      }
+      return null;
+    } finally {
+      unmarkConnectionStateInUse(connectionState);
     }
-    context.connectionStateRegistry.cleanup(System.currentTimeMillis(), context.closedConnectionsRegistry);
-    if (decision.deliverData()) {
-      return inbound;
-    }
-    return null;
   }
 
-  private static InboundDecision decideInboundLocked(
-      ConnectionState state, DpchType type, boolean inboundHasAck, long now) {
+  private static InboundDecision decideInboundLocked(ConnectionState state, DpchType type, boolean inboundHasAck, long now) {
     state.touch(now);
     if (type == DpchType.SYN) {
       return decideSynLocked(state, inboundHasAck);
@@ -108,7 +117,7 @@ final class HandshakedReceiver {
       state.markLocalEstablished();
       reply = HandshakeReply.SYN_ACK;
     }
-    
+
     return new InboundDecision(false, reply);
   }
 
@@ -130,5 +139,18 @@ final class HandshakedReceiver {
 
   private static boolean handlesInboundType(DpchType type) {
     return type == DpchType.SYN || type == DpchType.FIN || type == DpchType.DATA;
+  }
+
+  private static void markConnectionStateInUse(ConnectionState connectionState) {
+    synchronized (connectionState) {
+      connectionState.markInUse();
+    }
+  }
+
+  private static void unmarkConnectionStateInUse(ConnectionState connectionState) {
+    synchronized (connectionState) {
+      connectionState.unmarkInUse();
+      connectionState.notifyAll();
+    }
   }
 }

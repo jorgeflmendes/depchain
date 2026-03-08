@@ -4,6 +4,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,9 +23,9 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectContext {
-  static final byte[] ACK_DATA = new byte[] {DpchType.DATA.code()};
-  static final byte[] ACK_SYN = new byte[] {DpchType.SYN.code()};
-  static final byte[] ACK_FIN = new byte[] {DpchType.FIN.code()};
+  static final byte[] ACK_DATA = new byte[]{DpchType.DATA.code()};
+  static final byte[] ACK_SYN = new byte[]{DpchType.SYN.code()};
+  static final byte[] ACK_FIN = new byte[]{DpchType.FIN.code()};
 
   final StubbornLink stubbornLink;
   final int maxWindowSize;
@@ -72,7 +73,7 @@ final class PerfectContext {
   long trackedNoPendingTimeoutMs() {
     long retransmitBudgetMs = stubbornLink.baseDelayMs() + stubbornLink.maxDelayMs();
     long trackedLifetimeMs = stubbornLink.maxTrackedLifetimeMs();
-    
+
     long boundedByLifetime;
     if (trackedLifetimeMs < 0L) {
       boundedByLifetime = retransmitBudgetMs;
@@ -90,30 +91,33 @@ final class PerfectContext {
 
     nextCleanupAtMs = TimeUtil.deadlineAfter(now, cleanupCheckIntervalMs);
 
-    sendSequences.entrySet().removeIf(entry -> {
-      PerfectSender.SenderState state = entry.getValue();
-      if (!state.isStale(now, streamIdleTtlMs)) {
-        return false;
-      }
+    // Re-check staleness under the state lock before removing sender state.
+    for (ConnectionKey connectionKey : new ArrayList<>(sendSequences.keySet())) {
+      sendSequences.computeIfPresent(connectionKey, (ignored, state) -> {
+        synchronized (state) {
+          if (!state.isStale(now, streamIdleTtlMs) || !state.hasNoPendingMessages()) {
+            return state;
+          }
 
-      synchronized (state) {
-        state.notifyAll();
-      }
+          state.notifyAll();
+          return null;
+        }
+      });
+    }
 
-      return true;
-    });
+    // Persist the delivery floor before removing receiver state.
+    for (ConnectionKey connectionKey : new ArrayList<>(receiverStates.keySet())) {
+      receiverStates.computeIfPresent(connectionKey, (ignored, state) -> {
+        synchronized (state) {
+          if (!state.isStale(now, streamIdleTtlMs)) {
+            return state;
+          }
 
-    receiverStates.entrySet().removeIf(entry -> {
-      PerfectReceiver.ReceiverState state = entry.getValue();
-      if (!state.isStale(now, streamIdleTtlMs)) {
-        return false;
-      }
-
-      synchronized (state) {
-        deliveredSequenceFloors.merge(entry.getKey(), state.nextExpectedSequence(), Math::max);
-      }
-      return true;
-    });
+          deliveredSequenceFloors.merge(connectionKey, state.nextExpectedSequence(), Math::max);
+          return null;
+        }
+      });
+    }
   }
 
   static byte[] ackPayloadFor(DpchType type) {
@@ -135,7 +139,7 @@ final class PerfectContext {
 
     try {
       DpchType decoded = DpchType.fromCode(ackPayload[0]);
-      
+
       if (decoded == DpchType.DATA || decoded == DpchType.SYN || decoded == DpchType.FIN) {
         return decoded;
       }

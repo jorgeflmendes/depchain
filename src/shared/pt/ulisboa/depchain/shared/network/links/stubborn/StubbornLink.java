@@ -23,10 +23,10 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
 
   private final StubbornSender sender;
   private final StubbornReceiver receiver;
-  
+
   // Handles the retry logic for tracked messages.
   private final StubbornRetryEngine retryEngine;
-  
+
   // The thread running the retry loop.
   private final Thread retryLoopThread;
 
@@ -68,7 +68,8 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
     return receiver.receive();
   }
 
-  // Receives a message with a timeout, returning null if the timeout expires or the receiver is closed.
+  // Receives a message with a timeout, returning null if the timeout expires or the receiver is
+  // closed.
   @Override
   public InboundBytes receive(long timeoutMs) throws IOException {
     return receiver.receive(timeoutMs);

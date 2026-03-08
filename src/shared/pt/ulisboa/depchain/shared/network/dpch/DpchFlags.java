@@ -40,7 +40,8 @@ final class DpchFlags {
       throw new IOException("Unsupported DPCH flags combination: " + Integer.toBinaryString(flags));
     }
 
-    // Only one reliable type flag (DATA/SYN/FIN) can be set at a time, but ACK can be combined with any of them.
+    // Only one reliable type flag (DATA/SYN/FIN) can be set at a time, but ACK can be combined with any
+    // of them.
     if (Integer.bitCount(extractReliableFlags(flags)) > 1) {
       throw new IOException("Unsupported DPCH reliable flags combination: " + Integer.toBinaryString(flags));
     }

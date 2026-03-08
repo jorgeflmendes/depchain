@@ -4,7 +4,7 @@ package pt.ulisboa.depchain.shared.network.links;
 public interface BlockingLink<InboundType> extends AutoCloseable {
   // Blocking receive method.
   InboundType receive() throws Exception;
-  
+
   // Blocking receive method with timeout.
   InboundType receive(long timeoutMs) throws Exception;
 }

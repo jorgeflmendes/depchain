@@ -15,10 +15,10 @@ final class StubbornContext {
 
   // Registry for tracking messages that are pending retry and pending cancel.
   final RetryRegistry retryRegistry;
-  
+
   // Lock for sync access to shared state.
   final Object stateLock;
-  
+
   StubbornContext(FairLossLink fairLossLink) {
     ValidationUtils.requireAllNonNull(named("fairLoss", fairLossLink));
     this.fairLossLink = fairLossLink;
@@ -50,7 +50,7 @@ final class StubbornContext {
     int checkedAttempt = ValidationUtils.requireNonNegativeInt(attempt, "attempt");
     long retryDelayMs = Math.min(maxDelayMs(), baseDelayMs() * (1L << checkedAttempt)); /// Exponential backoff delay.
 
-    // Jitter 
+    // Jitter
     double jitterScale = 1 + (Math.random() * 2 - 1) * StubbornLink.DEFAULT_JITTER_RATIO;
     long jitteredDelay = Math.round(retryDelayMs * jitterScale);
 
@@ -62,9 +62,7 @@ final class StubbornContext {
     ValidationUtils.requireNonNegativeLong(now, "now");
 
     boolean maxAttemptsReached = tracked.retryAttempt() >= StubbornLink.DEFAULT_MAX_RETRY_ATTEMPTS;
-    boolean maxLifetimeExceeded =
-        maxTrackedLifetimeMs() >= 0L
-            && TimeUtil.hasElapsedAtLeast(now, tracked.createdAtMs(), maxTrackedLifetimeMs());
+    boolean maxLifetimeExceeded = maxTrackedLifetimeMs() >= 0L && TimeUtil.hasElapsedAtLeast(now, tracked.createdAtMs(), maxTrackedLifetimeMs());
 
     return maxAttemptsReached || maxLifetimeExceeded;
   }

@@ -18,7 +18,8 @@ final class StubbornReceiver {
     return context.fairLossLink.receive();
   }
 
-  // Receives a message with a timeout, returning null if the timeout expires or the receiver is closed.
+  // Receives a message with a timeout, returning null if the timeout expires or the receiver is
+  // closed.
   InboundBytes receive(long timeoutMs) throws IOException {
     context.ensureOpen();
     return context.fairLossLink.receive(timeoutMs);

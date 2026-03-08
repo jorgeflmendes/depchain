@@ -14,5 +14,3 @@ public record InboundPacket(InetSocketAddress sender, Dpch packet) {
     ValidationUtils.requireValidPort(sender.getPort(), "sender.port");
   }
 }
-
-

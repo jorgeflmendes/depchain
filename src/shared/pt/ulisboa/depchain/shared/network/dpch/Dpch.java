@@ -23,7 +23,7 @@ public final class Dpch {
   // Creates a DPCH from type combining with ACK if requested.
   public static Dpch from(long connectionId, DpchType type, boolean withAck, int sequenceNumber, byte[] payload) {
     ValidationUtils.requireNonNull(type, "type");
-    
+
     int flags;
     if (withAck) {
       if (type != DpchType.SYN && type != DpchType.FIN) {
@@ -75,7 +75,7 @@ public final class Dpch {
   public byte[] payload() {
     return Arrays.copyOf(payload, payload.length);
   }
-  
+
   public int sequenceNumber() {
     return sequenceNumber;
   }

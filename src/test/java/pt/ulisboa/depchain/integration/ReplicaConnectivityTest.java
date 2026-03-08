@@ -24,7 +24,7 @@ class ReplicaConnectivityTest {
   @Timeout(60)
   void clientCanReachAllReplicas() throws Exception {
     // Loads the integration config used by server and client processes.
-    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
+    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.properties").toAbsolutePath();
     assertTrue(Files.exists(configPath), "Missing config file: " + configPath);
 
     // Starts all replica processes before sending client requests.

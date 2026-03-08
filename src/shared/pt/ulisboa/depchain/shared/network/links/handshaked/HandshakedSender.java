@@ -24,14 +24,21 @@ final class HandshakedSender {
     ValidationUtils.requireAllNonNull(named("payload", payload), named("remote", remote));
     ConnectionKey connectionKey = new ConnectionKey(remote, connectionId);
     ConnectionState connectionState = context.connectionStateRegistry.getOrCreate(connectionKey);
-    
-    startHandshakeAndSend(connectionState, connectionId, payload, remote);
-    context.connectionStateRegistry.cleanup(TimeUtil.nowMs(), context.closedConnectionsRegistry);
+
+    // Mark the state as active so cleanup cannot remove it mid-send.
+    markConnectionStateInUse(connectionState);
+    try {
+      startHandshakeAndSend(connectionState, connectionId, payload, remote);
+      context.connectionStateRegistry.cleanup(TimeUtil.nowMs(), context.closedConnectionsRegistry);
+    } finally {
+      unmarkConnectionStateInUse(connectionState);
+    }
   }
 
   void sendControlReply(HandshakeReply reply, long connectionId, int sequenceNumber, DpchType inboundType, InetSocketAddress remote) {
     switch (reply) {
-      case NONE -> {}
+      case NONE -> {
+      }
       case ACK -> context.perfectLink.sendAck(connectionId, sequenceNumber, inboundType, remote);
       case SYN_ACK -> context.perfectLink.send(connectionId, DpchType.SYN, true, EMPTY_CONTROL_PAYLOAD, remote);
       case FIN_ACK -> context.perfectLink.send(connectionId, DpchType.FIN, true, EMPTY_CONTROL_PAYLOAD, remote);
@@ -68,14 +75,20 @@ final class HandshakedSender {
     ValidationUtils.requireNonNull(remote, "remote");
     ConnectionKey connectionKey = new ConnectionKey(remote, connectionId);
     ConnectionState connectionState = context.connectionStateRegistry.get(connectionKey);
-    
+
     // If there's no state
     if (connectionState == null) {
       closeConnectionWithoutState(connectionKey, connectionId, remote);
       return;
     }
 
-    closeActiveConnection(connectionKey, connectionState, connectionId, remote);
+    // Mark the state as active so cleanup cannot remove it mid-close.
+    markConnectionStateInUse(connectionState);
+    try {
+      closeActiveConnection(connectionKey, connectionState, connectionId, remote);
+    } finally {
+      unmarkConnectionStateInUse(connectionState);
+    }
   }
 
   private void closeActiveConnection(ConnectionKey connectionKey, ConnectionState connectionState, long connectionId, InetSocketAddress remote) {
@@ -113,7 +126,7 @@ final class HandshakedSender {
     }
 
     interrupted |= waitForCloseConvergedInterruptibly(connectionState, deadlineMs);
-    
+
     try {
       long remainingMs = remainingMsUntil(deadlineMs);
       if (remainingMs > 0L) {
@@ -129,7 +142,7 @@ final class HandshakedSender {
 
     finalizeCloseState(connectionKey, connectionState, deadlineMs);
     cleanupConnectionStates();
-    
+
     if (interrupted) {
       Thread.currentThread().interrupt();
     }
@@ -150,7 +163,7 @@ final class HandshakedSender {
     long now = TimeUtil.nowMs();
     synchronized (connectionState) {
       connectionState.touch(now);
-      
+
       if (connectionState.isLocalFinished() && (connectionState.isCloseConverged() || TimeUtil.hasReachedDeadline(now, closeDeadlineMs))) {
         context.connectionStateRegistry.removeIfSame(connectionKey, connectionState);
         context.closedConnectionsRegistry.markClosed(connectionKey, now);
@@ -217,5 +230,18 @@ final class HandshakedSender {
 
   private void sendControlPacket(long connectionId, DpchType type, InetSocketAddress remote) {
     context.perfectLink.send(connectionId, type, false, EMPTY_CONTROL_PAYLOAD, remote);
+  }
+
+  private static void markConnectionStateInUse(ConnectionState connectionState) {
+    synchronized (connectionState) {
+      connectionState.markInUse();
+    }
+  }
+
+  private static void unmarkConnectionStateInUse(ConnectionState connectionState) {
+    synchronized (connectionState) {
+      connectionState.unmarkInUse();
+      connectionState.notifyAll();
+    }
   }
 }

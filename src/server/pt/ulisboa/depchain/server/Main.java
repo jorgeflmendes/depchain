@@ -2,14 +2,19 @@ package pt.ulisboa.depchain.server;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
+import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink;
+import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
 public final class Main {
@@ -25,26 +30,30 @@ public final class Main {
     // Load the server configuration from the specified file path.
     ConfigParser config = ConfigParser.load(Path.of(configPath));
     ConfigParser.ReplicaSection replicaConfig = config.requireReplica(serverId);
+    Map<Long, PublicKey> staticPKeys = PublicKeyLoader.loadStaticPublicKeys(config);
+    PrivateKey localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(config, replicaConfig.senderId());
 
     // Resolve the replica's bind address and port from the configuration.
-    InetSocketAddress bindEndpoint =
-        new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.clientPort());
+    InetSocketAddress bindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.clientPort());
 
     // Virtual threads to handle each request concurrently without blocking OS threads.
     ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
-    try (workers; HandshakedPerfectLink transport = HandshakedPerfectLink.bind(bindEndpoint)) {
+    try (workers; AuthenticatedLink transport = AuthenticatedLink.bind(bindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys)) {
       System.out.printf("Replica %s listening for client UDP requests on %s:%d (config: %s)%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort(), configPath);
 
       while (true) {
         InboundPacket request = transport.receive();
+        if (request == null) {
+          continue;
+        }
         workers.submit(() -> handleRequest(transport, request.packet(), request.sender()));
       }
     }
   }
 
   // Request handler that just echoes back the received value
-  private static void handleRequest(HandshakedPerfectLink transport, Dpch inbound, InetSocketAddress sender) {
+  private static void handleRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
     try {
       String payloadText = new String(inbound.payload(), StandardCharsets.UTF_8);
@@ -61,5 +70,3 @@ public final class Main {
     }
   }
 }
-
-

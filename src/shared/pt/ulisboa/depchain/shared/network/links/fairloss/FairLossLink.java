@@ -46,8 +46,7 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
   }
 
   public void send(byte[] payload, InetSocketAddress remoteEndpoint) throws IOException {
-    ValidationUtils.requireAllNonNull(
-        named("payload", payload), named("remoteEndpoint", remoteEndpoint));
+    ValidationUtils.requireAllNonNull(named("payload", payload), named("remoteEndpoint", remoteEndpoint));
     ValidationUtils.requireNonNull(remoteEndpoint.getAddress(), "remoteEndpoint.address");
     ValidationUtils.requireValidPort(remoteEndpoint.getPort(), "remoteEndpoint.port");
     if (payload.length > maxPacketSize) {

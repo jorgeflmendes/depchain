@@ -56,7 +56,7 @@ final class PerfectSender {
     try {
       context.stubbornLink.send(PerfectContext.serializePacket(Dpch.from(connectionId, DpchType.ACK, sequenceNumber, ackPayload)), remote);
     } catch (IOException exception) {
-      //TODO: use logger
+      // TODO: use logger
     }
   }
 
@@ -64,8 +64,19 @@ final class PerfectSender {
     ConnectionKey key = new ConnectionKey(remoteEndpoint, connectionId);
     long now = TimeUtil.nowMs();
     boolean reusePendingControl = (type == DpchType.SYN || type == DpchType.FIN);
+    int[] sequenceNumberHolder = new int[1];
 
-    int sequenceNumber = context.sendSequences.computeIfAbsent(key, ignored -> new SenderState()).nextOrPendingSequence(type, reusePendingControl, now);
+    // Create or reuse the sender state atomically for this stream.
+    context.sendSequences.compute(key, (ignored, existingState) -> {
+      SenderState senderState = existingState;
+      if (senderState == null) {
+        senderState = new SenderState();
+      }
+
+      sequenceNumberHolder[0] = senderState.nextOrPendingSequence(type, reusePendingControl, now);
+      return senderState;
+    });
+    int sequenceNumber = sequenceNumberHolder[0];
 
     Dpch packet = Dpch.from(connectionId, type, withAck, sequenceNumber, payload);
     context.stubbornLink.sendTracked(new TrackedKey(connectionId, sequenceNumber, Byte.toUnsignedInt(type.code())), PerfectContext.serializePacket(packet), remoteEndpoint);
@@ -104,7 +115,7 @@ final class PerfectSender {
 
       if (acknowledgedType == DpchType.FIN) {
         Iterator<Map.Entry<Integer, DpchType>> iterator = inFlightBySeq.headMap(sequenceNumber, true).entrySet().iterator();
-        
+
         while (iterator.hasNext()) {
           Map.Entry<Integer, DpchType> entry = iterator.next();
           cancellations.add(new TrackedKey(connectionId, entry.getKey(), Byte.toUnsignedInt(entry.getValue().code())));
@@ -134,6 +145,10 @@ final class PerfectSender {
         wait(remainingMs);
       }
       return true;
+    }
+
+    synchronized boolean hasNoPendingMessages() {
+      return inFlightBySeq.isEmpty();
     }
 
     boolean isStale(long now, long ttlMs) {

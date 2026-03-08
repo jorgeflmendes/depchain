@@ -19,7 +19,7 @@ public final class HandshakedPerfectLink implements BlockingLink<InboundPacket> 
     this.context = new HandshakedContext(perfectLink, connectionIdleTtlMs);
     this.sender = new HandshakedSender(context, connectionIdleTtlMs);
     this.receiver = new HandshakedReceiver(context, sender);
-    
+
     this.workerThread = Thread.ofVirtual().name("handshaked-perfect-link").start(receiver::runInboundLoop);
   }
 

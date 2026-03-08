@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked.registry;
 
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -29,6 +30,18 @@ public final class ConnectionStateRegistry {
 
   public void cleanup(long now, ClosedConnectionsRegistry closedConnections) {
     closedConnections.cleanup(now);
-    states.entrySet().removeIf(entry -> entry.getValue().isStale(now, connectionIdleTtlMs));
+    // Re-check staleness under the state lock before removing a connection state.
+    for (ConnectionKey connectionKey : new ArrayList<>(states.keySet())) {
+      states.computeIfPresent(connectionKey, (ignored, state) -> {
+        synchronized (state) {
+          if (state.hasActiveOperations() || !state.isStale(now, connectionIdleTtlMs)) {
+            return state;
+          }
+
+          state.notifyAll();
+          return null;
+        }
+      });
+    }
   }
 }

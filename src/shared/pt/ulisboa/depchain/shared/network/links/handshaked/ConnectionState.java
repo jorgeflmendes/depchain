@@ -5,9 +5,7 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 // Per-stream handshake lifecycle for local and remote sides.
 public final class ConnectionState {
   private enum SideState {
-    NEW,
-    ESTABLISHED,
-    FINISHED
+    NEW, ESTABLISHED, FINISHED
   }
 
   private volatile long lastTouchedAtMs;
@@ -18,6 +16,8 @@ public final class ConnectionState {
 
   // If a local close has been requested by the application.
   private boolean localCloseRequested;
+  // Count active operations so cleanup does not remove a state still in use.
+  private int activeOperationCount;
 
   public ConnectionState() {
     this.localCloseRequested = false;
@@ -26,6 +26,22 @@ public final class ConnectionState {
 
   public void touch(long now) {
     lastTouchedAtMs = now;
+  }
+
+  public void markInUse() {
+    activeOperationCount++;
+  }
+
+  public void unmarkInUse() {
+    if (activeOperationCount == 0) {
+      throw new IllegalStateException("Connection state active-operation counter underflow");
+    }
+
+    activeOperationCount--;
+  }
+
+  public boolean hasActiveOperations() {
+    return activeOperationCount > 0;
   }
 
   public void markLocalEstablished() {

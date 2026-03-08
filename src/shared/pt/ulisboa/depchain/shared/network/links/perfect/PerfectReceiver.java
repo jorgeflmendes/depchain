@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.shared.network.links.perfect;
 
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
@@ -19,8 +21,9 @@ final class PerfectReceiver {
   private final PerfectSender sender;
 
   PerfectReceiver(PerfectContext context, PerfectSender sender) {
-    this.context = ValidationUtils.requireNonNull(context, "context");
-    this.sender = ValidationUtils.requireNonNull(sender, "sender");
+    ValidationUtils.requireAllNonNull(named("context", context), named("sender", sender));
+    this.context = context;
+    this.sender = sender;
   }
 
   void runInboundLoop() {
@@ -53,59 +56,73 @@ final class PerfectReceiver {
   }
 
   private void handleAck(Dpch ackPacket, DpchType fallbackAcknowledgedType, ConnectionKey key, InetSocketAddress remote, long now) {
-    PerfectSender.SenderState senderState = context.sendSequences.get(key);
-    if (senderState == null) {
-      return;
-    }
-
     DpchType acknowledgedType = PerfectContext.decodeAcknowledgedType(ackPacket.payload(), fallbackAcknowledgedType);
     int acknowledgedSequence = ackPacket.sequenceNumber();
     if (acknowledgedType == null || acknowledgedSequence < 0) {
       return;
     }
 
-    List<TrackedKey> cancellations = senderState.acknowledge(ackPacket.connectionId(), acknowledgedSequence, acknowledgedType, now);
+    List<TrackedKey> cancellations = new java.util.ArrayList<>();
+    // Resolve ACKs against the current sender state without racing with cleanup.
+    context.sendSequences.computeIfPresent(key, (ignored, senderState) -> {
+      cancellations.addAll(senderState.acknowledge(ackPacket.connectionId(), acknowledgedSequence, acknowledgedType, now));
+      return senderState;
+    });
     for (TrackedKey trackedKey : cancellations) {
       context.stubbornLink.cancelTracked(trackedKey, remote);
     }
   }
 
   private void handleReliable(InboundPacket inbound, Dpch packet, DpchType reliableType, ConnectionKey key, long now) {
-    ReceiverState state = context.receiverStates.computeIfAbsent(key, ignored -> {
-          Integer persisted = context.deliveredSequenceFloors.remove(key);
-          if (persisted == null) {
-            return new ReceiverState(0);
-          }
-          return new ReceiverState(persisted);
-        });
+    List<InboundPacket> readyToDeliver = new java.util.ArrayList<>();
+    boolean[] shouldAckData = new boolean[1];
 
-    boolean shouldAckData = false;
-    synchronized (state) {
-      state.touch(now);
-      int sequenceNumber = packet.sequenceNumber();
-      if (sequenceNumber < 0) {
-        return;
+    // Create or reuse the receiver state atomically for this stream.
+    context.receiverStates.compute(key, (ignored, existingState) -> {
+      ReceiverState receiverState = existingState;
+      if (receiverState == null) {
+        Integer persisted = context.deliveredSequenceFloors.remove(key);
+        int nextExpectedSeq = 0;
+        if (persisted != null) {
+          nextExpectedSeq = persisted;
+        }
+
+        receiverState = new ReceiverState(nextExpectedSeq);
       }
 
-      if (state.isAlreadyDelivered(sequenceNumber)) {
-        if (reliableType == DpchType.DATA) {
-          shouldAckData = true;
-        } else {
-          context.deliveryQueue.offer(inbound);
+      synchronized (receiverState) {
+        receiverState.touch(now);
+        int sequenceNumber = packet.sequenceNumber();
+        if (sequenceNumber < 0) {
+          return receiverState;
         }
-      } else if (!state.isOutsideWindow(sequenceNumber, context.maxWindowSize)) {
-        if (reliableType == DpchType.DATA) {
-          shouldAckData = true;
-        }
-        if (state.bufferIfNew(sequenceNumber, inbound)) {
-          while (state.hasNextInOrderReady()) {
-            context.deliveryQueue.offer(state.pollNextInOrder());
+
+        if (receiverState.isAlreadyDelivered(sequenceNumber)) {
+          if (reliableType == DpchType.DATA) {
+            shouldAckData[0] = true;
+          } else {
+            readyToDeliver.add(inbound);
+          }
+        } else if (!receiverState.isOutsideWindow(sequenceNumber, context.maxWindowSize)) {
+          if (reliableType == DpchType.DATA) {
+            shouldAckData[0] = true;
+          }
+          if (receiverState.bufferIfNew(sequenceNumber, inbound)) {
+            while (receiverState.hasNextInOrderReady()) {
+              readyToDeliver.add(receiverState.pollNextInOrder());
+            }
           }
         }
       }
+
+      return receiverState;
+    });
+
+    for (InboundPacket delivered : readyToDeliver) {
+      context.deliveryQueue.offer(delivered);
     }
 
-    if (shouldAckData) {
+    if (shouldAckData[0]) {
       sender.sendAckBestEffort(packet.connectionId(), packet.sequenceNumber(), inbound.sender(), PerfectContext.ACK_DATA);
     }
   }

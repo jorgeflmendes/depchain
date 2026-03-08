@@ -9,7 +9,8 @@ import java.io.IOException;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class DpchSerialization {
-  // Header size in bytes (magic hi [1] + magic lo [1] + version [1] + flags [1] + connection id [8] + sequence number [2]).
+  // Header size in bytes (magic hi [1] + magic lo [1] + version [1] + flags [1] + connection id [8] +
+  // sequence number [2]).
   public static final int HEADER_SIZE = 14;
 
   // 2-byte DPCH protocol signature.

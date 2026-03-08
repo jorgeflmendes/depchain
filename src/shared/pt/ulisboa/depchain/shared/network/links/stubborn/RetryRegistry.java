@@ -54,8 +54,7 @@ public final class RetryRegistry {
 
   public boolean shouldSkipTrackedRegistration(TrackedTargetKey key, long now) {
     Long cancelAtMs = pendingCancels.remove(key);
-    return cancelAtMs != null
-        && !TimeUtil.hasElapsedMoreThan(now, cancelAtMs, pendingCancelTtlMs); // If there is a pending cancel that has not expired.
+    return cancelAtMs != null && !TimeUtil.hasElapsedMoreThan(now, cancelAtMs, pendingCancelTtlMs); // If there is a pending cancel that has not expired.
   }
 
   public void recordPendingCancel(TrackedTargetKey key, long now) {
@@ -64,12 +63,7 @@ public final class RetryRegistry {
 
   public void prunePendingCancels(long now) {
     if (!pendingCancels.isEmpty()) {
-      pendingCancels
-          .entrySet()
-          .removeIf(
-              entry ->
-                  TimeUtil.hasElapsedAtLeast(
-                      now, entry.getValue(), pendingCancelTtlMs)); // Remove pending cancels that have expired.
+      pendingCancels.entrySet().removeIf(entry -> TimeUtil.hasElapsedAtLeast(now, entry.getValue(), pendingCancelTtlMs)); // Remove pending cancels that have expired.
     }
   }
 

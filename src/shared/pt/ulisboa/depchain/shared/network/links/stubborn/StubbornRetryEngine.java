@@ -1,19 +1,23 @@
 package pt.ulisboa.depchain.shared.network.links.stubborn;
 
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedTargetKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class StubbornRetryEngine {
-  private record PendingRetry(byte[] payload, TrackedTargetKey target) {}
+  private record PendingRetry(byte[] payload, TrackedTargetKey target) {
+  }
 
   private final StubbornContext context;
   private final StubbornSender sender;
 
   StubbornRetryEngine(StubbornContext context, StubbornSender sender) {
-    this.context = ValidationUtils.requireNonNull(context, "context");
-    this.sender = ValidationUtils.requireNonNull(sender, "sender");
+    ValidationUtils.requireAllNonNull(named("context", context), named("sender", sender));
+    this.context = context;
+    this.sender = sender;
   }
 
   void runRetryLoop() {
@@ -39,7 +43,8 @@ final class StubbornRetryEngine {
     }
   }
 
-  // Waits for the next pending retry to be due and returns it, or returns null if the sender is closed.
+  // Waits for the next pending retry to be due and returns it, or returns null if the sender is
+  // closed.
   private PendingRetry awaitPendingRetry() throws InterruptedException {
     synchronized (context.stateLock) {
       while (context.running.get()) {
@@ -70,8 +75,8 @@ final class StubbornRetryEngine {
           continue;
         }
 
-        tracked.markRetried(
-            TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(tracked.retryAttempt() + 1))); // Update the tracked message with the new retry attempt and next retry time.
+        tracked.markRetried(TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(tracked.retryAttempt() + 1))); // Update the tracked message with the new retry attempt and next
+                                                                                                                   // retry time.
         context.retryRegistry.putTracked(targetKey, tracked);
         return new PendingRetry(tracked.payload(), targetKey);
       }
