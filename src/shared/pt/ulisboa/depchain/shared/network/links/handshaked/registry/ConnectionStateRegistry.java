@@ -1,20 +1,13 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked.registry;
 
-import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import pt.ulisboa.depchain.shared.network.links.handshaked.ConnectionState;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 
-// Registry to track active connection states and manage their lifecycle, including cleanup of stale states
 public final class ConnectionStateRegistry {
-  private final long connectionIdleTtlMs;
   private final Map<ConnectionKey, ConnectionState> states = new ConcurrentHashMap<>();
-
-  public ConnectionStateRegistry(long connectionIdleTtlMs) {
-    this.connectionIdleTtlMs = connectionIdleTtlMs;
-  }
 
   public ConnectionState get(ConnectionKey key) {
     return states.get(key);
@@ -26,22 +19,5 @@ public final class ConnectionStateRegistry {
 
   public void removeIfSame(ConnectionKey key, ConnectionState state) {
     states.remove(key, state);
-  }
-
-  public void cleanup(long now, ClosedConnectionsRegistry closedConnections) {
-    closedConnections.cleanup(now);
-    // Re-check staleness under the state lock before removing a connection state.
-    for (ConnectionKey connectionKey : new ArrayList<>(states.keySet())) {
-      states.computeIfPresent(connectionKey, (ignored, state) -> {
-        synchronized (state) {
-          if (state.hasActiveOperations() || !state.isStale(now, connectionIdleTtlMs)) {
-            return state;
-          }
-
-          state.notifyAll();
-          return null;
-        }
-      });
-    }
   }
 }

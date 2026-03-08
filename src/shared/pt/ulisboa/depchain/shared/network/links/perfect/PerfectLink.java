@@ -5,13 +5,12 @@ import java.net.InetSocketAddress;
 
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
+import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
 public class PerfectLink implements BlockingLink<InboundPacket> {
-  public static final int DEFAULT_MAX_WINDOW_SIZE = 1_000;
-  public static final long DEFAULT_STREAM_IDLE_TTL_MS = 60_000L;
   public static final int DEFAULT_MAX_PACKET_SIZE = FairLossLink.DEFAULT_MAX_PACKET_SIZE;
 
   private final PerfectContext context;
@@ -19,8 +18,8 @@ public class PerfectLink implements BlockingLink<InboundPacket> {
   private final PerfectReceiver receiver;
   private final Thread workerThread;
 
-  public PerfectLink(StubbornLink stubbornLink, int maxWindowSize, long streamIdleTtlMs) {
-    this.context = new PerfectContext(stubbornLink, maxWindowSize, streamIdleTtlMs);
+  public PerfectLink(StubbornLink stubbornLink) {
+    this.context = new PerfectContext(stubbornLink);
     this.sender = new PerfectSender(context);
     this.receiver = new PerfectReceiver(context, sender);
     this.workerThread = Thread.ofVirtual().name("perfect-link").start(receiver::runInboundLoop);
@@ -28,12 +27,12 @@ public class PerfectLink implements BlockingLink<InboundPacket> {
 
   public static PerfectLink bind(InetSocketAddress bindEndpoint) throws IOException {
     StubbornLink stubbornLink = StubbornLink.bind(bindEndpoint);
-    return new PerfectLink(stubbornLink, DEFAULT_MAX_WINDOW_SIZE, DEFAULT_STREAM_IDLE_TTL_MS);
+    return new PerfectLink(stubbornLink);
   }
 
   public static PerfectLink unbound() throws IOException {
     StubbornLink stubbornLink = StubbornLink.unbound();
-    return new PerfectLink(stubbornLink, DEFAULT_MAX_WINDOW_SIZE, DEFAULT_STREAM_IDLE_TTL_MS);
+    return new PerfectLink(stubbornLink);
   }
 
   public void send(long connectionId, DpchType packetType, boolean withAck, byte[] payload, InetSocketAddress remoteEndpoint) {
@@ -62,8 +61,12 @@ public class PerfectLink implements BlockingLink<InboundPacket> {
     return sender.waitUntilNoPendingType(connectionId, remoteEndpoint, packetType, timeoutMs);
   }
 
-  public long trackedNoPendingTimeoutMs() {
-    return sender.trackedNoPendingTimeoutMs();
+  public void cancelPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) {
+    sender.cancelPendingType(connectionId, remoteEndpoint, packetType);
+  }
+
+  public void throwIfTrackedFailed(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) throws LinkFailureException {
+    context.throwIfTrackedFailed(connectionId, remoteEndpoint, packetType);
   }
 
   @Override

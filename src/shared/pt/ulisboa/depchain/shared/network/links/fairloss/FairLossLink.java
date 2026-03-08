@@ -36,6 +36,7 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
 
   public static FairLossLink bind(InetSocketAddress bindEndpoint, int maxPacketSize) throws IOException {
     ValidationUtils.requireNonNull(bindEndpoint, "bindEndpoint");
+
     DatagramSocket socket = new DatagramSocket(bindEndpoint);
     return new FairLossLink(socket, maxPacketSize);
   }
@@ -50,7 +51,7 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
     ValidationUtils.requireNonNull(remoteEndpoint.getAddress(), "remoteEndpoint.address");
     ValidationUtils.requireValidPort(remoteEndpoint.getPort(), "remoteEndpoint.port");
     if (payload.length > maxPacketSize) {
-      throw new IOException("Serialized payload exceeds maxPacketSize (%d > %d)".formatted(payload.length, maxPacketSize));
+      throw new IllegalArgumentException("Serialized payload exceeds maxPacketSize (%d > %d)".formatted(payload.length, maxPacketSize));
     }
 
     DatagramPacket datagram = new DatagramPacket(payload, payload.length, remoteEndpoint.getAddress(), remoteEndpoint.getPort());
@@ -71,7 +72,6 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
     synchronized (receiveLock) {
       receivePacket.setData(receiveBuffer, 0, receiveBuffer.length);
       receivePacket.setLength(receiveBuffer.length);
-      int previousTimeoutMs = socket.getSoTimeout();
       socket.setSoTimeout((int) Math.min(Integer.MAX_VALUE, timeoutMs));
 
       try {
@@ -79,7 +79,7 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
       } catch (SocketTimeoutException ignored) {
         return null;
       } finally {
-        socket.setSoTimeout(previousTimeoutMs);
+        socket.setSoTimeout(0);
       }
 
       byte[] payload = Arrays.copyOf(receiveBuffer, receivePacket.getLength());

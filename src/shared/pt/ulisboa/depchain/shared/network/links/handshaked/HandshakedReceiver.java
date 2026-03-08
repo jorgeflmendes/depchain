@@ -35,11 +35,6 @@ final class HandshakedReceiver {
         }
         Thread.currentThread().interrupt();
         break;
-      } catch (RuntimeException exception) {
-        if (!context.running.get()) {
-          break;
-        }
-        System.err.println("HandshakedPerfectLink worker error: " + exception.getMessage());
       }
     }
   }
@@ -55,41 +50,29 @@ final class HandshakedReceiver {
     InetSocketAddress remote = inbound.sender();
 
     ConnectionKey connectionKey = new ConnectionKey(remote, connectionId);
-    long now = System.currentTimeMillis();
-    if (context.closedConnectionsRegistry.isClosedRecently(connectionKey, now)) {
-      if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
-        sender.sendControlReply(HandshakeReply.ACK, connectionId, sequenceNumber, packetType, remote);
-      }
-      return null;
-    }
-
     ConnectionState connectionState = context.connectionStateRegistry.getOrCreate(connectionKey);
-    // Mark the state as active so cleanup cannot remove it mid-receive.
-    markConnectionStateInUse(connectionState);
-    try {
-      InboundDecision decision;
-      synchronized (connectionState) {
-        decision = decideInboundLocked(connectionState, packetType, inbound.packet().hasType(DpchType.ACK), now);
-      }
-
-      sender.sendControlReply(decision.reply(), connectionId, sequenceNumber, packetType, remote);
-      if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
-        synchronized (connectionState) {
-          connectionState.notifyAll();
-        }
-      }
-      context.connectionStateRegistry.cleanup(System.currentTimeMillis(), context.closedConnectionsRegistry);
-      if (decision.deliverData()) {
-        return inbound;
-      }
-      return null;
-    } finally {
-      unmarkConnectionStateInUse(connectionState);
+    InboundDecision decision;
+    synchronized (connectionState) {
+      decision = decideInboundLocked(connectionState, packetType, inbound.packet().hasType(DpchType.ACK));
     }
+
+    sender.sendControlReply(decision.reply(), connectionId, sequenceNumber, packetType, remote);
+    if (packetType == DpchType.FIN) {
+      // Stop retrying old data once the peer started closing this connection.
+      context.perfectLink.cancelPendingType(connectionId, remote, DpchType.DATA);
+    }
+    if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
+      synchronized (connectionState) {
+        connectionState.notifyAll();
+      }
+    }
+    if (decision.deliverData()) {
+      return inbound;
+    }
+    return null;
   }
 
-  private static InboundDecision decideInboundLocked(ConnectionState state, DpchType type, boolean inboundHasAck, long now) {
-    state.touch(now);
+  private static InboundDecision decideInboundLocked(ConnectionState state, DpchType type, boolean inboundHasAck) {
     if (type == DpchType.SYN) {
       return decideSynLocked(state, inboundHasAck);
     }
@@ -125,7 +108,9 @@ final class HandshakedReceiver {
     state.markRemoteFinished();
     HandshakeReply reply = HandshakeReply.ACK;
 
-    if (state.isLocalCloseRequested() && !state.isLocalFinished()) {
+    if (!state.isLocalFinished()) {
+      // Remote FIN means this connection cannot exchange more data, so close locally too.
+      state.requestLocalClose();
       state.markLocalFinished();
       reply = HandshakeReply.FIN_ACK;
     }
@@ -139,18 +124,5 @@ final class HandshakedReceiver {
 
   private static boolean handlesInboundType(DpchType type) {
     return type == DpchType.SYN || type == DpchType.FIN || type == DpchType.DATA;
-  }
-
-  private static void markConnectionStateInUse(ConnectionState connectionState) {
-    synchronized (connectionState) {
-      connectionState.markInUse();
-    }
-  }
-
-  private static void unmarkConnectionStateInUse(ConnectionState connectionState) {
-    synchronized (connectionState) {
-      connectionState.unmarkInUse();
-      connectionState.notifyAll();
-    }
   }
 }

@@ -5,6 +5,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 
+import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedTargetKey;
@@ -31,7 +32,7 @@ final class StubbornSender {
     try {
       context.fairLossLink.send(payload, endpoint);
     } catch (IOException exception) {
-      // TODO: log send error
+      throw new IllegalStateException("Failed to send tracked packet " + key, exception);
     }
   }
 
@@ -76,6 +77,13 @@ final class StubbornSender {
       }
 
       context.stateLock.notifyAll();
+    }
+  }
+
+  LinkFailureException trackedFailureOrNull(TrackedKey key, InetSocketAddress remoteEndpoint) {
+    ValidationUtils.requireAllNonNull(named("key", key), named("remoteEndpoint", remoteEndpoint));
+    synchronized (context.stateLock) {
+      return context.retryRegistry.trackedFailureOrNull(new TrackedTargetKey(remoteEndpoint, key));
     }
   }
 }

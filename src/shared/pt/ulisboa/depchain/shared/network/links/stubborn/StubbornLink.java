@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
+import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
@@ -11,12 +12,10 @@ import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 public final class StubbornLink implements BlockingLink<InboundBytes> {
   // Default configs
   public static final int UNLIMITED_RETRY_ATTEMPTS = -1;
-  public static final long UNLIMITED_TRACKED_LIFETIME_MS = -1L;
   public static final long DEFAULT_BASE_DELAY_MS = 80L;
   public static final long DEFAULT_MAX_DELAY_MS = 1_500L;
   public static final double DEFAULT_JITTER_RATIO = 0.20d;
   public static final int DEFAULT_MAX_RETRY_ATTEMPTS = 8;
-  public static final long DEFAULT_MAX_TRACKED_LIFETIME_MS = 20_000L;
 
   // Saves the shared state between the components.
   private final StubbornContext context;
@@ -62,6 +61,10 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
     sender.cancelTracked(key, remoteEndpoint);
   }
 
+  public LinkFailureException trackedFailureOrNull(TrackedKey key, InetSocketAddress remoteEndpoint) {
+    return sender.trackedFailureOrNull(key, remoteEndpoint);
+  }
+
   // Receives a message, blocking until one is available or the receiver is closed.
   @Override
   public InboundBytes receive() throws IOException {
@@ -75,16 +78,8 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
     return receiver.receive(timeoutMs);
   }
 
-  public long baseDelayMs() {
-    return context.baseDelayMs();
-  }
-
-  public long maxDelayMs() {
-    return context.maxDelayMs();
-  }
-
-  public long maxTrackedLifetimeMs() {
-    return context.maxTrackedLifetimeMs();
+  public long retryBudgetMs() {
+    return context.retryBudgetMs();
   }
 
   @Override

@@ -82,7 +82,7 @@ class FairLossLinkTest {
 
     try (FairLossLink clientTransport = FairLossLink.unbound(64)) {
       byte[] oversized = new byte[8_192];
-      IOException error = assertThrows(IOException.class, () -> clientTransport.send(oversized, new InetSocketAddress(loopback, 9999)));
+      IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> clientTransport.send(oversized, new InetSocketAddress(loopback, 9999)));
       assertTrue(error.getMessage().contains("exceeds maxPacketSize"));
     }
   }

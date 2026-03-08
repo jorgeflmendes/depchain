@@ -6,7 +6,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class StubbornContext {
@@ -41,8 +40,8 @@ final class StubbornContext {
     return StubbornLink.DEFAULT_MAX_DELAY_MS;
   }
 
-  long maxTrackedLifetimeMs() {
-    return StubbornLink.DEFAULT_MAX_TRACKED_LIFETIME_MS;
+  long retryBudgetMs() {
+    return baseDelayMs() + maxDelayMs();
   }
 
   // Exponential backoff with jitter, based on the attempt number.
@@ -61,13 +60,10 @@ final class StubbornContext {
     ValidationUtils.requireNonNull(tracked, "tracked");
     ValidationUtils.requireNonNegativeLong(now, "now");
 
-    boolean maxAttemptsReached = tracked.retryAttempt() >= StubbornLink.DEFAULT_MAX_RETRY_ATTEMPTS;
-    boolean maxLifetimeExceeded = maxTrackedLifetimeMs() >= 0L && TimeUtil.hasElapsedAtLeast(now, tracked.createdAtMs(), maxTrackedLifetimeMs());
-
-    return maxAttemptsReached || maxLifetimeExceeded;
+    return tracked.retryAttempt() >= StubbornLink.DEFAULT_MAX_RETRY_ATTEMPTS;
   }
 
   private long pendingCancelTtlMs() {
-    return Math.max(1L, maxDelayMs() + baseDelayMs());
+    return Math.max(1L, retryBudgetMs());
   }
 }
