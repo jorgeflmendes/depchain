@@ -34,8 +34,7 @@ public final class DpchServer {
 
   public void run() throws Exception {
     InetSocketAddress clientBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.clientPort());
-    // InetSocketAddress nodeBindEndpoint = new
-    // InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.consensusPort());
+    InetSocketAddress nodeBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.consensusPort());
     ExecutorService workers = Executors.newCachedThreadPool();
 
     try (workers; AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);) {
