@@ -166,7 +166,7 @@ java -cp target/classes pt.ulisboa.depchain.server.Main server2 config/config.pr
 
 Run client:
 ```powershell
-java -cp target/classes pt.ulisboa.depchain.client.Main "hello" server1 config/config.properties
+java -cp target/classes pt.ulisboa.depchain.client.Main server1 config/config.properties
 ```
 
 Populate key files from config:
@@ -176,7 +176,7 @@ mvn exec:java@populate
 
 Client usage:
 ```text
-Main <value> <targetReplicaId> <configPath>
+Main <targetReplicaId> <configPath>
 ```
 
 Server usage:

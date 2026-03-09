@@ -5,24 +5,10 @@ public final class TimeUtil {
     return System.currentTimeMillis();
   }
 
-  public static long deadlineAfter(long delayMs) {
-    return deadlineAfter(nowMs(), delayMs);
-  }
-
   public static long deadlineAfter(long nowMs, long delayMs) {
     ValidationUtils.requireNonNegativeLong(nowMs, "nowMs");
     ValidationUtils.requireNonNegativeLong(delayMs, "delayMs");
     return nowMs + delayMs;
-  }
-
-  public static boolean hasReachedDeadline(long deadlineMs) {
-    return hasReachedDeadline(nowMs(), deadlineMs);
-  }
-
-  public static boolean hasReachedDeadline(long nowMs, long deadlineMs) {
-    ValidationUtils.requireNonNegativeLong(nowMs, "nowMs");
-    ValidationUtils.requireNonNegativeLong(deadlineMs, "deadlineMs");
-    return nowMs >= deadlineMs;
   }
 
   public static long remainingMsUntil(long deadlineMs) {
