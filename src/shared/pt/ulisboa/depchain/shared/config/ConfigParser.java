@@ -8,10 +8,11 @@ import java.nio.file.Path;
 import java.util.*;
 
 public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts) {
-  public record SystemSection(int n, int f, String leaderElection, int baseView) {
+  public record SystemSection(int n, int f) {
   }
 
-  public record ReplicaSection(String id, long senderId, String host, int consensusPort, int clientPort, String publicKeyPath, String privateKeyPath) {
+  public record ReplicaSection(String id, long senderId, String host, int consensusPort, int clientPort, String publicKeyPath, String privateKeyPath, String thresholdPublicKeyPath,
+      String thresholdPrivateSharePath) {
   }
 
   public record ClientSection(String id, long senderId, String host, String publicKeyPath, String privateKeyPath, int requestTimeoutMs, List<String> knownReplicas) {
@@ -52,8 +53,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
   private static SystemSection readSystem(PropertyReader reader) {
     return new SystemSection(ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("system.n")), "system.n"),
-        ValidationUtils.requireNonNegativeInt(Integer.parseInt(reader.str("system.f")), "system.f"), reader.str("system.leaderElection"),
-        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("system.baseView")), "system.baseView"));
+        ValidationUtils.requireNonNegativeInt(Integer.parseInt(reader.str("system.f")), "system.f"));
   }
 
   private static List<ReplicaSection> readReplicas(PropertyReader reader) {
@@ -66,7 +66,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     return new ReplicaSection(replicaId, ValidationUtils.requireNonNegativeLong(Long.parseLong(reader.str(prefix + "senderId")), prefix + "senderId"), reader.str(prefix + "host"),
         ValidationUtils.requireValidPort(Integer.parseInt(reader.str(prefix + "consensusPort")), prefix + "consensusPort"),
         ValidationUtils.requireValidPort(Integer.parseInt(reader.str(prefix + "clientPort")), prefix + "clientPort"), reader.str(prefix + "publicKeyPath"),
-        reader.str(prefix + "privateKeyPath"));
+        reader.str(prefix + "privateKeyPath"), reader.str(prefix + "thresholdPublicKeyPath"), reader.str(prefix + "thresholdPrivateSharePath"));
   }
 
   private static ClientSection readClient(PropertyReader reader) {

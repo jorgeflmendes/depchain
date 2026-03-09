@@ -53,8 +53,6 @@ class ConfigParserTest {
     return """
         system.n=4
         system.f=1
-        system.leaderElection=round-robin
-        system.baseView=1
 
         replicas=server1,server2,server3,server4
 
@@ -63,6 +61,8 @@ class ConfigParserTest {
         replica.server1.consensusPort=10001
         replica.server1.clientPort=11001
         replica.server1.privateKeyPath=config/keys/server1/private/replica.pem
+        replica.server1.thresholdPublicKeyPath=config/keys/server1/public/threshold.pub
+        replica.server1.thresholdPrivateSharePath=config/keys/server1/private/threshold.share
 
         replica.server2.senderId=2
         replica.server2.host=127.0.0.1
@@ -70,6 +70,8 @@ class ConfigParserTest {
         replica.server2.clientPort=11002
         replica.server2.publicKeyPath=config/keys/server2/public/replica.pem
         replica.server2.privateKeyPath=config/keys/server2/private/replica.pem
+        replica.server2.thresholdPublicKeyPath=config/keys/server2/public/threshold.pub
+        replica.server2.thresholdPrivateSharePath=config/keys/server2/private/threshold.share
 
         replica.server3.senderId=3
         replica.server3.host=127.0.0.1
@@ -77,6 +79,8 @@ class ConfigParserTest {
         replica.server3.clientPort=11003
         replica.server3.publicKeyPath=config/keys/server3/public/replica.pem
         replica.server3.privateKeyPath=config/keys/server3/private/replica.pem
+        replica.server3.thresholdPublicKeyPath=config/keys/server3/public/threshold.pub
+        replica.server3.thresholdPrivateSharePath=config/keys/server3/private/threshold.share
 
         replica.server4.senderId=4
         replica.server4.host=127.0.0.1
@@ -84,6 +88,8 @@ class ConfigParserTest {
         replica.server4.clientPort=11004
         replica.server4.publicKeyPath=config/keys/server4/public/replica.pem
         replica.server4.privateKeyPath=config/keys/server4/private/replica.pem
+        replica.server4.thresholdPublicKeyPath=config/keys/server4/public/threshold.pub
+        replica.server4.thresholdPrivateSharePath=config/keys/server4/private/threshold.share
 
         client.id=client
         client.senderId=100
@@ -103,8 +109,6 @@ class ConfigParserTest {
     return """
         system.n=4
         system.f=1
-        system.leaderElection=round-robin
-        system.baseView=1
 
         replicas=server1,server2,server3,server4
 
@@ -114,6 +118,8 @@ class ConfigParserTest {
         replica.server1.clientPort=11001
         replica.server1.publicKeyPath=config/keys/server1/public/replica.pem
         replica.server1.privateKeyPath=config/keys/server1/private/replica.pem
+        replica.server1.thresholdPublicKeyPath=config/keys/server1/public/threshold.pub
+        replica.server1.thresholdPrivateSharePath=config/keys/server1/private/threshold.share
 
         replica.server2.senderId=2
         replica.server2.host=127.0.0.1
@@ -121,6 +127,8 @@ class ConfigParserTest {
         replica.server2.clientPort=11002
         replica.server2.publicKeyPath=config/keys/server2/public/replica.pem
         replica.server2.privateKeyPath=config/keys/server2/private/replica.pem
+        replica.server2.thresholdPublicKeyPath=config/keys/server2/public/threshold.pub
+        replica.server2.thresholdPrivateSharePath=config/keys/server2/private/threshold.share
 
         replica.server3.senderId=3
         replica.server3.host=127.0.0.1
@@ -128,6 +136,8 @@ class ConfigParserTest {
         replica.server3.clientPort=11003
         replica.server3.publicKeyPath=config/keys/server3/public/replica.pem
         replica.server3.privateKeyPath=config/keys/server3/private/replica.pem
+        replica.server3.thresholdPublicKeyPath=config/keys/server3/public/threshold.pub
+        replica.server3.thresholdPrivateSharePath=config/keys/server3/private/threshold.share
 
         replica.server4.senderId=4
         replica.server4.host=127.0.0.1
@@ -135,6 +145,8 @@ class ConfigParserTest {
         replica.server4.clientPort=11004
         replica.server4.publicKeyPath=config/keys/server4/public/replica.pem
         replica.server4.privateKeyPath=config/keys/server4/private/replica.pem
+        replica.server4.thresholdPublicKeyPath=config/keys/server4/public/threshold.pub
+        replica.server4.thresholdPrivateSharePath=config/keys/server4/private/threshold.share
 
         client.id=client
         client.senderId=100

@@ -3,6 +3,11 @@ package pt.ulisboa.depchain.shared.utils;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
+import com.weavechain.curve25519.CompressedEdwardsY;
+import com.weavechain.curve25519.EdwardsPoint;
+import com.weavechain.curve25519.InvalidEncodingException;
+import com.weavechain.curve25519.Scalar;
+
 import pt.ulisboa.depchain.server.Node;
 import pt.ulisboa.depchain.server.Message;
 import pt.ulisboa.depchain.server.QuorumCertificate;
@@ -10,6 +15,7 @@ import pt.ulisboa.depchain.server.QuorumCertificate;
 public final class SerializationUtil {
   private static final byte FLAG_NULL = 0;
   private static final byte FLAG_PRESENT = 1;
+  private static final int NULL_LENGTH = -1;
 
   public static byte[] encodeString(String value) {
     ValidationUtils.requireNonNull(value, "value");
@@ -19,6 +25,16 @@ public final class SerializationUtil {
   public static String decodeString(byte[] payload) {
     ValidationUtils.requireNonNull(payload, "payload");
     return new String(payload, StandardCharsets.UTF_8);
+  }
+
+  public static EdwardsPoint decodeCommitment(byte[] commitment) throws InvalidEncodingException {
+    ValidationUtils.requireNonNull(commitment, "commitment");
+    return new CompressedEdwardsY(commitment).decompress();
+  }
+
+  public static Scalar decodeScalar(byte[] scalarBytes) {
+    ValidationUtils.requireNonNull(scalarBytes, "scalarBytes");
+    return Scalar.fromCanonicalBytes(scalarBytes.clone());
   }
 
   private static byte[] encodeNode(Node node) {
@@ -79,17 +95,15 @@ public final class SerializationUtil {
     }
 
     byte[] nodeBytes = encodeNode(qc.getNode());
-    java.util.List<byte[]> signatures = qc.getSignatures();
+    byte[] sig = qc.getAggregatedSignature();
 
     // Calculate memory needed for signatures
-    int sigsCapacity = Integer.BYTES;
-    if (signatures != null) {
-      for (byte[] sig : signatures) {
-        sigsCapacity += Integer.BYTES + sig.length;
-      }
+    int sigCapacity = Integer.BYTES;
+    if (sig != null) {
+      sigCapacity += sig.length;
     }
 
-    int capacity = Byte.BYTES + (2 * Integer.BYTES) + nodeBytes.length + sigsCapacity;
+    int capacity = Byte.BYTES + (2 * Integer.BYTES) + nodeBytes.length + sigCapacity;
 
     ByteBuffer buffer = ByteBuffer.allocate(capacity);
 
@@ -99,14 +113,11 @@ public final class SerializationUtil {
     buffer.putInt(qc.getViewNumber());
     buffer.put(nodeBytes);
 
-    if (signatures == null) {
+    if (sig == null) {
       buffer.putInt(0);
     } else {
-      buffer.putInt(signatures.size());
-      for (byte[] sig : signatures) {
-        buffer.putInt(sig.length);
-        buffer.put(sig);
-      }
+      buffer.putInt(sig.length);
+      buffer.put(sig);
     }
 
     return buffer.array();
@@ -126,15 +137,42 @@ public final class SerializationUtil {
     Message.MessageType type = Message.MessageType.values()[typeOrdinal];
 
     QuorumCertificate qc = new QuorumCertificate(type, viewNumber, node);
-    int sigSize = buffer.getInt();
-    for (int i = 0; i < sigSize; i++) {
-      int sigLen = buffer.getInt();
+    int sigLen = buffer.getInt();
+    if (sigLen > 0) {
       byte[] sig = new byte[sigLen];
       buffer.get(sig);
-      qc.addSignature(sig);
+      qc.setAggregatedSignature(sig);
     }
 
     return qc;
+  }
+
+  private static int nullableByteArrayCapacity(byte[] value) {
+    int capacity = Integer.BYTES;
+    if (value != null) {
+      capacity += value.length;
+    }
+    return capacity;
+  }
+
+  private static void putNullableByteArray(ByteBuffer buffer, byte[] value) {
+    if (value == null) {
+      buffer.putInt(NULL_LENGTH);
+    } else {
+      buffer.putInt(value.length);
+      buffer.put(value);
+    }
+  }
+
+  private static byte[] getNullableByteArray(ByteBuffer buffer) {
+    int length = buffer.getInt();
+    if (length < 0) {
+      return null;
+    }
+
+    byte[] bytes = new byte[length];
+    buffer.get(bytes);
+    return bytes;
   }
 
   public static Message decodeMessage(byte[] payload) {
@@ -147,9 +185,46 @@ public final class SerializationUtil {
     int typeOrdinal = buffer.getInt();
     Node node = decodeNode(buffer);
     QuorumCertificate justify = decodeQuorumCertificate(buffer);
+    byte[] signature = getNullableByteArray(buffer);
+    byte[] partialCommitment = getNullableByteArray(buffer);
+    byte[] aggregatedCommitment = getNullableByteArray(buffer);
+
+    int participantCount = buffer.getInt();
+    int[] participantIndexes = null;
+    if (participantCount >= 0) {
+      participantIndexes = new int[participantCount];
+      for (int i = 0; i < participantCount; i++) {
+        participantIndexes[i] = buffer.getInt();
+      }
+    }
 
     Message.MessageType type = Message.MessageType.values()[typeOrdinal];
-    return new Message(currView, senderId, type, node, justify);
+    Message message = new Message(currView, senderId, type, node, justify);
+    int populatedVariants = 0;
+    if (signature != null) {
+      populatedVariants++;
+    }
+    if (partialCommitment != null) {
+      populatedVariants++;
+    }
+    if (aggregatedCommitment != null || participantIndexes != null) {
+      populatedVariants++;
+    }
+
+    if (populatedVariants > 1) {
+      throw new IllegalArgumentException("Message cannot contain multiple threshold payload variants");
+    }
+    if (signature != null) {
+      message.setSignature(signature);
+    } else if (partialCommitment != null) {
+      message.setPartialCommitment(partialCommitment);
+    } else if (aggregatedCommitment != null || participantIndexes != null) {
+      if (aggregatedCommitment == null || participantIndexes == null) {
+        throw new IllegalArgumentException("Threshold context requires both aggregatedCommitment and participantIndexes");
+      }
+      message.setThresholdContext(aggregatedCommitment, participantIndexes);
+    }
+    return message;
   }
 
   public static byte[] encodeMessage(Message msg) {
@@ -157,7 +232,31 @@ public final class SerializationUtil {
 
     byte[] nodeBytes = encodeNode(msg.getNode());
     byte[] justifyBytes = encodeQuorumCertificate(msg.getJustify());
-    int capacity = (3 * Integer.BYTES) + nodeBytes.length + justifyBytes.length;
+    byte[] signature = null;
+    byte[] partialCommitment = null;
+    byte[] aggregatedCommitment = null;
+    int[] participantIndexes = null;
+    switch (msg.getThresholdPayloadType()) {
+      case SIGNATURE_SHARE :
+        signature = msg.getSignature();
+        break;
+      case SIGNATURE_COMMITMENT :
+        partialCommitment = msg.getPartialCommitment();
+        break;
+      case SIGNATURE_CONTEXT :
+        aggregatedCommitment = msg.getAggregatedCommitment();
+        participantIndexes = msg.getParticipantIndexes();
+        break;
+      case HOTSTUFF :
+        break;
+    }
+    int participantIndexesCapacity = Integer.BYTES;
+    if (participantIndexes != null) {
+      participantIndexesCapacity += participantIndexes.length * Integer.BYTES;
+    }
+
+    int capacity = (3 * Integer.BYTES) + nodeBytes.length + justifyBytes.length + nullableByteArrayCapacity(signature) + nullableByteArrayCapacity(partialCommitment)
+        + nullableByteArrayCapacity(aggregatedCommitment) + participantIndexesCapacity;
     ByteBuffer buffer = ByteBuffer.allocate(capacity);
 
     // Encode message fields in a consistent order
@@ -166,6 +265,17 @@ public final class SerializationUtil {
     buffer.putInt(msg.getType().ordinal());
     buffer.put(nodeBytes);
     buffer.put(justifyBytes);
+    putNullableByteArray(buffer, signature);
+    putNullableByteArray(buffer, partialCommitment);
+    putNullableByteArray(buffer, aggregatedCommitment);
+    if (participantIndexes == null) {
+      buffer.putInt(NULL_LENGTH);
+    } else {
+      buffer.putInt(participantIndexes.length);
+      for (int participantIndex : participantIndexes) {
+        buffer.putInt(participantIndex);
+      }
+    }
 
     return buffer.array();
   }

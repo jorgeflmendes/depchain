@@ -25,6 +25,11 @@
       <artifactId>threshold-sig</artifactId>
       <version>1.2</version>
     </dependency>
+    <dependency>
+      <groupId>com.weavechain</groupId>
+      <artifactId>curve25519-elisabeth</artifactId>
+      <version>[0,)</version> 
+    </dependency>
   </dependencies>
 
   <build>

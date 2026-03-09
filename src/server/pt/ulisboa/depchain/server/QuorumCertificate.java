@@ -1,7 +1,6 @@
 package pt.ulisboa.depchain.server;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
 
 import pt.ulisboa.depchain.server.Message.MessageType;
 
@@ -9,13 +8,12 @@ public class QuorumCertificate {
   private MessageType type;
   private int viewNumber;
   private Node node;
-  private List<byte[]> signatures;
+  private byte[] aggregatedSignature;
 
   public QuorumCertificate(MessageType type, int viewNumber, Node node) {
     this.type = type;
     this.viewNumber = viewNumber;
     this.node = node;
-    this.signatures = new ArrayList<>();
   }
 
   public MessageType getType() {
@@ -30,11 +28,18 @@ public class QuorumCertificate {
     return node;
   }
 
-  public List<byte[]> getSignatures() {
-    return signatures;
+  public byte[] getAggregatedSignature() {
+    if (aggregatedSignature == null) {
+      return null;
+    }
+    return Arrays.copyOf(aggregatedSignature, aggregatedSignature.length);
   }
 
-  public void addSignature(byte[] sig) {
-    signatures.add(sig);
+  public void setAggregatedSignature(byte[] sig) {
+    if (sig == null) {
+      aggregatedSignature = null;
+      return;
+    }
+    aggregatedSignature = Arrays.copyOf(sig, sig.length);
   }
 }

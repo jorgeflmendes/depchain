@@ -2,8 +2,6 @@ package pt.ulisboa.depchain.server;
 
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
-import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -11,7 +9,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
+
+import com.weavechain.curve25519.Scalar;
 
 import pt.ulisboa.depchain.server.Message.MessageType;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -24,6 +25,7 @@ public class Replica {
   private AuthenticatedLink clientTransport;
   private ConfigParser config;
   private final Map<String, ConnectionKey> clientContexts;
+  private ThresholdQuorumService thresholdService;
 
   private int id;
   private int n;
@@ -33,27 +35,27 @@ public class Replica {
   private int viewNumber;
   private QuorumCertificate lockedQC;
   private QuorumCertificate prepareQC;
+  private Node currentProposal;
   private Map<String, Node> blockTree;
 
   private BlockingDeque<Message> messageQueue;
   private Queue<String> pendingCommands;
 
-  private PrivateKey privateKey;
-  private Map<Long, PublicKey> publicKeys;
-
-  public Replica(int id, int n, ConfigParser config) {
+  public Replica(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey) {
     this.id = id;
-    this.n = n;
+    this.n = config.system().n();
     this.f = (n - 1) / 3;
     this.quorum = n - f;
+    this.thresholdService = new ThresholdQuorumService(id, config, localThresholdShare, publicThresholdKey);
+    this.lockedQC = thresholdService.genesisQC();
+    this.prepareQC = thresholdService.genesisQC();
+    this.currentProposal = Node.GENESIS_NODE;
     this.viewNumber = 0;
-    this.lockedQC = null;
-    this.prepareQC = null;
     this.blockTree = new HashMap<>();
     this.messageQueue = new LinkedBlockingDeque<>();
     this.pendingCommands = new LinkedList<>();
     this.config = config;
-    this.clientContexts = new java.util.concurrent.ConcurrentHashMap<>();
+    this.clientContexts = new ConcurrentHashMap<>();
 
     blockTree.put(Node.GENESIS_NODE.getThisHash(), Node.GENESIS_NODE);
   }
@@ -61,17 +63,19 @@ public class Replica {
   public void initNetwork(AuthenticatedLink nodeTransport, AuthenticatedLink clientTransport) {
     this.nodeTransport = nodeTransport;
     this.clientTransport = clientTransport;
+    this.thresholdService.initTransport(nodeTransport);
   }
 
-  public void initCrypto(PrivateKey privKey, Map<Long, PublicKey> pubKeys) {
-    this.privateKey = privKey;
-    this.publicKeys = pubKeys;
-}
-
   private Message voteMessage(MessageType type, Node node, QuorumCertificate qc) {
-    Message msg = new Message(viewNumber, id, type, node, qc);
-    // TODO: use threshold signatures to sign the message
-    return msg;
+    return thresholdService.createVoteMessage(viewNumber, type, node, qc, getLeader(viewNumber), messageQueue);
+  }
+
+  private QuorumCertificate buildQC(MessageType type, Node node) {
+    return thresholdService.buildQC(viewNumber, type, node, messageQueue);
+  }
+
+  private boolean verifyQuorumCertificate(QuorumCertificate qc) {
+    return thresholdService.verifyQC(qc);
   }
 
   private Node createLeaf(String parentHash, String command) {
@@ -84,10 +88,13 @@ public class Replica {
   }
 
   private boolean matchingQC(QuorumCertificate qc, MessageType t, int v) {
-    return qc.getType() == t && qc.getViewNumber() == v;
+    return qc != null && qc.getType() == t && qc.getViewNumber() == v;
   }
 
   private boolean safeNode(Node node, QuorumCertificate qc) {
+    if (node == null || qc == null) {
+      return false;
+    }
     return node.extendsNode(lockedQC.getNode()) || qc.getViewNumber() > lockedQC.getViewNumber();
   }
 
@@ -101,7 +108,7 @@ public class Replica {
 
   private void onPrepare() {
     if (isLeader()) {
-      List<Message> msgs = waitForMessages(MessageType.NEW_VIEW, viewNumber - 1);
+      List<Message> msgs = waitForMessages(MessageType.NEW_VIEW, viewNumber);
       QuorumCertificate highQC = msgs.get(0).getJustify();
       for (Message m : msgs) {
         if (m.getJustify().getViewNumber() > highQC.getViewNumber()) {
@@ -115,21 +122,22 @@ public class Replica {
       } else {
         cmd = pendingCommands.poll();
       }
-      Node curProposal = createLeaf(highQC.getNode().getThisHash(), cmd);
+      currentProposal = createLeaf(highQC.getNode().getThisHash(), cmd);
 
-      broadcast(new Message(viewNumber, id, MessageType.PREPARE, curProposal, highQC));
+      broadcast(new Message(viewNumber, id, MessageType.PREPARE, currentProposal, highQC));
     } else {
       Message prepareMsg = waitForMessage(MessageType.PREPARE, viewNumber, getLeader(viewNumber));
-      if (prepareMsg.getNode().extendsNode(prepareMsg.getJustify().getNode()) && safeNode(prepareMsg.getNode(), prepareMsg.getJustify())) {
-        sendtoLeader(voteMessage(MessageType.PREPARE, prepareMsg.getNode(), null));
+      if (prepareMsg != null && prepareMsg.getJustify() != null && verifyQuorumCertificate(prepareMsg.getJustify())
+          && prepareMsg.getNode().extendsNode(prepareMsg.getJustify().getNode()) && safeNode(prepareMsg.getNode(), prepareMsg.getJustify())) {
+        currentProposal = prepareMsg.getNode();
+        sendtoLeader(voteMessage(MessageType.PREPARE, currentProposal, null));
       }
     }
   }
 
   private void onPreCommit() {
     if (isLeader()) {
-      List<Message> msgs = waitForMessages(MessageType.PREPARE, viewNumber);
-      prepareQC = null; // TODO: combine signatures and create QC
+      prepareQC = buildQC(MessageType.PREPARE, currentProposal);
       broadcast(new Message(viewNumber, id, MessageType.PRE_COMMIT, null, prepareQC));
     } else {
       Message msg = waitForQC(MessageType.PREPARE, viewNumber, getLeader(viewNumber));
@@ -140,9 +148,9 @@ public class Replica {
 
   private void onCommit() {
     if (isLeader()) {
-      waitForMessages(MessageType.PRE_COMMIT, viewNumber);
-      QuorumCertificate preCommitQC = null; // TODO: combine signatures and create QC
-      broadcast(new Message(viewNumber, id, MessageType.COMMIT, null, lockedQC));
+      QuorumCertificate preCommitQC = buildQC(MessageType.PRE_COMMIT, currentProposal);
+      lockedQC = preCommitQC;
+      broadcast(new Message(viewNumber, id, MessageType.COMMIT, null, preCommitQC));
     } else {
       Message msg = waitForQC(MessageType.PRE_COMMIT, viewNumber, getLeader(viewNumber));
       lockedQC = msg.getJustify();
@@ -152,9 +160,9 @@ public class Replica {
 
   private void onDecide() {
     if (isLeader()) {
-      waitForMessages(MessageType.COMMIT, viewNumber);
-      QuorumCertificate commitQC = null; // TODO: combine signatures and create QC
+      QuorumCertificate commitQC = buildQC(MessageType.COMMIT, currentProposal);
       broadcast(new Message(viewNumber, id, MessageType.DECIDE, null, commitQC));
+      executeCommand(currentProposal);
     } else {
       Message msg = waitForQC(MessageType.COMMIT, viewNumber, getLeader(viewNumber));
       executeCommand(msg.getJustify().getNode());
@@ -209,7 +217,7 @@ public class Replica {
     ArrayList<Message> msgs = new ArrayList<>();
     while (msgs.size() < quorum) {
       for (Message msg : messageQueue) {
-        if (matchingMSG(msg, type, view)) {
+        if (matchingMSG(msg, type, view) && !thresholdService.isAuxiliaryMessage(msg)) {
           msgs.add(msg);
           messageQueue.remove(msg);
         }
@@ -221,7 +229,7 @@ public class Replica {
   private Message waitForQC(MessageType type, int view, int sender) {
     while (true) {
       for (Message msg : messageQueue) {
-        if (matchingQC(msg.getJustify(), type, view) && msg.getSenderId() == sender) {
+        if (matchingQC(msg.getJustify(), type, view) && msg.getSenderId() == sender && !thresholdService.isAuxiliaryMessage(msg) && verifyQuorumCertificate(msg.getJustify())) {
           messageQueue.remove(msg);
           return msg;
         }
@@ -235,7 +243,7 @@ public class Replica {
         // Blocks until a message is available
         Message msg = messageQueue.take();
 
-        if (matchingMSG(msg, type, view) && msg.getSenderId() == sender) {
+        if (matchingMSG(msg, type, view) && msg.getSenderId() == sender && !thresholdService.isAuxiliaryMessage(msg)) {
           return msg;
         } else {
           messageQueue.addLast(msg);
@@ -256,7 +264,7 @@ public class Replica {
     ConnectionKey key = clientContexts.remove(node.getCommand());
     if (key != null && clientTransport != null) {
       try {
-        byte[] response = "Success".getBytes(StandardCharsets.UTF_8);
+        byte[] response = ("Received " + node.getCommand()).getBytes(StandardCharsets.UTF_8);
         clientTransport.send(key.connectionId(), response, key.endpoint());
         clientTransport.closeConnection(key.connectionId(), key.endpoint());
 
@@ -270,7 +278,6 @@ public class Replica {
   public void run() {
     System.out.println("[Replica " + id + "] starting at view " + viewNumber);
 
-    // TODO: Start the protocol by sending a new view message to the leader
     sendtoLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, Node.GENESIS_NODE, prepareQC));
 
     while (true) {

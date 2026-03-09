@@ -1,10 +1,13 @@
 package pt.ulisboa.depchain.shared.keys;
 
+import java.io.ObjectInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+
+import com.weavechain.curve25519.Scalar;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.utils.KeyUtil;
@@ -50,5 +53,26 @@ public final class PrivateKeyLoader {
 
     Path privateKeyPath = Path.of(config.client().privateKeyPath());
     return loadPrivateKey(privateKeyPath);
+  }
+
+  public static Scalar loadThresholdPrivateShare(Path path) throws Exception {
+    ValidationUtils.requireNonNull(path, "path");
+
+    try (ObjectInputStream in = new ObjectInputStream(Files.newInputStream(path))) {
+      return (Scalar) in.readObject();
+    }
+  }
+
+  public static Scalar loadReplicaThresholdPrivateShare(ConfigParser config, long senderId) throws Exception {
+    ValidationUtils.requireNonNull(config, "config");
+
+    for (ConfigParser.ReplicaSection replica : config.replicas()) {
+      if (replica.senderId() == senderId) {
+        Path thresholdPrivateSharePath = Path.of(replica.thresholdPrivateSharePath());
+        return loadThresholdPrivateShare(thresholdPrivateSharePath);
+      }
+    }
+
+    throw new IllegalArgumentException("Replica senderId '%s' not found in config".formatted(senderId));
   }
 }

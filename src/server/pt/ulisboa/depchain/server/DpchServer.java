@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import com.weavechain.curve25519.Scalar;
+
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -29,29 +31,30 @@ public final class DpchServer {
   public DpchServer(String serverId, String configPath) throws Exception {
     this.configParser = ConfigParser.load(Path.of(configPath));
     this.replicaConfig = configParser.requireReplica(serverId);
-    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser.system().n(), configParser);
+    byte[] thresholdPublicKey = PublicKeyLoader.loadReplicaThresholdPublicKey(configParser, replicaConfig.senderId());
+    Scalar share = PrivateKeyLoader.loadReplicaThresholdPrivateShare(configParser, replicaConfig.senderId());
+    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser, share, thresholdPublicKey);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(configParser);
+
   }
 
   public void run() throws Exception {
     InetSocketAddress clientBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.clientPort());
     InetSocketAddress nodeBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.consensusPort());
-    ExecutorService workers = Executors.newCachedThreadPool();
+    ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
     try (workers;
         AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);
-        AuthenticatedLink nodeListener = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys); // Bind for receiving
-        AuthenticatedLink nodeTransport = AuthenticatedLink.unbound(replicaConfig.senderId(), localStaticSKey, staticPKeys)) { // Unbound for sending
+        AuthenticatedLink nodeTransport = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys)) {
 
       System.out.printf("Replica %s client listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       System.out.printf("Replica %s node listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
 
       this.replica.initNetwork(nodeTransport, clientTransport);
-      this.replica.initCrypto(localStaticSKey, staticPKeys);
 
       workers.submit(() -> this.replica.run());
-      workers.submit(() -> runNodeLoop(nodeListener, nodeTransport, workers));
+      workers.submit(() -> runNodeLoop(nodeTransport, workers));
       runClientLoop(clientTransport, workers);
     }
   }
@@ -67,14 +70,14 @@ public final class DpchServer {
     }
   }
 
-  private void runNodeLoop(AuthenticatedLink listener, AuthenticatedLink transport, ExecutorService workers) {
+  private void runNodeLoop(AuthenticatedLink transport, ExecutorService workers) {
     while (true) {
-      InboundPacket request = receiveNextInbound(listener);
+      InboundPacket request = receiveNextInbound(transport);
       if (request == null) {
         continue;
       }
 
-      workers.submit(() -> handleNodeRequest(listener, transport, request.packet(), request.sender()));
+      workers.submit(() -> handleNodeRequest(transport, request.packet(), request.sender()));
     }
   }
 
@@ -102,7 +105,7 @@ public final class DpchServer {
     }
   }
 
-  private void handleNodeRequest(AuthenticatedLink listener, AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
+  private void handleNodeRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
     try {
       Message msg = SerializationUtil.decodeMessage(inbound.payload());
       this.replica.receiveMessage(msg);
