@@ -41,6 +41,10 @@ public class Replica {
   private PrivateKey privateKey;
   private Map<Long, PublicKey> publicKeys;
 
+  private static final long VIEW_TIMEOUT_MS = 5000;
+  private volatile boolean viewTimedOut;
+  private Thread timerThread;
+
   public Replica(int id, int n, ConfigParser config) {
     this.id = id;
     this.n = n;
@@ -99,7 +103,29 @@ public class Replica {
     return getLeader(viewNumber) == id;
   }
 
-  private void onPrepare() {
+  private void nextView(int view) {
+    viewTimedOut = false;
+    Thread caller = Thread.currentThread();
+    timerThread = new Thread(() -> {
+      try {
+        Thread.sleep(VIEW_TIMEOUT_MS);
+        viewTimedOut = true;
+        caller.interrupt();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+    });
+    timerThread.setDaemon(true);
+    timerThread.start();
+  }
+
+  private void cancelTimer() {
+    if (timerThread != null) {
+      timerThread.interrupt();
+    }
+  }
+
+  private void onPrepare() throws InterruptedException {
     if (isLeader()) {
       List<Message> msgs = waitForMessages(MessageType.NEW_VIEW, viewNumber - 1);
       QuorumCertificate highQC = msgs.get(0).getJustify();
@@ -126,7 +152,7 @@ public class Replica {
     }
   }
 
-  private void onPreCommit() {
+  private void onPreCommit() throws InterruptedException {
     if (isLeader()) {
       List<Message> msgs = waitForMessages(MessageType.PREPARE, viewNumber);
       prepareQC = null; // TODO: combine signatures and create QC
@@ -138,7 +164,7 @@ public class Replica {
     }
   }
 
-  private void onCommit() {
+  private void onCommit() throws InterruptedException {
     if (isLeader()) {
       waitForMessages(MessageType.PRE_COMMIT, viewNumber);
       QuorumCertificate preCommitQC = null; // TODO: combine signatures and create QC
@@ -150,7 +176,7 @@ public class Replica {
     }
   }
 
-  private void onDecide() {
+  private void onDecide() throws InterruptedException {
     if (isLeader()) {
       waitForMessages(MessageType.COMMIT, viewNumber);
       QuorumCertificate commitQC = null; // TODO: combine signatures and create QC
@@ -205,9 +231,11 @@ public class Replica {
     }
   }
 
-  private List<Message> waitForMessages(MessageType type, int view) {
+  private List<Message> waitForMessages(MessageType type, int view) throws InterruptedException {
+    nextView(view);
     ArrayList<Message> msgs = new ArrayList<>();
     while (msgs.size() < quorum) {
+      if (viewTimedOut) throw new InterruptedException("View " + view + " timed out");
       for (Message msg : messageQueue) {
         if (matchingMSG(msg, type, view)) {
           msgs.add(msg);
@@ -215,35 +243,33 @@ public class Replica {
         }
       }
     }
+    cancelTimer();
     return msgs;
   }
 
-  private Message waitForQC(MessageType type, int view, int sender) {
+  private Message waitForQC(MessageType type, int view, int sender) throws InterruptedException {
+    nextView(view);
     while (true) {
+      if (viewTimedOut) throw new InterruptedException("View " + view + " timed out");
       for (Message msg : messageQueue) {
         if (matchingQC(msg.getJustify(), type, view) && msg.getSenderId() == sender) {
           messageQueue.remove(msg);
+          cancelTimer();
           return msg;
         }
       }
     }
   }
 
-  private Message waitForMessage(MessageType type, int view, int sender) {
+  private Message waitForMessage(MessageType type, int view, int sender) throws InterruptedException {
+    nextView(view);
     while (true) {
-      try {
-        // Blocks until a message is available
-        Message msg = messageQueue.take();
-
-        if (matchingMSG(msg, type, view) && msg.getSenderId() == sender) {
-          return msg;
-        } else {
-          messageQueue.addLast(msg);
-        }
-
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return null;
+      Message msg = messageQueue.take();
+      if (matchingMSG(msg, type, view) && msg.getSenderId() == sender) {
+        cancelTimer();
+        return msg;
+      } else {
+        messageQueue.addLast(msg);
       }
     }
   }
@@ -270,14 +296,20 @@ public class Replica {
   public void run() {
     System.out.println("[Replica " + id + "] starting at view " + viewNumber);
 
-    // TODO: Start the protocol by sending a new view message to the leader
     sendtoLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, Node.GENESIS_NODE, prepareQC));
+    viewNumber = 1;
 
     while (true) {
-      onPrepare();
-      onPreCommit();
-      onCommit();
-      onDecide();
+      try {
+        onPrepare();
+        onPreCommit();
+        onCommit();
+        onDecide();
+      } catch (InterruptedException e) {
+        System.out.println("[Replica " + id + "] view " + viewNumber + " timed out");
+        cancelTimer();
+        Thread.interrupted();
+      }
       onNewView();
     }
   }
