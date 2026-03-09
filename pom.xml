@@ -45,10 +45,6 @@
                 <source>src/populate</source>
                 <source>src/server</source>
                 <source>src/client</source>
-                <source>src/replica</source>
-                <source>src/message</source>
-                <source>src/certificate</source>
-                <source>src/node</source>
                 <source>src/shared</source>
               </sources>
             </configuration>
@@ -121,12 +117,10 @@
         <configuration>
           <java>
             <includes>
-              <include>src/populate/**/*.java</include>
-              <include>src/shared/**/*.java</include>
-              <include>src/server/**/*.java</include>
-              <include>src/client/**/*.java</include>
+              <include>src/**/*.java</include>
               <include>src/test/**/*.java</include>
             </includes>
+            <removeUnusedImports />
             <eclipse>
               <file>${project.basedir}/eclipse-java-formatter.xml</file>
             </eclipse>

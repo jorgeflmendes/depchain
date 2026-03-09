@@ -1,6 +1,5 @@
 package pt.ulisboa.depchain.shared.keys;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyFactory;
