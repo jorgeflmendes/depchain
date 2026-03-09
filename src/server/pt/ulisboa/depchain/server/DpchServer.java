@@ -15,7 +15,9 @@ import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
+import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 
 public final class DpchServer {
   private final ConfigParser configParser;
@@ -27,7 +29,7 @@ public final class DpchServer {
   public DpchServer(String serverId, String configPath) throws Exception {
     this.configParser = ConfigParser.load(Path.of(configPath));
     this.replicaConfig = configParser.requireReplica(serverId);
-    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser.system().n());
+    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser.system().n(), configParser);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(configParser);
   }
@@ -45,12 +47,16 @@ public final class DpchServer {
       System.out.printf("Replica %s client listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       System.out.printf("Replica %s node listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
 
+      this.replica.initNetwork(nodeTransport, clientTransport);
+      this.replica.initCrypto(localStaticSKey, staticPKeys);
+
+      workers.submit(() -> this.replica.run());
       workers.submit(() -> runNodeLoop(nodeListener, nodeTransport, workers));
       runClientLoop(clientTransport, workers);
     }
   }
 
-  private static void runClientLoop(AuthenticatedLink transport, ExecutorService workers) {
+  private void runClientLoop(AuthenticatedLink transport, ExecutorService workers) {
     while (true) {
       InboundPacket request = receiveNextInbound(transport);
       if (request == null) {
@@ -61,7 +67,7 @@ public final class DpchServer {
     }
   }
 
-  private static void runNodeLoop(AuthenticatedLink listener, AuthenticatedLink transport, ExecutorService workers) {
+  private void runNodeLoop(AuthenticatedLink listener, AuthenticatedLink transport, ExecutorService workers) {
     while (true) {
       InboundPacket request = receiveNextInbound(listener);
       if (request == null) {
@@ -72,7 +78,7 @@ public final class DpchServer {
     }
   }
 
-  private static InboundPacket receiveNextInbound(AuthenticatedLink transport) {
+  private InboundPacket receiveNextInbound(AuthenticatedLink transport) {
     try {
       return transport.receive();
     } catch (InterruptedException exception) {
@@ -81,31 +87,27 @@ public final class DpchServer {
     }
   }
 
-  private static void handleClientRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
+  private void handleClientRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
     System.out.printf("Client request from %s%n", sender);
 
     try {
-      // Ex.: Deserialize the received request payload as a UTF-8 string.
       String requestText = new String(inbound.payload(), StandardCharsets.UTF_8);
-
-      // Ex.: Echo the request back to the client
-      byte[] payload = ("Received " + requestText).getBytes(StandardCharsets.UTF_8);
-      transport.send(inbound.connectionId(), payload, sender);
+      ConnectionKey key = new ConnectionKey(sender, inbound.connectionId());
+      this.replica.receiveCommand(requestText, key);
+      // TODO: Optionally, send to the client "Request received and being processed";
 
     } catch (RuntimeException exception) {
       System.out.printf("Client request error from %s: %s%n", senderText, exception.getMessage());
-
-    } finally {
-      try {
-        transport.closeConnection(inbound.connectionId(), sender);
-      } catch (RuntimeException closeError) {
-        System.out.printf("Client close error from %s: %s%n", senderText, closeError.getMessage());
-      }
     }
   }
 
-  private static void handleNodeRequest(AuthenticatedLink listener, AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
-    // TODO: consensus logic goes here.
+  private void handleNodeRequest(AuthenticatedLink listener, AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
+    try {
+      Message msg = SerializationUtil.decodeMessage(inbound.payload());
+      this.replica.receiveMessage(msg);
+    } catch (Exception e) {
+      System.err.printf("Error handling node message from %s: %s%n", sender, e.getMessage());
+    }
   }
 }

@@ -1,5 +1,9 @@
 package pt.ulisboa.depchain.server;
 
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -10,8 +14,17 @@ import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.LinkedBlockingDeque;
 
 import pt.ulisboa.depchain.server.Message.MessageType;
+import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
+import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
+import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 
 public class Replica {
+  private AuthenticatedLink nodeTransport;
+  private AuthenticatedLink clientTransport;
+  private ConfigParser config;
+  private final Map<String, ConnectionKey> clientContexts;
+
   private int id;
   private int n;
   private int f;
@@ -25,7 +38,10 @@ public class Replica {
   private BlockingDeque<Message> messageQueue;
   private Queue<String> pendingCommands;
 
-  public Replica(int id, int n) {
+  private PrivateKey privateKey;
+  private Map<Long, PublicKey> publicKeys;
+
+  public Replica(int id, int n, ConfigParser config) {
     this.id = id;
     this.n = n;
     this.f = (n - 1) / 3;
@@ -36,13 +52,25 @@ public class Replica {
     this.blockTree = new HashMap<>();
     this.messageQueue = new LinkedBlockingDeque<>();
     this.pendingCommands = new LinkedList<>();
+    this.config = config;
+    this.clientContexts = new java.util.concurrent.ConcurrentHashMap<>();
 
     blockTree.put(Node.GENESIS_NODE.getThisHash(), Node.GENESIS_NODE);
   }
 
+  public void initNetwork(AuthenticatedLink nodeTransport, AuthenticatedLink clientTransport) {
+    this.nodeTransport = nodeTransport;
+    this.clientTransport = clientTransport;
+  }
+
+  public void initCrypto(PrivateKey privKey, Map<Long, PublicKey> pubKeys) {
+    this.privateKey = privKey;
+    this.publicKeys = pubKeys;
+}
+
   private Message voteMessage(MessageType type, Node node, QuorumCertificate qc) {
     Message msg = new Message(viewNumber, id, type, node, qc);
-    // use threshold signatures to sign the message
+    // TODO: use threshold signatures to sign the message
     return msg;
   }
 
@@ -101,7 +129,7 @@ public class Replica {
   private void onPreCommit() {
     if (isLeader()) {
       List<Message> msgs = waitForMessages(MessageType.PREPARE, viewNumber);
-      prepareQC = null; // combine signatures and create QC
+      prepareQC = null; // TODO: combine signatures and create QC
       broadcast(new Message(viewNumber, id, MessageType.PRE_COMMIT, null, prepareQC));
     } else {
       Message msg = waitForQC(MessageType.PREPARE, viewNumber, getLeader(viewNumber));
@@ -113,7 +141,7 @@ public class Replica {
   private void onCommit() {
     if (isLeader()) {
       waitForMessages(MessageType.PRE_COMMIT, viewNumber);
-      QuorumCertificate preCommitQC = null; // combine signatures and create QC
+      QuorumCertificate preCommitQC = null; // TODO: combine signatures and create QC
       broadcast(new Message(viewNumber, id, MessageType.COMMIT, null, lockedQC));
     } else {
       Message msg = waitForQC(MessageType.PRE_COMMIT, viewNumber, getLeader(viewNumber));
@@ -125,7 +153,7 @@ public class Replica {
   private void onDecide() {
     if (isLeader()) {
       waitForMessages(MessageType.COMMIT, viewNumber);
-      QuorumCertificate commitQC = null; // combine signatures and create QC
+      QuorumCertificate commitQC = null; // TODO: combine signatures and create QC
       broadcast(new Message(viewNumber, id, MessageType.DECIDE, null, commitQC));
     } else {
       Message msg = waitForQC(MessageType.COMMIT, viewNumber, getLeader(viewNumber));
@@ -139,9 +167,42 @@ public class Replica {
   }
 
   private void broadcast(Message msg) {
+    byte[] payload = SerializationUtil.encodeMessage(msg);
+
+    for (ConfigParser.ReplicaSection peer : config.replicas()) {
+      try {
+        InetAddress peerHost = InetAddress.getByName(peer.host());
+        java.net.InetSocketAddress addr = new java.net.InetSocketAddress(peerHost, peer.consensusPort());
+        nodeTransport.send(0L, payload, addr);
+      } catch (Exception e) {
+        System.err.println("Error in broadcast to " + peer.id() + ": " + e.getMessage());
+      }
+    }
   }
 
   private void sendtoLeader(Message msg) {
+    try {
+      byte[] payload = SerializationUtil.encodeMessage(msg);
+      int leaderId = getLeader(viewNumber);
+
+      ConfigParser.ReplicaSection leader = null;
+      for (ConfigParser.ReplicaSection r : config.replicas()) {
+        if (r.senderId() == leaderId) {
+          leader = r;
+          break;
+        }
+      }
+
+      if (leader != null) {
+        InetAddress leaderHost = InetAddress.getByName(leader.host());
+        java.net.InetSocketAddress addr = new java.net.InetSocketAddress(leaderHost, leader.consensusPort());
+        nodeTransport.send(0L, payload, addr);
+      } else {
+        System.err.println("Error finding leader config for view " + viewNumber);
+      }
+    } catch (Exception e) {
+      System.err.println("Error sending message to leader: " + e.getMessage());
+    }
   }
 
   private List<Message> waitForMessages(MessageType type, int view) {
@@ -170,11 +231,19 @@ public class Replica {
 
   private Message waitForMessage(MessageType type, int view, int sender) {
     while (true) {
-      for (Message msg : messageQueue) {
+      try {
+        // Blocks until a message is available
+        Message msg = messageQueue.take();
+
         if (matchingMSG(msg, type, view) && msg.getSenderId() == sender) {
-          messageQueue.remove(msg);
           return msg;
+        } else {
+          messageQueue.addLast(msg);
         }
+
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return null;
       }
     }
   }
@@ -182,13 +251,27 @@ public class Replica {
   private void executeCommand(Node node) {
     System.out.println("[Replica " + id + "] Executing command: " + node.getCommand());
     blockTree.put(node.getThisHash(), node);
+
+    // Send final response to client and close connection
+    ConnectionKey key = clientContexts.remove(node.getCommand());
+    if (key != null && clientTransport != null) {
+      try {
+        byte[] response = "Success".getBytes(StandardCharsets.UTF_8);
+        clientTransport.send(key.connectionId(), response, key.endpoint());
+        clientTransport.closeConnection(key.connectionId(), key.endpoint());
+
+        System.out.printf("[Replica %d] Connection %d closed for client %s%n", id, key.connectionId(), key.endpoint());
+      } catch (Exception e) {
+        System.err.println("Error closing client connection: " + e.getMessage());
+      }
+    }
   }
 
   public void run() {
     System.out.println("[Replica " + id + "] starting at view " + viewNumber);
 
-    // Start the protocol by sending a new view message to the leader
-    // sendtoLeader(new Message());
+    // TODO: Start the protocol by sending a new view message to the leader
+    sendtoLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, Node.GENESIS_NODE, prepareQC));
 
     while (true) {
       onPrepare();
@@ -203,15 +286,8 @@ public class Replica {
     messageQueue.add(msg);
   }
 
-  public void receiveCommand(String cmd) {
+  public void receiveCommand(String cmd, ConnectionKey key) {
     pendingCommands.add(cmd);
-  }
-
-  public static void main(String[] args) {
-    int id = Integer.parseInt(args[0]);
-    int n = Integer.parseInt(args[1]);
-
-    Replica replica = new Replica(id, n);
-    replica.run();
+    this.clientContexts.put(cmd, key);
   }
 }
