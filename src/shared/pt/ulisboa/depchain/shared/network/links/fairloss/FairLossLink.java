@@ -19,18 +19,9 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
 
   private final DatagramSocket socket;
 
-  // Reused receive buffer/packet to avoid per-receive allocations.
-  private final byte[] receiveBuffer;
-  private final DatagramPacket receivePacket;
-
-  // Protects only the reused receiveBuffer/receivePacket.
-  private final Object receiveLock = new Object();
-
   private FairLossLink(DatagramSocket socket, int maxPacketSize) throws SocketException {
     this.socket = ValidationUtils.requireNonNull(socket, "socket");
     this.maxPacketSize = ValidationUtils.requirePositiveInt(maxPacketSize, "maxPacketSize");
-    this.receiveBuffer = new byte[this.maxPacketSize];
-    this.receivePacket = new DatagramPacket(this.receiveBuffer, this.receiveBuffer.length);
     this.socket.setSoTimeout(0);
   }
 
@@ -69,23 +60,21 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
   }
 
   private InboundBytes receiveInternal(long timeoutMs) throws IOException {
-    synchronized (receiveLock) {
-      receivePacket.setData(receiveBuffer, 0, receiveBuffer.length);
-      receivePacket.setLength(receiveBuffer.length);
-      socket.setSoTimeout((int) Math.min(Integer.MAX_VALUE, timeoutMs));
+    byte[] receiveBuffer = new byte[maxPacketSize];
+    DatagramPacket receivePacket = new DatagramPacket(receiveBuffer, receiveBuffer.length);
+    socket.setSoTimeout((int) Math.min(Integer.MAX_VALUE, timeoutMs));
 
-      try {
-        socket.receive(receivePacket);
-      } catch (SocketTimeoutException ignored) {
-        return null;
-      } finally {
-        socket.setSoTimeout(0);
-      }
-
-      byte[] payload = Arrays.copyOf(receiveBuffer, receivePacket.getLength());
-      InetSocketAddress sender = new InetSocketAddress(receivePacket.getAddress(), receivePacket.getPort());
-      return new InboundBytes(sender, payload);
+    try {
+      socket.receive(receivePacket);
+    } catch (SocketTimeoutException ignored) {
+      return null;
+    } finally {
+      socket.setSoTimeout(0);
     }
+
+    byte[] payload = Arrays.copyOf(receiveBuffer, receivePacket.getLength());
+    InetSocketAddress sender = new InetSocketAddress(receivePacket.getAddress(), receivePacket.getPort());
+    return new InboundBytes(sender, payload);
   }
 
   @Override

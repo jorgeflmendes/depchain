@@ -35,12 +35,12 @@ public final class DpchServer {
   public void run() throws Exception {
     InetSocketAddress clientBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.clientPort());
     InetSocketAddress nodeBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.consensusPort());
-    ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
+    ExecutorService workers = Executors.newCachedThreadPool();
 
     try (workers;
         AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);
-        AuthenticatedLink nodeListener = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys); // Escuta nós
-        AuthenticatedLink nodeTransport = AuthenticatedLink.unbound(replicaConfig.senderId(), localStaticSKey, staticPKeys)) { // Envia para nós
+        AuthenticatedLink nodeListener = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys); // Bind for receiving
+        AuthenticatedLink nodeTransport = AuthenticatedLink.unbound(replicaConfig.senderId(), localStaticSKey, staticPKeys)) { // Unbound for sending
 
       System.out.printf("Replica %s client listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       System.out.printf("Replica %s node listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
