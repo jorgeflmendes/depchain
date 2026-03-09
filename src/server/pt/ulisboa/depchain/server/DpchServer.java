@@ -34,18 +34,16 @@ public final class DpchServer {
 
   public void run() throws Exception {
     InetSocketAddress clientBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.clientPort());
-    InetSocketAddress nodeBindEndpoint = new InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.consensusPort());
+    // InetSocketAddress nodeBindEndpoint = new
+    // InetSocketAddress(InetAddress.getByName(replicaConfig.host()), replicaConfig.consensusPort());
     ExecutorService workers = Executors.newCachedThreadPool();
 
-    try (workers;
-        AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);
-        AuthenticatedLink nodeListener = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys); // Escuta nós
-        AuthenticatedLink nodeTransport = AuthenticatedLink.unbound(replicaConfig.senderId(), localStaticSKey, staticPKeys)) { // Envia para nós
+    try (workers; AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);) {
 
       System.out.printf("Replica %s client listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       System.out.printf("Replica %s node listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
 
-      workers.submit(() -> runNodeLoop(nodeListener, nodeTransport, workers));
+      // workers.submit(() -> runNodeLoop(nodeListener, nodeTransport, workers));
       runClientLoop(clientTransport, workers);
     }
   }
