@@ -87,7 +87,7 @@ public final class DpchServer {
     System.out.printf("Client request from %s%n", sender);
 
     try {
-      // TODO: client request handling logic goes here. broadcast to liders, etc.
+      // TODO: client request handling logic goes here. broadcast, etc.
 
       // Ex.: Deserialize the received request payload as a UTF-8 string.
       String requestText = new String(inbound.payload(), StandardCharsets.UTF_8);
