@@ -20,6 +20,11 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.weavechain</groupId>
+      <artifactId>threshold-sig</artifactId>
+      <version>1.2</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -40,6 +45,10 @@
                 <source>src/populate</source>
                 <source>src/server</source>
                 <source>src/client</source>
+                <source>src/replica</source>
+                <source>src/message</source>
+                <source>src/certificate</source>
+                <source>src/node</source>
                 <source>src/shared</source>
               </sources>
             </configuration>
