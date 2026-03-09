@@ -14,20 +14,26 @@ public class Message {
     }
 
     private int currView;
+    private int senderId;
     private MessageType type;
     private Node node;
     private QuorumCertificate justify;
-    private byte[] partialSig;
-    private int senderId;
+    private byte[] signature;
 
-    public Message(int currView, MessageType type, Node node) {
+    public Message(int currView, int senderId, MessageType type, Node node, QuorumCertificate justify) {
         this.currView = currView;
+        this.senderId = senderId;
         this.type = type;
         this.node = node;
+        this.justify = justify;
     }
 
     public int getCurrView() {
         return currView;
+    }
+
+    public int getSenderId() {
+        return senderId;
     }
 
     public MessageType getType() {
@@ -42,12 +48,7 @@ public class Message {
         return justify;
     }
 
-    public byte[] getPartialSig() {
-        return partialSig;
+    private void signMessage(byte[] sig) {
+        this.signature = sig;
     }
-
-    public VoteMessage() {
-    }
-
-    
 }

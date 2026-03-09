@@ -30,4 +30,8 @@ public class Node {
     public String getCommand() {
         return command;
     }
+
+    public boolean extendsNode(Node other) {
+        return this.parentHash.equals(other.getThisHash());
+    }
 }

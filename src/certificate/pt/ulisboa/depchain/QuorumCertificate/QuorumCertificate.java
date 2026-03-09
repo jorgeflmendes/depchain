@@ -1,5 +1,11 @@
 package pt.ulisboa.depchain.certificate;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import pt.ulisboa.depchain.message.Message.MessageType;
+import pt.ulisboa.depchain.node.Node;
+
 public class QuorumCertificate {
     private MessageType type;
     private int viewNumber;
@@ -31,9 +37,5 @@ public class QuorumCertificate {
 
     public void addSignature(byte[] sig) {
         signatures.add(sig);
-    }
-
-    public boolean hasQuorum(int quorumSize) {
-        return signatures.size() >= quorumSize;
     }
 }
