@@ -52,10 +52,15 @@ public final class DpchServer {
   }
 
   private static void runClientLoop(AuthenticatedLink transport, ExecutorService workers) {
-    while (true) {
+    while (!Thread.currentThread().isInterrupted()) {
       InboundPacket request = receiveNextInbound(transport);
+
       if (request == null) {
-        return;
+        if (Thread.currentThread().isInterrupted()) {
+          return;
+        }
+
+        continue;
       }
 
       workers.submit(() -> handleClientRequest(transport, request.packet(), request.sender()));
@@ -63,10 +68,15 @@ public final class DpchServer {
   }
 
   private static void runNodeLoop(AuthenticatedLink listener, AuthenticatedLink transport, ExecutorService workers) {
-    while (true) {
+    while (!Thread.currentThread().isInterrupted()) {
       InboundPacket request = receiveNextInbound(listener);
+
       if (request == null) {
-        return;
+        if (Thread.currentThread().isInterrupted()) {
+          return;
+        }
+
+        continue;
       }
 
       workers.submit(() -> handleNodeRequest(transport, request.packet(), request.sender()));
@@ -92,7 +102,8 @@ public final class DpchServer {
       // Ex.: Deserialize the received request payload as a UTF-8 string.
       String requestText = new String(inbound.payload(), StandardCharsets.UTF_8);
 
-      // Ex.: Echo the request back to the client the string "Received <payload>". It needs to be serialized.
+      // Ex.: Echo the request back to the client the string "Received <payload>". It needs to be
+      // serialized.
       byte[] payload = ("Received " + requestText).getBytes(StandardCharsets.UTF_8);
       transport.send(inbound.connectionId(), payload, sender);
 
