@@ -39,12 +39,13 @@ public final class DpchServer {
 
     try (workers;
         AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);
-        AuthenticatedLink nodeListener = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);) {
+        AuthenticatedLink nodeListener = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys); // Bind for receiving
+        AuthenticatedLink nodeTransport = AuthenticatedLink.unbound(replicaConfig.senderId(), localStaticSKey, staticPKeys)) { // Unbound for sending
 
       System.out.printf("Replica %s client listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       System.out.printf("Replica %s node listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
 
-      // workers.submit(() -> runNodeLoop(nodeListener, nodeTransport, workers));
+      workers.submit(() -> runNodeLoop(nodeListener, nodeTransport, workers));
       runClientLoop(clientTransport, workers);
     }
   }
