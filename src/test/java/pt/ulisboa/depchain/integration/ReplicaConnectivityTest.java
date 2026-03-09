@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -60,12 +61,19 @@ class ReplicaConnectivityTest {
   }
 
   private static ProcessResult runClient(String value, String targetReplicaId, Path configPath) throws IOException, InterruptedException {
-    // Launches a client JVM process that sends a value to one target replica.
-    ProcessBuilder pb = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.client.Main", value, targetReplicaId,
+    // Launches the interactive client JVM process and feeds one request followed by EXIT.
+    ProcessBuilder pb = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.client.Main", targetReplicaId,
         configPath.toString());
     pb.redirectErrorStream(true);
 
     Process process = pb.start();
+    try (OutputStreamWriter writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
+      writer.write(value);
+      writer.write(System.lineSeparator());
+      writer.write("EXIT");
+      writer.write(System.lineSeparator());
+      writer.flush();
+    }
 
     // Waits for the client process to finish within a fixed timeout.
     boolean finished = process.waitFor(Duration.ofSeconds(10).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
