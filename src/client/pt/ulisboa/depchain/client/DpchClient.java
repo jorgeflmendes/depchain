@@ -94,7 +94,8 @@ public final class DpchClient {
     } finally {
       try {
         transport.closeConnection(connectionId, targetAddress);
-      } catch (RuntimeException ignored) {
+      } catch (RuntimeException exception) {
+        logger.debug("Ignoring client connection close failure: " + exception.getMessage());
       }
     }
   }
