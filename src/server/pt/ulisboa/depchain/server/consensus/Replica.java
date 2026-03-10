@@ -152,8 +152,8 @@ public class Replica {
   private void onPrepare() {
     if (isLeader()) {
       // As leader, gather new_view messages and select the highest QC.
-      List<Message> msgs = waitForQuorumMessages(MessageType.NEW_VIEW, viewNumber);
-      QuorumCertificate highQC = msgs.get(0).getJustify();
+      List<Message> msgs = waitForQuorumMessages(MessageType.NEW_VIEW, viewNumber, quorum - 1);
+      QuorumCertificate highQC = prepareQC;
       for (Message m : msgs) {
         if (m.getJustify().getViewNumber() > highQC.getViewNumber()) {
           highQC = m.getJustify();
@@ -311,11 +311,11 @@ public class Replica {
     return thresholdProtocol.verifyQC(qc);
   }
 
-  private List<Message> waitForQuorumMessages(MessageType type, int view) {
+  private List<Message> waitForQuorumMessages(MessageType type, int view, int requiredCount) {
     // Collect messages from distinct senders until we have a quorum.
     LinkedHashMap<Integer, Message> msgsBySender = new LinkedHashMap<>();
     long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
-    while (msgsBySender.size() < quorum) {
+    while (msgsBySender.size() < requiredCount) {
       Message msg = pollMessageUntil(deadlineMs, "waiting for " + type + " messages");
 
       if (msg != null && matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {

@@ -3,214 +3,79 @@
 ## Overview
 DepChain is a permissioned blockchain project for the Highly Dependable Systems course.
 
-This repository now contains:
-- the UDP-based authenticated transport stack,
-- a basic HotStuff-style consensus flow,
-- threshold-signed quorum certificates,
-- a simple append-only in-memory state machine with client replies.
-
-Current scope:
-- `PREPARE -> PRE_COMMIT -> COMMIT -> DECIDE` happy-path consensus,
-- threshold signatures for quorum certificates,
-- timeout-driven `NEW_VIEW` fallback,
-- client-to-replica request/response flow.
-
-## Current Implementation Status
-Implemented:
-- Configuration parsing and validation (`config/config.properties`).
-- Universal `Dpch` envelope and serialization.
-- UDP transport stack:
-  - `FairLossLink`
-  - `StubbornLink`
-  - `PerfectLink`
-  - `HandshakedPerfectLink`
-  - `AuthenticatedLink`
-- Static key generation and key loading utilities.
-- Threshold key generation and loading.
-- Client and server entrypoints wired to the authenticated transport stack.
-- Basic HotStuff-style consensus with:
-  - `NEW_VIEW`
-  - `PREPARE`
-  - `PRE_COMMIT`
-  - `COMMIT`
-  - `DECIDE`
-- Threshold-signed quorum certificates.
-- Timeout-based view change fallback.
-- Append-only in-memory execution and client acknowledgements.
-- Unit and integration tests.
-
-Not implemented yet:
-- Tests.
-
-## System Assumptions
-- Static membership (`n`, `f`, and replica set fixed before startup).
-- PKI material is provisioned before execution.
-- Threshold key material is provisioned before execution.
-- Client library is trusted by the application.
-- A subset of replicas may be Byzantine.
-- UDP is the baseline transport; no TLS channels are used.
-- The current liveness mechanism is timeout-based and minimal.
-
-## Communication Stack
-```text
-+--------------------------------------------------+
-| Client / Server / Consensus Logic                |
-+--------------------------------------------------+
-| APL (Authenticated Perfect Links) - implemented  |
-+--------------------------------------------------+
-| HPL (Handshaked Perfect Link) - implemented      |
-+--------------------------------------------------+
-| PL (Perfect Link semantics) - implemented        |
-+--------------------------------------------------+
-| SL (Stubborn retransmission) - implemented       |
-+--------------------------------------------------+
-| FairLossLink over UDP - implemented              |
-+--------------------------------------------------+
-| UDP Datagram baseline                            |
-+--------------------------------------------------+
-```
-
-## Error Handling Policy
-The transport stack follows a simple and uniform error-handling policy:
-
-- Caller misuse or violated local preconditions raise exceptions (`IllegalArgumentException` or `IllegalStateException`).
-- Invalid or unauthentic packets received from the network are dropped silently by the protocol layer that detects them.
-- Real local failures inside a layer (for example, local send failures, serialization failures, cryptographic failures, or exhausted tracked retries) are propagated as exceptions instead of being silently ignored.
-
-In short:
-- caller error -> throw
-- invalid network input -> drop
-- real local layer failure -> throw
-
-## DPCH Wire Format
-```text
-DPCH Frame
-| magic_hi(1) | magic_lo(1) | version(1) | flags(1) | conn_id(8) | pkt_num(2) | payload(N) |
-```
-
-Field summary:
-- `magic_hi`, `magic_lo` (`2 bytes`): ASCII signature `DP`.
-- `version` (`1 byte`): frame version.
-- `flags` (`1 byte`): semantic bits (`DATA`, `ACK`, `SYN`, `FIN`) and combinations like `SYN|ACK`, `FIN|ACK`.
-- `conn_id` (`8 bytes`): logical connection identifier (`uint64`).
-- `pkt_num` (`2 bytes`): per-connection packet number (`uint16`).
-- `payload` (`N bytes`): remaining datagram bytes.
-
-## Repository Layout
-```text
-config/
-  config.properties
-  keys/                         # expected key hierarchy
-docs/
-  hot-stuff-paper.pdf
-  project.pdf
-src/
-  client/pt/ulisboa/depchain/client/
-    DpchClient.java
-    Main.java
-  populate/pt/ulisboa/depchain/populate/
-  server/pt/ulisboa/depchain/server/
-    DpchServer.java
-    Main.java
-    consensus/
-      Message.java
-      Node.java
-      QuorumCertificate.java
-      Replica.java
-      ViewChangeTimeoutException.java
-      threshold/
-        ThresholdSignatureExchange.java
-        ThresholdSignatureProtocol.java
-  shared/pt/ulisboa/depchain/shared/
-    config/
-    keys/
-    network/
-      dpch/
-      links/
-        authenticated/
-        fairloss/
-        handshaked/
-        perfect/
-        stubborn/
-    utils/
-  test/java/pt/ulisboa/depchain/
-pom.xml
-```
-
-Maven source mapping:
-- `main`: `src/server`, `src/client`, `src/populate`, `src/shared`
-- `test`: `src/test/java`
-
 ## Prerequisites
 - Java 21
 - Maven 3.9+
 
-Check Java:
-```powershell
-java -version
-```
-
 ## Configuration
 Main runtime configuration is in `config/config.properties`, including:
-- system parameters (`n`, `f`),
-- replica sender ids, endpoints, and key paths,
-- threshold public key and threshold private share paths per replica,
-- client sender id, settings, and request timeout,
-- timeout values.
+- system parameters (`system.n`, `system.f`),
+- replica ids, sender ids, hosts, consensus ports, and client ports,
+- replica static key paths (`publicKeyPath`, `privateKeyPath`),
+- replica threshold key material paths (`thresholdPublicKeyPath`, `thresholdPrivateSharePath`),
+- client identity and connectivity fields (`client.id`, `client.senderId`, `client.host`, `client.knownReplicas`),
+- client key paths (`client.publicKeyPath`, `client.privateKeyPath`),
+- client request timeout (`client.requestTimeoutMs`),
+- timeout values (`timeouts.viewChangeMs`, `timeouts.retransmitMs`, `timeouts.maxBackoffMs`).
+
+
+## Run Locally
+Always run `Populate` before starting replicas or clients locally, so the configured key files and threshold material exist.
 
 Before running:
 - ensure key files exist at configured paths,
 - ensure configured ports are free,
 - keep config consistent across all replicas.
 
-## Build and Test
-Build everything:
-```powershell
-mvn clean package
+Populate usage:
+```text
+Populate [configPath]
 ```
 
-Run unit tests:
-```powershell
-mvn test
-```
-
-Run unit + integration tests:
-```powershell
-mvn clean verify
-```
-
-## Run Locally
-Populate key files from config:
+Maven:
 ```powershell
 mvn exec:java@populate
+mvn exec:java@populate -Dexec.args="config/config.properties"
 ```
 
-Run one server replica:
-```powershell
-mvn exec:java@server -Dexec.args="server1 config/config.properties"
-```
-
-Run another replica:
-```powershell
-mvn exec:java@server -Dexec.args="server2 config/config.properties"
-```
-
-Run client:
-```powershell
-mvn exec:java@client -Dexec.args="server1 config/config.properties"
-```
-
-Client usage:
+Client entrypoint usage:
 ```text
 Main <targetReplicaId> <configPath>
 ```
 
-Server usage:
+Maven:
+```powershell
+mvn exec:java@client -Dexec.args="server1 config/config.properties"
+mvn exec:java@client -Dexec.args="server2 config/config.properties"
+```
+
+Server entrypoint usage:
 ```text
 Main <serverId> <configPath>
 ```
 
-## References
-1. HotStuff paper: <https://arxiv.org/pdf/1803.05069>
-2. Springer LNCS guidelines: <https://www.springer.com/gp/computer-science/lncs/conference-proceedings-guidelines>
-3. Threshold signatures library: <https://github.com/weavechain/threshold-sig>
+Maven:
+```powershell
+mvn exec:java@server -Dexec.args="server1 config/config.properties"
+mvn exec:java@server -Dexec.args="server2 config/config.properties"
+mvn exec:java@server -Dexec.args="server3 config/config.properties"
+mvn exec:java@server -Dexec.args="server4 config/config.properties"
+```
+
+## Integration Tests
+The integration tests run `Populate` internally for each scenario, so it does not need to be executed manually before `mvn verify`.
+They are also slow and timing-sensitive, so it may be necessary to increase some test timeouts depending on the machine.
+They are designed to succeed with the default `config/config.properties`.
+
+Maven:
+```powershell
+mvn verify "-Dit.test=SecTest"
+```
+
+The current suite covers:
+- normal execution through the initial leader (`server1` accepts 4 valid requests: proves the happy path works repeatedly),
+- forwarding from a non-leader replica (`server2` forwards to the leader and the request still succeeds: proves gateway-to-leader forwarding),
+- replay of the same signed client request (first delivery succeeds, 10 replays are ignored: proves deduplication by signed request id),
+- forged client signatures (no reply is produced; proves invalid client signatures are rejected),
+- crash of one follower (`server4` crashes and a request through `server2` still succeeds: proves progress with one crashed follower),
+- two Byzantine replicas sending invalid votes (`server3` and `server4` send invalid `PREPARE` votes and the client times out: proves the system cannot form a quorum once the number of dishonest voters exceeds the tolerated threshold).
