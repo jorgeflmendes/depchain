@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>pt.ulisboa.depchain</groupId>
   <artifactId>depchain</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
   <name>depchain</name>
 
   <properties>
@@ -110,6 +110,24 @@
             </goals>
             <configuration>
               <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
+            </configuration>
+          </execution>
+          <execution>
+            <id>server</id>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>pt.ulisboa.depchain.server.Main</mainClass>
+            </configuration>
+          </execution>
+          <execution>
+            <id>client</id>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>pt.ulisboa.depchain.client.Main</mainClass>
             </configuration>
           </execution>
         </executions>

@@ -1,13 +1,19 @@
-# DepChain (Highly Dependable Systems) - Stage 1
+# DepChain (Highly Dependable Systems)
 
 ## Overview
-DepChain is a permissioned blockchain project for the Highly Dependable Systems course.  
-This repository contains the Stage 1 networking and transport foundation used by client and server processes.
+DepChain is a permissioned blockchain project for the Highly Dependable Systems course.
 
-Stage 1 target scope:
-- Basic HotStuff consensus (Algorithm 2 from the HotStuff paper).
-- Client-to-replica request/response flow.
-- Append-only in-memory state machine for committed values.
+This repository now contains:
+- the UDP-based authenticated transport stack,
+- a basic HotStuff-style consensus flow,
+- threshold-signed quorum certificates,
+- a simple append-only in-memory state machine with client replies.
+
+Current scope:
+- `PREPARE -> PRE_COMMIT -> COMMIT -> DECIDE` happy-path consensus,
+- threshold signatures for quorum certificates,
+- timeout-driven `NEW_VIEW` fallback,
+- client-to-replica request/response flow.
 
 ## Current Implementation Status
 Implemented:
@@ -20,24 +26,35 @@ Implemented:
   - `HandshakedPerfectLink`
   - `AuthenticatedLink`
 - Static key generation and key loading utilities.
+- Threshold key generation and loading.
 - Client and server entrypoints wired to the authenticated transport stack.
-- Unit and integration test infrastructure.
+- Basic HotStuff-style consensus with:
+  - `NEW_VIEW`
+  - `PREPARE`
+  - `PRE_COMMIT`
+  - `COMMIT`
+  - `DECIDE`
+- Threshold-signed quorum certificates.
+- Timeout-based view change fallback.
+- Append-only in-memory execution and client acknowledgements.
+- Unit and integration tests.
 
 Not implemented yet:
-- Basic HotStuff consensus protocol logic.
-- Full append-only blockchain execution semantics.
+- Tests.
 
 ## System Assumptions
 - Static membership (`n`, `f`, and replica set fixed before startup).
 - PKI material is provisioned before execution.
+- Threshold key material is provisioned before execution.
 - Client library is trusted by the application.
 - A subset of replicas may be Byzantine.
-- UDP is the baseline transport; no TLS channels for Stage 1.
+- UDP is the baseline transport; no TLS channels are used.
+- The current liveness mechanism is timeout-based and minimal.
 
 ## Communication Stack
 ```text
 +--------------------------------------------------+
-| Application / Consensus Logic                    |
+| Client / Server / Consensus Logic                |
 +--------------------------------------------------+
 | APL (Authenticated Perfect Links) - implemented  |
 +--------------------------------------------------+
@@ -83,11 +100,27 @@ Field summary:
 ```text
 config/
   config.properties
-  keys/                         # expected key hierarchy (not fully versioned)
+  keys/                         # expected key hierarchy
+docs/
+  hot-stuff-paper.pdf
+  project.pdf
 src/
   client/pt/ulisboa/depchain/client/
+    DpchClient.java
+    Main.java
   populate/pt/ulisboa/depchain/populate/
   server/pt/ulisboa/depchain/server/
+    DpchServer.java
+    Main.java
+    consensus/
+      Message.java
+      Node.java
+      QuorumCertificate.java
+      Replica.java
+      ViewChangeTimeoutException.java
+      threshold/
+        ThresholdSignatureExchange.java
+        ThresholdSignatureProtocol.java
   shared/pt/ulisboa/depchain/shared/
     config/
     keys/
@@ -101,9 +134,6 @@ src/
         stubborn/
     utils/
   test/java/pt/ulisboa/depchain/
-docs/
-  project.pdf
-  hot-stuff-paper.pdf
 pom.xml
 ```
 
@@ -122,8 +152,9 @@ java -version
 
 ## Configuration
 Main runtime configuration is in `config/config.properties`, including:
-- system parameters (`n`, `f`, leader election, base view),
+- system parameters (`n`, `f`),
 - replica sender ids, endpoints, and key paths,
+- threshold public key and threshold private share paths per replica,
 - client sender id, settings, and request timeout,
 - timeout values.
 
@@ -138,40 +169,35 @@ Build everything:
 mvn clean package
 ```
 
-Run unit tests (excludes `integration` tag):
+Run unit tests:
 ```powershell
 mvn test
 ```
 
-Run integration tests (includes only `integration` tag):
+Run unit + integration tests:
 ```powershell
-mvn verify
+mvn clean verify
 ```
 
 ## Run Locally
-Compile classes:
+Populate key files from config:
 ```powershell
-mvn -DskipTests package
+mvn exec:java@populate
 ```
 
 Run one server replica:
 ```powershell
-java -cp target/classes pt.ulisboa.depchain.server.Main server1 config/config.properties
+mvn exec:java@server -Dexec.args="server1 config/config.properties"
 ```
 
 Run another replica:
 ```powershell
-java -cp target/classes pt.ulisboa.depchain.server.Main server2 config/config.properties
+mvn exec:java@server -Dexec.args="server2 config/config.properties"
 ```
 
 Run client:
 ```powershell
-java -cp target/classes pt.ulisboa.depchain.client.Main server1 config/config.properties
-```
-
-Populate key files from config:
-```powershell
-mvn exec:java@populate
+mvn exec:java@client -Dexec.args="server1 config/config.properties"
 ```
 
 Client usage:
@@ -184,14 +210,7 @@ Server usage:
 Main <serverId> <configPath>
 ```
 
-## Suggested Next Steps
-1. Implement Basic HotStuff happy path (`prepare -> pre-commit -> commit -> decide`).
-2. Add timeout-driven view change behavior.
-3. Add Byzantine protections (signature/QC checks, equivocation handling).
-4. Integrate append-only state machine execution with client acknowledgements.
-5. Expand fault-injection and adversarial integration tests.
-
 ## References
 1. HotStuff paper: <https://arxiv.org/pdf/1803.05069>
 2. Springer LNCS guidelines: <https://www.springer.com/gp/computer-science/lncs/conference-proceedings-guidelines>
-3. Threshold signatures (optional): <https://github.com/weavechain/threshold-sig>
+3. Threshold signatures library: <https://github.com/weavechain/threshold-sig>
