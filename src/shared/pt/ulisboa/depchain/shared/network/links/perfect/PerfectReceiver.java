@@ -39,7 +39,7 @@ final class PerfectReceiver {
         if (!context.running.get()) {
           break;
         }
-        logger.error("PerfectLink worker error: " + exception.getMessage());
+        logger.debug("PerfectLink worker error: " + exception.getMessage());
       }
     }
   }

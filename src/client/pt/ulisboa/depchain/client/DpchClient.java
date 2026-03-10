@@ -18,6 +18,7 @@ import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public final class DpchClient {
   private static final Logger logger = new Logger("DpchClient");
@@ -109,9 +110,24 @@ public final class DpchClient {
   private InboundPacket receiveNextInbound(AuthenticatedLink transport) {
     try {
       if (requestTimeoutMs == 0L) {
-        return transport.receive();
+        while (true) {
+          InboundPacket inbound = transport.receive();
+          if (inbound != null) {
+            return inbound;
+          }
+        }
       }
-      return transport.receive(requestTimeoutMs);
+
+      long deadlineMs = TimeUtil.deadlineAfterNow(requestTimeoutMs);
+      while (!TimeUtil.hasTimedOut(deadlineMs)) {
+        long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
+        InboundPacket inbound = transport.receive(remainingMs);
+        if (inbound != null) {
+          return inbound;
+        }
+      }
+
+      return null;
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
       return null;

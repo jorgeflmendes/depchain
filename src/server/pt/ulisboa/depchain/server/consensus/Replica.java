@@ -32,6 +32,7 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class Replica {
   private static final String CLIENT_COMMAND_PREFIX = "client|";
+  private static final long NO_OP_DELAY_MS = 100L;
 
   private ConfigParser config;
   private PublicKey clientPublicKey;
@@ -105,7 +106,7 @@ public class Replica {
   }
 
   public void run() {
-    logger.info("[Replica " + id + "] starting at view " + viewNumber);
+    logger.info("Starting at view " + viewNumber);
 
     // Initial view change to start the protocol.
     sendToLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, Node.GENESIS_NODE, prepareQC));
@@ -162,6 +163,9 @@ public class Replica {
 
       // Propose extending the highest QC node with a new command (if any commands).
       String cmd = pollNextCommand();
+      if ("no-op".equals(cmd)) {
+        waitBeforeNoOpProposal();
+      }
       currentProposal = createLeaf(highQC.getNode().getThisHash(), cmd);
 
       // Broadcast the prepare proposal carrying the chosen high QC.
@@ -241,7 +245,9 @@ public class Replica {
     String requestKey = requestKey(internalCommand);
     String clientCommand = clientCommand(internalCommand);
 
-    logger.info("[Replica " + id + "] Executing command: " + clientCommand);
+    if (!"no-op".equals(clientCommand)) {
+      logger.info("Executing command: " + clientCommand);
+    }
     blockTree.put(node.getThisHash(), node);
     completedRequestKeys.add(requestKey);
     pendingForwardedRequests.remove(requestKey);
@@ -250,12 +256,12 @@ public class Replica {
     if (key != null && clientTransport != null) {
       try {
         // Send a response to the client and close the connection.
-        byte[] response = ("Received " + clientCommand).getBytes(StandardCharsets.UTF_8);
+        byte[] response = ("Success: " + clientCommand).getBytes(StandardCharsets.UTF_8);
         clientTransport.send(key.connectionId(), response, key.endpoint());
         clientTransport.closeConnection(key.connectionId(), key.endpoint());
-        logger.info("[Replica " + id + "] Connection " + key.connectionId() + " closed for client " + key.endpoint());
+        logger.info("Connection " + key.connectionId() + " closed for client " + key.endpoint());
       } catch (Exception e) {
-        logger.error("[Replica " + id + "] Error closing client connection: " + e.getMessage());
+        logger.error("Error closing client connection: " + e.getMessage());
       }
     }
   }
@@ -269,7 +275,7 @@ public class Replica {
         InetSocketAddress addr = new InetSocketAddress(peerHost, peer.consensusPort());
         nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
       } catch (Exception e) {
-        logger.error("[Replica " + id + "] Error in broadcast to " + peer.id() + ": " + e.getMessage());
+        logger.error("Error in broadcast to " + peer.id() + ": " + e.getMessage());
       }
     }
   }
@@ -292,10 +298,10 @@ public class Replica {
         byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
         nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
       } else {
-        logger.error("[Replica " + id + "] Error finding leader config for view " + viewNumber);
+        logger.error("Error finding leader config for view " + viewNumber);
       }
     } catch (Exception e) {
-      logger.error("[Replica " + id + "] Error sending message to leader: " + e.getMessage());
+      logger.error("Error sending message to leader: " + e.getMessage());
     }
   }
 
@@ -438,6 +444,15 @@ public class Replica {
     }
 
     return "no-op";
+  }
+
+  private void waitBeforeNoOpProposal() {
+    try {
+      // Cpu saver, slow down empty rounds so leaders do not rotate at full speed while idle.
+      TimeUnit.MILLISECONDS.sleep(NO_OP_DELAY_MS);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   private void forwardClientRequestToLeader(String encodedRequest) {

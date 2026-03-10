@@ -63,7 +63,7 @@ class SecTest {
         byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
         assertTrue(response != null, "Client request should receive a response");
-        assertEquals("Received " + value, SerializationUtil.decodeString(response.packet().payload()));
+        assertEquals("Success: " + value, SerializationUtil.decodeString(response.packet().payload()));
       }
     } finally {
       stopProcesses(servers);
@@ -85,7 +85,7 @@ class SecTest {
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(20));
       assertTrue(response != null, "Forwarded client request should receive a response");
-      assertEquals("Received forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
+      assertEquals("Success: forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
     } finally {
       stopProcesses(servers);
     }
@@ -106,7 +106,7 @@ class SecTest {
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket firstResponse = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(10));
       assertTrue(firstResponse != null, "Initial client request should receive a response");
-      assertEquals("Received replayed-test", SerializationUtil.decodeString(firstResponse.packet().payload()));
+      assertEquals("Success: replayed-test", SerializationUtil.decodeString(firstResponse.packet().payload()));
 
       // Replaying the exact same signed request should be ignored by deduplication.
       for (int i = 0; i < 10; i++) {
@@ -153,7 +153,7 @@ class SecTest {
         byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
         assertTrue(response != null, "Client request should still receive a response with one Byzantine invalid vote");
-        assertEquals("Received one-byzantine-test", SerializationUtil.decodeString(response.packet().payload()));
+        assertEquals("Success: one-byzantine-test", SerializationUtil.decodeString(response.packet().payload()));
         assertTrue(byzantineReplica3.invalidVotesSent() > 0, "Byzantine replica server3 did not send any invalid vote");
       }
     } finally {

@@ -35,7 +35,7 @@ Populate [configPath]
 Maven:
 ```powershell
 mvn exec:java@populate
-mvn exec:java@populate -Dexec.args="config/config.properties"
+mvn exec:java@populate "-Dexec.args=config/config.properties"
 ```
 
 Client entrypoint usage:
@@ -45,8 +45,8 @@ Main <targetReplicaId> <configPath>
 
 Maven:
 ```powershell
-mvn exec:java@client -Dexec.args="server1 config/config.properties"
-mvn exec:java@client -Dexec.args="server2 config/config.properties"
+mvn exec:java@client "-Dexec.args=server1 config/config.properties"
+mvn exec:java@client "-Dexec.args=server2 config/config.properties"
 ```
 
 Server entrypoint usage:
@@ -56,10 +56,10 @@ Main <serverId> <configPath>
 
 Maven:
 ```powershell
-mvn exec:java@server -Dexec.args="server1 config/config.properties"
-mvn exec:java@server -Dexec.args="server2 config/config.properties"
-mvn exec:java@server -Dexec.args="server3 config/config.properties"
-mvn exec:java@server -Dexec.args="server4 config/config.properties"
+mvn exec:java@server "-Dexec.args=server1 config/config.properties"
+mvn exec:java@server "-Dexec.args=server2 config/config.properties"
+mvn exec:java@server "-Dexec.args=server3 config/config.properties"
+mvn exec:java@server "-Dexec.args=server4 config/config.properties"
 ```
 
 ## Integration Tests
