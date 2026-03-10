@@ -18,7 +18,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
   public record ClientSection(String id, long senderId, String host, String publicKeyPath, String privateKeyPath, int requestTimeoutMs, List<String> knownReplicas) {
   }
 
-  public record TimeoutsSection(int viewChangeMs, int retransmitMs, int maxBackoffMs) {
+  public record TimeoutsSection(int viewChangeMs) {
   }
 
   public ReplicaSection requireReplica(String replicaId) {
@@ -80,13 +80,11 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
   private static ClientSection readClient(PropertyReader reader) {
     return new ClientSection(reader.str("client.id"), ValidationUtils.requireNonNegativeLong(Long.parseLong(reader.str("client.senderId")), "client.senderId"),
         reader.str("client.host"), reader.str("client.publicKeyPath"), reader.str("client.privateKeyPath"),
-        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("client.requestTimeoutMs")), "client.requestTimeoutMs"), reader.list("client.knownReplicas"));
+        ValidationUtils.requireNonNegativeInt(Integer.parseInt(reader.str("client.requestTimeoutMs")), "client.requestTimeoutMs"), reader.list("client.knownReplicas"));
   }
 
   private static TimeoutsSection readTimeouts(PropertyReader reader) {
-    return new TimeoutsSection(ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.viewChangeMs")), "timeouts.viewChangeMs"),
-        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.retransmitMs")), "timeouts.retransmitMs"),
-        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.maxBackoffMs")), "timeouts.maxBackoffMs"));
+    return new TimeoutsSection(ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.viewChangeMs")), "timeouts.viewChangeMs"));
   }
 
   // Helper class to read and validate properties from the config file.
@@ -146,7 +144,5 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
         throw new IllegalArgumentException("Duplicate id '%s' in client.knownReplicas".formatted(replicaId));
       }
     }
-
-    ValidationUtils.requireAtLeast(timeouts.maxBackoffMs(), timeouts.retransmitMs(), "maxBackoffMs", "retransmitMs");
   }
 }

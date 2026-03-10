@@ -40,6 +40,7 @@ import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 @Tag("integration")
 class SecTest {
   private static final List<String> REPLICA_IDS = List.of("server1", "server2", "server3", "server4");
+  private static final List<String> HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS = List.of("server1", "server2", "server4");
   private static final List<String> HONEST_REPLICA_IDS = List.of("server1", "server2");
 
   private record ProcessResult(int exitCode, String output) {
@@ -62,7 +63,7 @@ class SecTest {
         byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
         assertTrue(response != null, "Client request should receive a response");
-        assertEquals("Received " + value, SerializationUtil.decodeString(response.packet().payload()));
+        assertEquals("Success: " + value, SerializationUtil.decodeString(response.packet().payload()));
       }
     } finally {
       stopProcesses(servers);
@@ -84,7 +85,7 @@ class SecTest {
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(20));
       assertTrue(response != null, "Forwarded client request should receive a response");
-      assertEquals("Received forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
+      assertEquals("Success: forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
     } finally {
       stopProcesses(servers);
     }
@@ -105,7 +106,7 @@ class SecTest {
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket firstResponse = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(10));
       assertTrue(firstResponse != null, "Initial client request should receive a response");
-      assertEquals("Received replayed-test", SerializationUtil.decodeString(firstResponse.packet().payload()));
+      assertEquals("Success: replayed-test", SerializationUtil.decodeString(firstResponse.packet().payload()));
 
       // Replaying the exact same signed request should be ignored by deduplication.
       for (int i = 0; i < 10; i++) {
@@ -135,23 +136,26 @@ class SecTest {
     }
   }
 
+
   @Test
   @Timeout(60)
-  void replicaCrashTest() throws Exception {
+  void oneByzantineReplicaInvalidVoteTest() throws Exception {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(List.of("server1", "server2", "server3"), configPath);
+    List<Process> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      // Simulate one crashed replica by leaving server4 down for the whole scenario.
-      waitForServersStartup(Duration.ofSeconds(3));
+      try (ByzantineReplicaHandle byzantineReplica3 = new ByzantineReplicaHandle(configPath, "server3")) {
+        waitForServersStartup(Duration.ofSeconds(5));
 
-      // A non-leader should still forward the request to a live leader despite one crashed follower.
-      ClientRequest request = signedRequest(configPath, "crash-test");
-      byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
-      InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(20));
-      assertTrue(response != null, "Client request should receive a response despite one crashed follower");
-      assertEquals("Received crash-test", SerializationUtil.decodeString(response.packet().payload()));
+        // With only one Byzantine invalid voter, the honest replicas should still complete the request.
+        ClientRequest request = signedRequest(configPath, "one-byzantine-test");
+        byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+        InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
+        assertTrue(response != null, "Client request should still receive a response with one Byzantine invalid vote");
+        assertEquals("Success: one-byzantine-test", SerializationUtil.decodeString(response.packet().payload()));
+        assertTrue(byzantineReplica3.invalidVotesSent() > 0, "Byzantine replica server3 did not send any invalid vote");
+      }
     } finally {
       stopProcesses(servers);
     }

@@ -18,6 +18,7 @@ import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public final class DpchClient {
   private static final Logger logger = new Logger("DpchClient");
@@ -26,6 +27,7 @@ public final class DpchClient {
   private final long localSenderId;
   private final PrivateKey localStaticSKey;
   private final Map<Long, PublicKey> staticPKeys;
+  private final long requestTimeoutMs;
 
   public DpchClient(String targetReplicaId, String configPath) throws Exception {
     ConfigParser config = ConfigParser.load(Path.of(configPath));
@@ -33,6 +35,7 @@ public final class DpchClient {
     this.localSenderId = config.client().senderId();
     this.localStaticSKey = PrivateKeyLoader.loadClientPrivateKey(config);
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(config);
+    this.requestTimeoutMs = config.client().requestTimeoutMs();
   }
 
   public void run() {
@@ -54,6 +57,10 @@ public final class DpchClient {
 
       try {
         String response = sendAppendRequest(input);
+        if (response == null) {
+          logger.print("Request timed out.");
+          continue;
+        }
         logger.print("response = " + response);
       } catch (Exception exception) {
         logger.error("Error appending value through the server " + targetReplicaConfig.id() + ": " + exception.getMessage());
@@ -83,7 +90,7 @@ public final class DpchClient {
       while (true) {
         InboundPacket inbound = receiveNextInbound(transport);
         if (inbound == null) {
-          continue;
+          return null;
         }
 
         String reply = handleReply(inbound.packet(), connectionId);
@@ -102,7 +109,25 @@ public final class DpchClient {
 
   private InboundPacket receiveNextInbound(AuthenticatedLink transport) {
     try {
-      return transport.receive();
+      if (requestTimeoutMs == 0L) {
+        while (true) {
+          InboundPacket inbound = transport.receive();
+          if (inbound != null) {
+            return inbound;
+          }
+        }
+      }
+
+      long deadlineMs = TimeUtil.deadlineAfterNow(requestTimeoutMs);
+      while (!TimeUtil.hasTimedOut(deadlineMs)) {
+        long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
+        InboundPacket inbound = transport.receive(remainingMs);
+        if (inbound != null) {
+          return inbound;
+        }
+      }
+
+      return null;
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
       return null;

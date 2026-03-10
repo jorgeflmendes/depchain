@@ -15,8 +15,8 @@ Main runtime configuration is in `config/config.properties`, including:
 - replica threshold key material paths (`thresholdPublicKeyPath`, `thresholdPrivateSharePath`),
 - client identity and connectivity fields (`client.id`, `client.senderId`, `client.host`, `client.knownReplicas`),
 - client key paths (`client.publicKeyPath`, `client.privateKeyPath`),
-- client request timeout (`client.requestTimeoutMs`),
-- timeout values (`timeouts.viewChangeMs`, `timeouts.retransmitMs`, `timeouts.maxBackoffMs`).
+- client request timeout (`client.requestTimeoutMs`, where `0` means no timeout),
+- view change timeout (`timeouts.viewChangeMs`).
 
 
 ## Run Locally
@@ -35,7 +35,7 @@ Populate [configPath]
 Maven:
 ```powershell
 mvn exec:java@populate
-mvn exec:java@populate -Dexec.args="config/config.properties"
+mvn exec:java@populate "-Dexec.args=config/config.properties"
 ```
 
 Client entrypoint usage:
@@ -45,8 +45,8 @@ Main <targetReplicaId> <configPath>
 
 Maven:
 ```powershell
-mvn exec:java@client -Dexec.args="server1 config/config.properties"
-mvn exec:java@client -Dexec.args="server2 config/config.properties"
+mvn exec:java@client "-Dexec.args=server1 config/config.properties"
+mvn exec:java@client "-Dexec.args=server2 config/config.properties"
 ```
 
 Server entrypoint usage:
@@ -56,10 +56,10 @@ Main <serverId> <configPath>
 
 Maven:
 ```powershell
-mvn exec:java@server -Dexec.args="server1 config/config.properties"
-mvn exec:java@server -Dexec.args="server2 config/config.properties"
-mvn exec:java@server -Dexec.args="server3 config/config.properties"
-mvn exec:java@server -Dexec.args="server4 config/config.properties"
+mvn exec:java@server "-Dexec.args=server1 config/config.properties"
+mvn exec:java@server "-Dexec.args=server2 config/config.properties"
+mvn exec:java@server "-Dexec.args=server3 config/config.properties"
+mvn exec:java@server "-Dexec.args=server4 config/config.properties"
 ```
 
 ## Integration Tests
@@ -77,5 +77,5 @@ The current suite covers:
 - forwarding from a non-leader replica (`server2` forwards to the leader and the request still succeeds: proves gateway-to-leader forwarding),
 - replay of the same signed client request (first delivery succeeds, 10 replays are ignored: proves deduplication by signed request id),
 - forged client signatures (no reply is produced; proves invalid client signatures are rejected),
-- crash of one follower (`server4` crashes and a request through `server2` still succeeds: proves progress with one crashed follower),
+- one Byzantine replica sending an invalid vote (`server3` sends an invalid `PREPARE` vote and the request still succeeds: proves one invalid voter does not prevent progress),
 - two Byzantine replicas sending invalid votes (`server3` and `server4` send invalid `PREPARE` votes and the client times out: proves the system cannot form a quorum once the number of dishonest voters exceeds the tolerated threshold).
