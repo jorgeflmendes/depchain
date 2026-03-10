@@ -28,7 +28,7 @@
     <dependency>
       <groupId>com.weavechain</groupId>
       <artifactId>curve25519-elisabeth</artifactId>
-      <version>[0,)</version> 
+      <version>0.1.5</version>
     </dependency>
   </dependencies>
 
