@@ -125,6 +125,9 @@
               <include>src/**/*.java</include>
               <include>src/test/**/*.java</include>
             </includes>
+            <importOrder>
+              <order>java,javax,org,com,pt,</order>
+            </importOrder>
             <removeUnusedImports />
             <eclipse>
               <file>${project.basedir}/eclipse-java-formatter.xml</file>

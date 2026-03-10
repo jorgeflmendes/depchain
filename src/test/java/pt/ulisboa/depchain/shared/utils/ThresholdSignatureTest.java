@@ -10,11 +10,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+
 import org.junit.jupiter.api.Test;
-import pt.ulisboa.depchain.server.Message;
-import pt.ulisboa.depchain.server.Node;
-import pt.ulisboa.depchain.server.QuorumCertificate;
-import pt.ulisboa.depchain.server.Message.MessageType;
+
+import pt.ulisboa.depchain.server.consensus.Message;
+import pt.ulisboa.depchain.server.consensus.Message.MessageType;
+import pt.ulisboa.depchain.server.consensus.Node;
+import pt.ulisboa.depchain.server.consensus.QuorumCertificate;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdConfig;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdNonceShare;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdPartialSignContext;

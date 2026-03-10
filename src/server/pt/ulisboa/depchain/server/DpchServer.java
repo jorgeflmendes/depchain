@@ -12,6 +12,8 @@ import java.util.concurrent.Executors;
 
 import com.weavechain.curve25519.Scalar;
 
+import pt.ulisboa.depchain.server.consensus.Message;
+import pt.ulisboa.depchain.server.consensus.Replica;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -51,14 +53,19 @@ public final class DpchServer {
       System.out.printf("Replica %s client listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       System.out.printf("Replica %s node listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
 
+      // Set up the replica with the transports and start the hotstuff loop
       this.replica.initNetwork(nodeTransport, clientTransport);
-
       workers.submit(() -> this.replica.run());
+
+      // New thread for handling messages from other replicas
       workers.submit(() -> runNodeLoop(nodeTransport, workers));
+
+      // This thread will handle client requests
       runClientLoop(clientTransport, workers);
     }
   }
 
+  // Loop for handling messages from clients
   private void runClientLoop(AuthenticatedLink transport, ExecutorService workers) {
     while (true) {
       InboundPacket request = receiveNextInbound(transport);
@@ -70,6 +77,7 @@ public final class DpchServer {
     }
   }
 
+  // Loop for handling messages from other replicas
   private void runNodeLoop(AuthenticatedLink transport, ExecutorService workers) {
     while (true) {
       InboundPacket request = receiveNextInbound(transport);
@@ -81,6 +89,7 @@ public final class DpchServer {
     }
   }
 
+  // Receives the next inbound packet
   private InboundPacket receiveNextInbound(AuthenticatedLink transport) {
     try {
       return transport.receive();
@@ -90,6 +99,7 @@ public final class DpchServer {
     }
   }
 
+  // Handles messages from clients
   private void handleClientRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
     System.out.printf("Client request from %s%n", sender);
@@ -105,6 +115,7 @@ public final class DpchServer {
     }
   }
 
+  // Handles messages from other replicas
   private void handleNodeRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
     try {
       Message msg = SerializationUtil.decodeMessage(inbound.payload());

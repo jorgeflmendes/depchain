@@ -7,6 +7,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ThreadLocalRandom;
+
 import org.junit.jupiter.api.Test;
 
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;

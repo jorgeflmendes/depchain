@@ -1,11 +1,11 @@
 package pt.ulisboa.depchain.shared.config;
 
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts) {
   public record SystemSection(int n, int f) {
@@ -23,6 +23,12 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
   public ReplicaSection requireReplica(String replicaId) {
     return replicas.stream().filter(r -> r.id().equals(replicaId)).findFirst().orElseThrow(() -> new IllegalArgumentException("Replica '%s' not found".formatted(replicaId)));
+  }
+
+  public ReplicaSection requireReplicaBySenderId(int senderId) {
+    ValidationUtils.requireNonNegativeInt(senderId, "senderId");
+
+    return replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown replica senderId: " + senderId));
   }
 
   public ReplicaSection firstKnownReplicaForClient() {

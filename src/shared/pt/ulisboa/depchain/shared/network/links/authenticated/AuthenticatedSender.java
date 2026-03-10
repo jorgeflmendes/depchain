@@ -6,8 +6,8 @@ import java.net.InetSocketAddress;
 import java.security.KeyPair;
 import java.util.Queue;
 
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
+import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class AuthenticatedSender {

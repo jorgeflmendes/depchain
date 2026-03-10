@@ -8,9 +8,10 @@ import com.weavechain.curve25519.EdwardsPoint;
 import com.weavechain.curve25519.InvalidEncodingException;
 import com.weavechain.curve25519.Scalar;
 
-import pt.ulisboa.depchain.server.Node;
-import pt.ulisboa.depchain.server.Message;
-import pt.ulisboa.depchain.server.QuorumCertificate;
+import pt.ulisboa.depchain.server.consensus.Message;
+import pt.ulisboa.depchain.server.consensus.Message.MessageType;
+import pt.ulisboa.depchain.server.consensus.Node;
+import pt.ulisboa.depchain.server.consensus.QuorumCertificate;
 
 public final class SerializationUtil {
   private static final byte FLAG_NULL = 0;
@@ -25,6 +26,18 @@ public final class SerializationUtil {
   public static String decodeString(byte[] payload) {
     ValidationUtils.requireNonNull(payload, "payload");
     return new String(payload, StandardCharsets.UTF_8);
+  }
+
+  public static byte[] encodeVotePayload(MessageType type, int viewNumber, Node node) {
+    ValidationUtils.requireNonNull(type, "type");
+    ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
+
+    String nodeHash = "null";
+    if (node != null) {
+      nodeHash = node.getThisHash();
+    }
+
+    return encodeString(type.name() + "|" + viewNumber + "|" + nodeHash);
   }
 
   public static EdwardsPoint decodeCommitment(byte[] commitment) throws InvalidEncodingException {

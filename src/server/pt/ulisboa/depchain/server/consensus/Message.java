@@ -1,22 +1,27 @@
-package pt.ulisboa.depchain.server;
+package pt.ulisboa.depchain.server.consensus;
 
 import java.util.Arrays;
 
 public class Message {
+  // Hotstuff message types.
   public enum MessageType {
     NEW_VIEW, PREPARE, PRE_COMMIT, COMMIT, DECIDE
   }
 
+  // Threshold signature payload types.
   public enum ThresholdPayloadType {
     HOTSTUFF, SIGNATURE_SHARE, SIGNATURE_COMMITMENT, SIGNATURE_CONTEXT
   }
 
+  // Hotstuff things.
   private int currView;
   private int senderId;
   private MessageType type;
   private Node node;
   private QuorumCertificate justify;
-  private ThresholdPayloadType thresholdPayloadType;
+
+  // Threshold signature things.
+  private ThresholdPayloadType thresholdPayloadType; // It can be nothing (hotstuff stuff), a signature share, a commitment, or the full context.
   private byte[] signature;
   private byte[] partialCommitment;
   private byte[] aggregatedCommitment;
@@ -64,6 +69,7 @@ public class Message {
       participantIndexes = null;
       return;
     }
+
     thresholdPayloadType = ThresholdPayloadType.SIGNATURE_SHARE;
     signature = Arrays.copyOf(sig, sig.length);
     partialCommitment = null;
@@ -75,6 +81,7 @@ public class Message {
     if (getThresholdPayloadType() == ThresholdPayloadType.SIGNATURE_SHARE) {
       return Arrays.copyOf(signature, signature.length);
     }
+
     return null;
   }
 
@@ -87,6 +94,7 @@ public class Message {
       participantIndexes = null;
       return;
     }
+
     thresholdPayloadType = ThresholdPayloadType.SIGNATURE_COMMITMENT;
     signature = null;
     partialCommitment = Arrays.copyOf(commitment, commitment.length);
@@ -98,6 +106,7 @@ public class Message {
     if (getThresholdPayloadType() == ThresholdPayloadType.SIGNATURE_COMMITMENT) {
       return Arrays.copyOf(partialCommitment, partialCommitment.length);
     }
+
     return null;
   }
 
@@ -110,9 +119,11 @@ public class Message {
       this.participantIndexes = null;
       return;
     }
+
     if (aggregatedCommitment == null || participantIndexes == null) {
       throw new IllegalArgumentException("Threshold context requires both aggregatedCommitment and participantIndexes");
     }
+
     thresholdPayloadType = ThresholdPayloadType.SIGNATURE_CONTEXT;
     signature = null;
     partialCommitment = null;
@@ -124,6 +135,7 @@ public class Message {
     if (getThresholdPayloadType() == ThresholdPayloadType.SIGNATURE_CONTEXT) {
       return Arrays.copyOf(aggregatedCommitment, aggregatedCommitment.length);
     }
+
     return null;
   }
 
@@ -131,6 +143,7 @@ public class Message {
     if (getThresholdPayloadType() == ThresholdPayloadType.SIGNATURE_CONTEXT) {
       return Arrays.copyOf(participantIndexes, participantIndexes.length);
     }
+
     return null;
   }
 }

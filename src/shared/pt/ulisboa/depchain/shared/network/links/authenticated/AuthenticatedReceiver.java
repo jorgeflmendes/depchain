@@ -9,10 +9,10 @@ import java.security.PublicKey;
 import javax.crypto.SecretKey;
 
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
-import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedEcdsaPayload;
-import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedHmacPayload;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedEcdsaPayload;
+import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedHmacPayload;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
