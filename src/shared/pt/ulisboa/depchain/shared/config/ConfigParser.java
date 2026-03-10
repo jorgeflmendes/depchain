@@ -39,6 +39,8 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     return requireReplica(client.knownReplicas().getFirst());
   }
 
+  // Loads the config from a properties file, validating all required properties and their
+  // consistency.
   public static ConfigParser load(Path path) throws IOException {
     ValidationUtils.requireNonNull(path, "path");
 
@@ -87,6 +89,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
         ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.maxBackoffMs")), "timeouts.maxBackoffMs"));
   }
 
+  // Helper class to read and validate properties from the config file.
   private record PropertyReader(Properties props, Path path) {
     String str(String key) {
       String rawValue = props.getProperty(key);
@@ -131,6 +134,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     if (senderIds.contains(client.senderId())) {
       throw new IllegalArgumentException("client.senderId conflicts with replica");
     }
+
     ValidationUtils.requireNonEmpty(client.knownReplicas(), "client.knownReplicas");
 
     Set<String> seenKnownReplicas = new HashSet<>();

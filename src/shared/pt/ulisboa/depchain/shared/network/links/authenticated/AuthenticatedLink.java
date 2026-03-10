@@ -30,6 +30,7 @@ public class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
   public static AuthenticatedLink bind(InetSocketAddress bindEndpoint, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) throws IOException {
     ValidationUtils.requireAllNonNull(named("bindEndpoint", bindEndpoint), named("localStaticSKey", localStaticSKey), named("staticPKeys", staticPKeys));
+
     HandshakedPerfectLink handshaked = HandshakedPerfectLink.bind(bindEndpoint);
     return new AuthenticatedLink(handshaked, localSenderId, localStaticSKey, staticPKeys);
   }
@@ -40,6 +41,7 @@ public class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
   public static AuthenticatedLink unbound(long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) throws IOException {
     ValidationUtils.requireAllNonNull(named("localStaticSKey", localStaticSKey), named("staticPKeys", staticPKeys));
+
     HandshakedPerfectLink handshaked = HandshakedPerfectLink.unbound();
     return new AuthenticatedLink(handshaked, localSenderId, localStaticSKey, staticPKeys);
   }

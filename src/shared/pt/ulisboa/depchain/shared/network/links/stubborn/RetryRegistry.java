@@ -9,13 +9,12 @@ import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedTargetKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class RetryRegistry {
   record ScheduledRetry(TrackedTargetKey target, long dueAtMs) {
     ScheduledRetry {
-      if (dueAtMs < 0L) {
-        throw new IllegalArgumentException("dueAtMs must be non-negative");
-      }
+      ValidationUtils.requireNonNegativeLong(dueAtMs, "dueAtMs");
     }
   }
 

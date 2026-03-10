@@ -16,14 +16,17 @@ import pt.ulisboa.depchain.server.consensus.Replica;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
+import pt.ulisboa.depchain.shared.logging.Logger;
+import pt.ulisboa.depchain.shared.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.network.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 
 public final class DpchServer {
+  private static final Logger logger = new Logger("DpchServer");
+
   private final ConfigParser configParser;
   private final ConfigParser.ReplicaSection replicaConfig;
   private final PrivateKey localStaticSKey;
@@ -50,8 +53,8 @@ public final class DpchServer {
         AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);
         AuthenticatedLink nodeTransport = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys)) {
 
-      System.out.printf("Replica %s client listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
-      System.out.printf("Replica %s node listener: %s:%d%n", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
+      logger.info("Replica " + replicaConfig.id() + " client listener: " + replicaConfig.host() + ":" + replicaConfig.clientPort());
+      logger.info("Replica " + replicaConfig.id() + " node listener: " + replicaConfig.host() + ":" + replicaConfig.consensusPort());
 
       // Set up the replica with the transports and start the hotstuff loop
       this.replica.initNetwork(nodeTransport, clientTransport);
@@ -102,16 +105,15 @@ public final class DpchServer {
   // Handles messages from clients
   private void handleClientRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
-    System.out.printf("Client request from %s%n", sender);
+    logger.info("Client request from " + sender);
 
     try {
       ClientRequest request = SerializationUtil.decodeClientRequestBytes(inbound.payload());
       ConnectionKey key = new ConnectionKey(sender, inbound.connectionId());
       this.replica.receiveClientCommand(request, key);
-      // TODO: Optionally, send to the client "Request received and being processed";
 
     } catch (RuntimeException exception) {
-      System.out.printf("Client request error from %s: %s%n", senderText, exception.getMessage());
+      logger.error("Client request error from " + senderText + ": " + exception.getMessage());
     }
   }
 
@@ -121,7 +123,7 @@ public final class DpchServer {
       Message msg = SerializationUtil.decodeReplicaMessage(inbound.payload());
       this.replica.receiveMessage(msg);
     } catch (Exception e) {
-      System.err.printf("Error handling node message from %s: %s%n", sender, e.getMessage());
+      logger.error("Error handling node message from " + sender + ": " + e.getMessage());
     }
   }
 }

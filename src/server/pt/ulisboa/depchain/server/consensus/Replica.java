@@ -23,8 +23,9 @@ import com.weavechain.curve25519.Scalar;
 import pt.ulisboa.depchain.server.consensus.Message.MessageType;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.logging.Logger;
+import pt.ulisboa.depchain.shared.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.network.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
@@ -67,6 +68,7 @@ public class Replica {
 
   // Threshold signature protocol instance.
   private ThresholdSignatureProtocol thresholdProtocol;
+  private final Logger logger;
 
   public Replica(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey) {
     this.config = config;
@@ -77,6 +79,7 @@ public class Replica {
     this.completedRequestKeys = ConcurrentHashMap.newKeySet();
 
     this.id = id;
+    this.logger = new Logger("Replica " + id);
     this.n = config.system().n();
     this.f = config.system().f();
     this.quorum = n - f;
@@ -102,7 +105,7 @@ public class Replica {
   }
 
   public void run() {
-    System.out.println("[Replica " + id + "] starting at view " + viewNumber);
+    logger.info("[Replica " + id + "] starting at view " + viewNumber);
 
     // Initial view change to start the protocol.
     sendToLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, Node.GENESIS_NODE, prepareQC));
@@ -238,7 +241,7 @@ public class Replica {
     String requestKey = requestKey(internalCommand);
     String clientCommand = clientCommand(internalCommand);
 
-    System.out.println("[Replica " + id + "] Executing command: " + clientCommand);
+    logger.info("[Replica " + id + "] Executing command: " + clientCommand);
     blockTree.put(node.getThisHash(), node);
     completedRequestKeys.add(requestKey);
     pendingForwardedRequests.remove(requestKey);
@@ -250,9 +253,9 @@ public class Replica {
         byte[] response = ("Received " + clientCommand).getBytes(StandardCharsets.UTF_8);
         clientTransport.send(key.connectionId(), response, key.endpoint());
         clientTransport.closeConnection(key.connectionId(), key.endpoint());
-        System.out.printf("[Replica " + id + "] Connection %d closed for client %s%n", key.connectionId(), key.endpoint());
+        logger.info("[Replica " + id + "] Connection " + key.connectionId() + " closed for client " + key.endpoint());
       } catch (Exception e) {
-        System.err.println("[Replica " + id + "] Error closing client connection: " + e.getMessage());
+        logger.error("[Replica " + id + "] Error closing client connection: " + e.getMessage());
       }
     }
   }
@@ -266,7 +269,7 @@ public class Replica {
         InetSocketAddress addr = new InetSocketAddress(peerHost, peer.consensusPort());
         nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
       } catch (Exception e) {
-        System.err.println("[Replica " + id + "] Error in broadcast to " + peer.id() + ": " + e.getMessage());
+        logger.error("[Replica " + id + "] Error in broadcast to " + peer.id() + ": " + e.getMessage());
       }
     }
   }
@@ -289,10 +292,10 @@ public class Replica {
         byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
         nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
       } else {
-        System.err.println("[Replica " + id + "] Error finding leader config for view " + viewNumber);
+        logger.error("[Replica " + id + "] Error finding leader config for view " + viewNumber);
       }
     } catch (Exception e) {
-      System.err.println("[Replica " + id + "] Error sending message to leader: " + e.getMessage());
+      logger.error("[Replica " + id + "] Error sending message to leader: " + e.getMessage());
     }
   }
 

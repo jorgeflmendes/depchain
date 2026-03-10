@@ -19,8 +19,7 @@ final class StubbornSender {
     this.context = ValidationUtils.requireNonNull(context, "context");
   }
 
-  // Sends a message (one time only) without tracking. Used for control messages (e.g., ACKs) that are
-  // not retried.
+  // Sends a message one time only. Used for control messages (e.g., ACKs) that are not retried.
   void send(byte[] payload, InetSocketAddress remoteEndpoint) throws IOException {
     context.ensureOpen();
     ValidationUtils.requireAllNonNull(named("payload", payload), named("remoteEndpoint", remoteEndpoint));
@@ -71,8 +70,9 @@ final class StubbornSender {
       context.ensureOpen();
 
       TrackedTargetKey targetKey = new TrackedTargetKey(remoteEndpoint, key);
-      if (context.retryRegistry.removeTracked(targetKey) == null) { // No tracked was removed, so record a pending cancel to prevent future registration (race
-                                                                    // condition).
+      // No tracked was removed, so record a pending cancel to prevent future registration (race
+      // condition).
+      if (context.retryRegistry.removeTracked(targetKey) == null) {
         context.retryRegistry.recordPendingCancel(targetKey, now);
       }
 

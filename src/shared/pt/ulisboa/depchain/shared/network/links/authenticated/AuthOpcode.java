@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
+// Enum representing the opcodes for authenticated link messages.
 public enum AuthOpcode {
   INIT((byte) 1), REPLY((byte) 2), DATA((byte) 3);
 

@@ -1,9 +1,11 @@
 package pt.ulisboa.depchain.client;
 
 public final class Main {
+  private static final pt.ulisboa.depchain.shared.logging.Logger logger = new pt.ulisboa.depchain.shared.logging.Logger("ClientMain");
+
   public static void main(String[] args) throws Exception {
     if (args.length < 2) {
-      System.err.println("Usage: Main <targetReplicaId> <configPath>");
+      logger.error("Usage: Main <targetReplicaId> <configPath>");
       System.exit(1);
     }
 

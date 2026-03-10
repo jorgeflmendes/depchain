@@ -12,17 +12,15 @@ import java.util.concurrent.ThreadLocalRandom;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
+import pt.ulisboa.depchain.shared.logging.Logger;
+import pt.ulisboa.depchain.shared.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.network.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 
 public final class DpchClient {
-  private static final String RESET = "\u001B[0m";
-  private static final String RED = "\u001B[31m";
-  private static final String GREEN = "\u001B[32m";
-  private static final String YELLOW = "\u001B[33m";
+  private static final Logger logger = new Logger("DpchClient");
 
   private final ConfigParser.ReplicaSection targetReplicaConfig;
   private final long localSenderId;
@@ -42,12 +40,12 @@ public final class DpchClient {
       runInputLoop(scanner);
     }
 
-    System.out.println(GREEN + "Shutting down..." + RESET);
+    logger.print("Shutting down...");
   }
 
   private void runInputLoop(Scanner scanner) {
     while (true) {
-      System.out.println(YELLOW + "Enter a value to append or 'EXIT' to quit:" + RESET);
+      logger.print("Enter a value to append or 'EXIT' to quit:");
       String input = scanner.nextLine();
 
       if (input.equalsIgnoreCase("EXIT")) {
@@ -56,9 +54,9 @@ public final class DpchClient {
 
       try {
         String response = sendAppendRequest(input);
-        System.out.println(GREEN + "response = " + response + RESET);
+        logger.print("response = " + response);
       } catch (Exception exception) {
-        System.err.println(RED + "Error appending value through the server " + targetReplicaConfig.id() + ": " + exception.getMessage() + RESET);
+        logger.error("Error appending value through the server " + targetReplicaConfig.id() + ": " + exception.getMessage());
       }
     }
   }
@@ -112,6 +110,7 @@ public final class DpchClient {
 
   private ClientRequest createClientRequest(String value) throws Exception {
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
+
     return ClientRequest.signed(localSenderId, requestId, value, localStaticSKey);
   }
 

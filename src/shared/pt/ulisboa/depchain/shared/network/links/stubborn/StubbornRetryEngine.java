@@ -74,9 +74,8 @@ final class StubbornRetryEngine {
           context.retryRegistry.recordFailed(targetKey, new LinkFailureException("Tracked message failed after max retries: " + targetKey));
           continue;
         }
-
-        tracked.markRetried(TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(tracked.retryAttempt() + 1))); // Update the tracked message with the new retry attempt and next
-                                                                                                                   // retry time.
+        // Update the tracked message with the new retry attempt and next retry time.
+        tracked.markRetried(TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(tracked.retryAttempt() + 1)));
         context.retryRegistry.putTracked(targetKey, tracked);
         return new PendingRetry(tracked.payload(), targetKey);
       }

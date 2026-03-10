@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.network.model;
+package pt.ulisboa.depchain.shared.model;
 
 import java.security.PrivateKey;
 import java.security.PublicKey;

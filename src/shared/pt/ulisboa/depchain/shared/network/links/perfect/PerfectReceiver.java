@@ -5,9 +5,8 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
-import java.util.NavigableMap;
-import java.util.TreeMap;
 
+import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
@@ -16,6 +15,7 @@ import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectReceiver {
+  private static final Logger logger = new Logger("PerfectReceiver");
   private final PerfectContext context;
   private final PerfectSender sender;
 
@@ -33,7 +33,7 @@ final class PerfectReceiver {
         if (!context.running.get()) {
           break;
         }
-        System.err.println("PerfectLink worker error: " + exception.getMessage());
+        logger.error("PerfectLink worker error: " + exception.getMessage());
       }
     }
   }
@@ -114,52 +114,6 @@ final class PerfectReceiver {
 
     if (shouldAckData[0]) {
       sender.sendAckBestEffort(packet.connectionId(), packet.sequenceNumber(), inbound.sender(), PerfectContext.ACK_DATA);
-    }
-  }
-
-  // TODO: maybe move to another class
-  static final class ReceiverState {
-    private int nextExpectedSeq;
-    private final NavigableMap<Integer, InboundPacket> bufferedBySeq = new TreeMap<>();
-
-    ReceiverState(int nextExpectedSeq) {
-      this.nextExpectedSeq = Math.max(0, nextExpectedSeq);
-    }
-
-    boolean isAlreadyDelivered(int sequenceNumber) {
-      return sequenceNumber < nextExpectedSeq;
-    }
-
-    boolean bufferIfNew(int sequenceNumber, InboundPacket inbound) {
-      if (bufferedBySeq.containsKey(sequenceNumber)) {
-        return false;
-      }
-
-      bufferedBySeq.put(sequenceNumber, inbound);
-      return true;
-    }
-
-    InboundPacket pollNextInOrder() {
-      var nextEntry = bufferedBySeq.pollFirstEntry();
-      if (nextEntry == null || nextEntry.getKey() != nextExpectedSeq) {
-        throw new IllegalStateException("No in-order message available for delivery");
-      }
-
-      InboundPacket delivered = nextEntry.getValue();
-      if (nextExpectedSeq > Dpch.MAX_PACKET_NUMBER) {
-        throw new IllegalStateException("Receiver sequence number exhausted for stream");
-      }
-
-      nextExpectedSeq++;
-      return delivered;
-    }
-
-    boolean hasNextInOrderReady() {
-      return !bufferedBySeq.isEmpty() && bufferedBySeq.firstKey() == nextExpectedSeq;
-    }
-
-    int nextExpectedSequence() {
-      return nextExpectedSeq;
     }
   }
 }

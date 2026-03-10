@@ -13,7 +13,7 @@ import pt.ulisboa.depchain.server.consensus.Message;
 import pt.ulisboa.depchain.server.consensus.Message.MessageType;
 import pt.ulisboa.depchain.server.consensus.Node;
 import pt.ulisboa.depchain.server.consensus.QuorumCertificate;
-import pt.ulisboa.depchain.shared.network.model.ClientRequest;
+import pt.ulisboa.depchain.shared.model.ClientRequest;
 
 public final class SerializationUtil {
   private static final byte OPTIONAL_NOT_PRESENT = 0;

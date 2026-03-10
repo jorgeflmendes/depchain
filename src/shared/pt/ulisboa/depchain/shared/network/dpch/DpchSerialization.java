@@ -14,8 +14,8 @@ public final class DpchSerialization {
   public static final int HEADER_SIZE = 14;
 
   // 2-byte DPCH protocol signature.
-  private static final byte MAGIC_HI = 0x44; // 'D'
-  private static final byte MAGIC_LO = 0x50; // 'P'
+  private static final byte MAGIC_HI = 0x44; // D
+  private static final byte MAGIC_LO = 0x50; // P
 
   // 1-byte protocol version.
   private static final byte FORMAT_VERSION = 1;
@@ -72,7 +72,6 @@ public final class DpchSerialization {
     output.writeByte(DpchFlags.encode(packet.flags()));
     output.writeLong(packet.connectionId());
     output.writeShort(packet.sequenceNumber());
-
     output.write(payload);
   }
 }
