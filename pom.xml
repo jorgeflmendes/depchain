@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>pt.ulisboa.depchain</groupId>
   <artifactId>depchain</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
   <name>depchain</name>
 
   <properties>
@@ -10,7 +10,6 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.11.4</junit.version>
     <surefire.version>3.3.1</surefire.version>
-    <spotless.version>2.43.0</spotless.version>
   </properties>
 
   <dependencies>
@@ -24,6 +23,11 @@
       <groupId>com.weavechain</groupId>
       <artifactId>threshold-sig</artifactId>
       <version>1.2</version>
+    </dependency>
+    <dependency>
+      <groupId>com.weavechain</groupId>
+      <artifactId>curve25519-elisabeth</artifactId>
+      <version>0.1.5</version>
     </dependency>
   </dependencies>
 
@@ -107,35 +111,27 @@
               <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
             </configuration>
           </execution>
-        </executions>
-      </plugin>
-
-      <plugin>
-        <groupId>com.diffplug.spotless</groupId>
-        <artifactId>spotless-maven-plugin</artifactId>
-        <version>${spotless.version}</version>
-        <configuration>
-          <java>
-            <includes>
-              <include>src/**/*.java</include>
-              <include>src/test/**/*.java</include>
-            </includes>
-            <removeUnusedImports />
-            <eclipse>
-              <file>${project.basedir}/eclipse-java-formatter.xml</file>
-            </eclipse>
-          </java>
-        </configuration>
-        <executions>
           <execution>
-            <id>format-java</id>
-            <phase>process-sources</phase>
+            <id>server</id>
             <goals>
-              <goal>apply</goal>
+              <goal>java</goal>
             </goals>
+            <configuration>
+              <mainClass>pt.ulisboa.depchain.server.Main</mainClass>
+            </configuration>
+          </execution>
+          <execution>
+            <id>client</id>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>pt.ulisboa.depchain.client.Main</mainClass>
+            </configuration>
           </execution>
         </executions>
       </plugin>
+
     </plugins>
   </build>
 </project>

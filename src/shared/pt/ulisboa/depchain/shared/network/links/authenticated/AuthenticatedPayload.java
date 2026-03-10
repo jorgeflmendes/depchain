@@ -89,7 +89,6 @@ public final class AuthenticatedPayload {
 
     buffer.get(payload);
     long nonce = buffer.getLong();
-
     byte[] hmac = new byte[HMAC_BYTES];
     buffer.get(hmac);
 
@@ -113,6 +112,7 @@ public final class AuthenticatedPayload {
     buffer.putLong(senderId);
     buffer.put(publicKeyBytes);
     buffer.put(signature);
+
     return buffer.array();
   }
 
@@ -132,6 +132,7 @@ public final class AuthenticatedPayload {
     ByteBuffer buffer = ByteBuffer.allocate(OPCODE_BYTES + payload.length);
     buffer.put(opcode.code());
     buffer.put(payload);
+
     return buffer.array();
   }
 
@@ -140,6 +141,7 @@ public final class AuthenticatedPayload {
     buffer.put(opcode.code());
     buffer.putLong(senderId);
     buffer.put(publicKeyBytes);
+
     return buffer.array();
   }
 

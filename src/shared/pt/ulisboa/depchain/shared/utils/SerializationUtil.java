@@ -2,14 +2,23 @@ package pt.ulisboa.depchain.shared.utils;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
-import pt.ulisboa.depchain.server.Node;
-import pt.ulisboa.depchain.server.Message;
-import pt.ulisboa.depchain.server.QuorumCertificate;
+import com.weavechain.curve25519.CompressedEdwardsY;
+import com.weavechain.curve25519.EdwardsPoint;
+import com.weavechain.curve25519.InvalidEncodingException;
+import com.weavechain.curve25519.Scalar;
+
+import pt.ulisboa.depchain.server.consensus.Message;
+import pt.ulisboa.depchain.server.consensus.Message.MessageType;
+import pt.ulisboa.depchain.server.consensus.Node;
+import pt.ulisboa.depchain.server.consensus.QuorumCertificate;
+import pt.ulisboa.depchain.shared.model.ClientRequest;
 
 public final class SerializationUtil {
-  private static final byte FLAG_NULL = 0;
-  private static final byte FLAG_PRESENT = 1;
+  private static final byte OPTIONAL_NOT_PRESENT = 0;
+  private static final byte OPTIONAL_PRESENT = 1;
+  private static final int NULL_LENGTH = -1;
 
   public static byte[] encodeString(String value) {
     ValidationUtils.requireNonNull(value, "value");
@@ -21,22 +30,207 @@ public final class SerializationUtil {
     return new String(payload, StandardCharsets.UTF_8);
   }
 
+  public static byte[] encodeSignedClientRequestPayload(long clientSenderId, long requestId, String command) {
+    ValidationUtils.requireNonNegativeLong(clientSenderId, "clientSenderId");
+    ValidationUtils.requireNonNegativeLong(requestId, "requestId");
+    ValidationUtils.requireNonNull(command, "command");
+
+    String encodedCommand = Base64.getEncoder().encodeToString(encodeString(command));
+    return encodeString(clientSenderId + "|" + requestId + "|" + encodedCommand);
+  }
+
+  public static String encodeClientRequestString(ClientRequest request) {
+    ValidationUtils.requireNonNull(request, "request");
+
+    String encodedCommand = Base64.getEncoder().encodeToString(encodeString(request.command()));
+    String encodedSignature = Base64.getEncoder().encodeToString(request.signature());
+    return request.clientSenderId() + "|" + request.requestId() + "|" + encodedCommand + "|" + encodedSignature;
+  }
+
+  public static ClientRequest decodeClientRequestString(String encodedRequest) {
+    ValidationUtils.requireNonNull(encodedRequest, "encodedRequest");
+    String[] parts = encodedRequest.split("\\|", 4);
+    if (parts.length != 4) {
+      throw new IllegalArgumentException("Invalid client request encoding");
+    }
+    long clientSenderId = ValidationUtils.requireNonNegativeLong(Long.parseLong(parts[0]), "clientSenderId");
+    long requestId = ValidationUtils.requireNonNegativeLong(Long.parseLong(parts[1]), "requestId");
+
+    String command = decodeString(Base64.getDecoder().decode(parts[2]));
+    byte[] signature = Base64.getDecoder().decode(parts[3]);
+    return new ClientRequest(clientSenderId, requestId, command, signature);
+  }
+
+  public static byte[] encodeClientRequestBytes(ClientRequest request) {
+    ValidationUtils.requireNonNull(request, "request");
+
+    return encodeString(encodeClientRequestString(request));
+  }
+
+  public static ClientRequest decodeClientRequestBytes(byte[] payload) {
+    ValidationUtils.requireNonNull(payload, "payload");
+
+    return decodeClientRequestString(decodeString(payload));
+  }
+
+  public static byte[] encodeVotePayload(MessageType type, int viewNumber, Node node) {
+    ValidationUtils.requireNonNull(type, "type");
+    ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
+
+    String nodeHash = "null";
+    if (node != null) {
+      nodeHash = node.getThisHash();
+    }
+
+    return encodeString(type.name() + "|" + viewNumber + "|" + nodeHash);
+  }
+
+  public static EdwardsPoint decodeCommitment(byte[] commitment) throws InvalidEncodingException {
+    ValidationUtils.requireNonNull(commitment, "commitment");
+    return new CompressedEdwardsY(commitment).decompress();
+  }
+
+  public static Scalar decodeScalar(byte[] scalarBytes) {
+    ValidationUtils.requireNonNull(scalarBytes, "scalarBytes");
+    return Scalar.fromCanonicalBytes(scalarBytes.clone());
+  }
+
+  public static byte[] encodeReplicaMessage(Message msg) {
+    ValidationUtils.requireNonNull(msg, "msg");
+
+    byte[] nodeBytes = encodeNode(msg.getNode());
+    byte[] justifyBytes = encodeQuorumCertificate(msg.getJustify());
+    byte[] commandBytes = null;
+    if (msg.getCommand() != null) {
+      commandBytes = encodeString(msg.getCommand());
+    }
+    byte[] signature = null;
+    byte[] partialCommitment = null;
+    byte[] aggregatedCommitment = null;
+    int[] participantIndexes = null;
+    switch (msg.getThresholdPayloadType()) {
+      case SIGNATURE_SHARE :
+        signature = msg.getSignature();
+        break;
+      case SIGNATURE_COMMITMENT :
+        partialCommitment = msg.getPartialCommitment();
+        break;
+      case SIGNATURE_CONTEXT :
+        aggregatedCommitment = msg.getAggregatedCommitment();
+        participantIndexes = msg.getParticipantIndexes();
+        break;
+      case HOTSTUFF :
+        break;
+    }
+    int participantIndexesCapacity = Integer.BYTES;
+    if (participantIndexes != null) {
+      participantIndexesCapacity += participantIndexes.length * Integer.BYTES;
+    }
+
+    int headerCapacity = 3 * Integer.BYTES;
+    int commandCapacity = optionalByteArrayCapacity(commandBytes);
+    int signatureCapacity = optionalByteArrayCapacity(signature);
+    int partialCommitmentCapacity = optionalByteArrayCapacity(partialCommitment);
+    int aggregatedCommitmentCapacity = optionalByteArrayCapacity(aggregatedCommitment);
+    int capacity = headerCapacity + commandCapacity + nodeBytes.length + justifyBytes.length + signatureCapacity + partialCommitmentCapacity + aggregatedCommitmentCapacity
+        + participantIndexesCapacity;
+
+    ByteBuffer buffer = ByteBuffer.allocate(capacity);
+
+    // Encode message fields in a consistent order
+    buffer.putInt(msg.getCurrView());
+    buffer.putInt(msg.getSenderId());
+    buffer.putInt(msg.getType().ordinal());
+    putOptionalByteArray(buffer, commandBytes);
+    buffer.put(nodeBytes);
+    buffer.put(justifyBytes);
+    putOptionalByteArray(buffer, signature);
+    putOptionalByteArray(buffer, partialCommitment);
+    putOptionalByteArray(buffer, aggregatedCommitment);
+    if (participantIndexes == null) {
+      buffer.putInt(NULL_LENGTH);
+    } else {
+      buffer.putInt(participantIndexes.length);
+      for (int participantIndex : participantIndexes) {
+        buffer.putInt(participantIndex);
+      }
+    }
+
+    return buffer.array();
+  }
+
+  public static Message decodeReplicaMessage(byte[] payload) {
+    ValidationUtils.requireNonNull(payload, "payload");
+    ByteBuffer buffer = ByteBuffer.wrap(payload);
+
+    int currView = buffer.getInt();
+    int senderId = buffer.getInt();
+    int typeOrdinal = buffer.getInt();
+    byte[] commandBytes = getOptionalByteArray(buffer);
+    Node node = decodeNode(buffer);
+    QuorumCertificate justify = decodeQuorumCertificate(buffer);
+    byte[] signature = getOptionalByteArray(buffer);
+    byte[] partialCommitment = getOptionalByteArray(buffer);
+    byte[] aggregatedCommitment = getOptionalByteArray(buffer);
+
+    int participantCount = buffer.getInt();
+    int[] participantIndexes = null;
+    if (participantCount >= 0) {
+      participantIndexes = new int[participantCount];
+      for (int i = 0; i < participantCount; i++) {
+        participantIndexes[i] = buffer.getInt();
+      }
+    }
+
+    Message.MessageType type = Message.MessageType.values()[typeOrdinal];
+    Message message;
+    if (commandBytes != null) {
+      message = new Message(currView, senderId, type, decodeString(commandBytes));
+    } else {
+      message = new Message(currView, senderId, type, node, justify);
+    }
+
+    int populatedVariants = 0;
+    if (signature != null) {
+      populatedVariants++;
+    }
+    if (partialCommitment != null) {
+      populatedVariants++;
+    }
+    if (aggregatedCommitment != null || participantIndexes != null) {
+      populatedVariants++;
+    }
+
+    if (populatedVariants > 1) {
+      throw new IllegalArgumentException("Message cannot contain multiple threshold payload variants");
+    }
+    if (signature != null) {
+      message.setSignature(signature);
+    } else if (partialCommitment != null) {
+      message.setPartialCommitment(partialCommitment);
+    } else if (aggregatedCommitment != null || participantIndexes != null) {
+      if (aggregatedCommitment == null || participantIndexes == null) {
+        throw new IllegalArgumentException("Threshold context requires both aggregatedCommitment and participantIndexes");
+      }
+      message.setThresholdContext(aggregatedCommitment, participantIndexes);
+    }
+
+    return message;
+  }
+
   private static byte[] encodeNode(Node node) {
     if (node == null) {
-      return new byte[]{FLAG_NULL};
+      return new byte[]{OPTIONAL_NOT_PRESENT};
     }
 
     byte[] parentHashBytes = node.getParentHash().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     byte[] thisHashBytes = node.getThisHash().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     byte[] commandBytes = node.getCommand().getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
-    // Calculate buffer capacity
     int capacity = Byte.BYTES + (4 * Integer.BYTES) + parentHashBytes.length + thisHashBytes.length + commandBytes.length;
-
     ByteBuffer buffer = ByteBuffer.allocate(capacity);
 
-    // Encode fields in a consistent order
-    buffer.put(FLAG_PRESENT);
+    buffer.put(OPTIONAL_PRESENT);
     buffer.putInt(parentHashBytes.length);
     buffer.put(parentHashBytes);
     buffer.putInt(thisHashBytes.length);
@@ -51,11 +245,10 @@ public final class SerializationUtil {
   private static Node decodeNode(ByteBuffer buffer) {
     ValidationUtils.requireNonNull(buffer, "buffer");
 
-    if (buffer.get() == FLAG_NULL) {
+    if (buffer.get() == OPTIONAL_NOT_PRESENT) {
       return null;
     }
 
-    // Decode fields in the same order they were encoded
     int parentHashLen = buffer.getInt();
     byte[] parentHashBytes = new byte[parentHashLen];
     buffer.get(parentHashBytes);
@@ -75,38 +268,29 @@ public final class SerializationUtil {
 
   private static byte[] encodeQuorumCertificate(QuorumCertificate qc) {
     if (qc == null) {
-      return new byte[]{FLAG_NULL};
+      return new byte[]{OPTIONAL_NOT_PRESENT};
     }
 
     byte[] nodeBytes = encodeNode(qc.getNode());
-    java.util.List<byte[]> signatures = qc.getSignatures();
-
-    // Calculate memory needed for signatures
-    int sigsCapacity = Integer.BYTES;
-    if (signatures != null) {
-      for (byte[] sig : signatures) {
-        sigsCapacity += Integer.BYTES + sig.length;
-      }
+    byte[] sig = qc.getAggregatedSignature();
+    int sigCapacity = Integer.BYTES;
+    if (sig != null) {
+      sigCapacity += sig.length;
     }
 
-    int capacity = Byte.BYTES + (2 * Integer.BYTES) + nodeBytes.length + sigsCapacity;
-
+    int capacity = Byte.BYTES + (2 * Integer.BYTES) + nodeBytes.length + sigCapacity;
     ByteBuffer buffer = ByteBuffer.allocate(capacity);
 
-    // Encode fields in a consistent order
-    buffer.put(FLAG_PRESENT);
+    buffer.put(OPTIONAL_PRESENT);
     buffer.putInt(qc.getType().ordinal());
     buffer.putInt(qc.getViewNumber());
     buffer.put(nodeBytes);
 
-    if (signatures == null) {
+    if (sig == null) {
       buffer.putInt(0);
     } else {
-      buffer.putInt(signatures.size());
-      for (byte[] sig : signatures) {
-        buffer.putInt(sig.length);
-        buffer.put(sig);
-      }
+      buffer.putInt(sig.length);
+      buffer.put(sig);
     }
 
     return buffer.array();
@@ -115,58 +299,51 @@ public final class SerializationUtil {
   private static QuorumCertificate decodeQuorumCertificate(ByteBuffer buffer) {
     ValidationUtils.requireNonNull(buffer, "buffer");
 
-    if (buffer.get() == FLAG_NULL) {
+    if (buffer.get() == OPTIONAL_NOT_PRESENT) {
       return null;
     }
 
-    // Decode fields in the same order they were encoded
     int typeOrdinal = buffer.getInt();
     int viewNumber = buffer.getInt();
     Node node = decodeNode(buffer);
     Message.MessageType type = Message.MessageType.values()[typeOrdinal];
 
     QuorumCertificate qc = new QuorumCertificate(type, viewNumber, node);
-    int sigSize = buffer.getInt();
-    for (int i = 0; i < sigSize; i++) {
-      int sigLen = buffer.getInt();
+    int sigLen = buffer.getInt();
+    if (sigLen > 0) {
       byte[] sig = new byte[sigLen];
       buffer.get(sig);
-      qc.addSignature(sig);
+      qc.setAggregatedSignature(sig);
     }
 
     return qc;
   }
 
-  public static Message decodeMessage(byte[] payload) {
-    ValidationUtils.requireNonNull(payload, "payload");
-    ByteBuffer buffer = ByteBuffer.wrap(payload);
-
-    // Decode message fields in the same order they were encoded
-    int currView = buffer.getInt();
-    int senderId = buffer.getInt();
-    int typeOrdinal = buffer.getInt();
-    Node node = decodeNode(buffer);
-    QuorumCertificate justify = decodeQuorumCertificate(buffer);
-
-    Message.MessageType type = Message.MessageType.values()[typeOrdinal];
-    return new Message(currView, senderId, type, node, justify);
+  private static int optionalByteArrayCapacity(byte[] value) {
+    int capacity = Integer.BYTES;
+    if (value != null) {
+      capacity += value.length;
+    }
+    return capacity;
   }
 
-  public static byte[] encodeMessage(Message msg) {
-    ValidationUtils.requireNonNull(msg, "msg");
+  private static void putOptionalByteArray(ByteBuffer buffer, byte[] value) {
+    if (value == null) {
+      buffer.putInt(NULL_LENGTH);
+    } else {
+      buffer.putInt(value.length);
+      buffer.put(value);
+    }
+  }
 
-    byte[] nodeBytes = encodeNode(msg.getNode());
-    byte[] justifyBytes = encodeQuorumCertificate(msg.getJustify());
-    int capacity = (3 * Integer.BYTES) + nodeBytes.length + justifyBytes.length;
-    ByteBuffer buffer = ByteBuffer.allocate(capacity);
+  private static byte[] getOptionalByteArray(ByteBuffer buffer) {
+    int length = buffer.getInt();
+    if (length < 0) {
+      return null;
+    }
 
-    // Encode message fields in a consistent order
-    buffer.putInt(msg.getCurrView());
-    buffer.putInt(msg.getSenderId());
-    buffer.putInt(msg.getType().ordinal());
-    buffer.put(nodeBytes);
-    buffer.put(justifyBytes);
-
-    return buffer.array();
+    byte[] bytes = new byte[length];
+    buffer.get(bytes);
+    return bytes;
   }
 }

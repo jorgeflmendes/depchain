@@ -30,8 +30,8 @@ final class PerfectContext {
 
   final StubbornLink stubbornLink;
 
-  final Map<ConnectionKey, PerfectSender.SenderState> sendSequences = new ConcurrentHashMap<>();
-  final Map<ConnectionKey, PerfectReceiver.ReceiverState> receiverStates = new ConcurrentHashMap<>();
+  final Map<ConnectionKey, SenderState> sendSequences = new ConcurrentHashMap<>();
+  final Map<ConnectionKey, ReceiverState> receiverStates = new ConcurrentHashMap<>();
   final BlockingQueue<InboundPacket> deliveryQueue = new LinkedBlockingQueue<>();
   final AtomicBoolean running = new AtomicBoolean(true);
 
@@ -63,7 +63,7 @@ final class PerfectContext {
       return false;
     }
 
-    PerfectSender.SenderState senderState = sendSequences.get(new ConnectionKey(remoteEndpoint, connectionId));
+    SenderState senderState = sendSequences.get(new ConnectionKey(remoteEndpoint, connectionId));
     return senderState == null || senderState.waitUntilNoPending(this, connectionId, remoteEndpoint, packetType, deadlineMs);
   }
 
@@ -75,7 +75,7 @@ final class PerfectContext {
 
   void throwIfTrackedFailed(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) {
     ValidationUtils.requireAllNonNull(named("remoteEndpoint", remoteEndpoint), named("packetType", packetType));
-    PerfectSender.SenderState senderState = sendSequences.get(new ConnectionKey(remoteEndpoint, connectionId));
+    SenderState senderState = sendSequences.get(new ConnectionKey(remoteEndpoint, connectionId));
     if (senderState == null) {
       return;
     }

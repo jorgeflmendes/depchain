@@ -12,9 +12,11 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HandshakedContext {
   final PerfectLink perfectLink;
+
+  final AtomicBoolean running = new AtomicBoolean(true);
+
   final ConnectionStateRegistry connectionStateRegistry;
   final BlockingQueue<InboundPacket> deliveryQueue = new LinkedBlockingQueue<>();
-  final AtomicBoolean running = new AtomicBoolean(true);
 
   HandshakedContext(PerfectLink perfectLink) {
     this.perfectLink = ValidationUtils.requireNonNull(perfectLink, "perfectLink");

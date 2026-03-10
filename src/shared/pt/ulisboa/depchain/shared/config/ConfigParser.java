@@ -1,17 +1,18 @@
 package pt.ulisboa.depchain.shared.config;
 
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+
 public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts) {
-  public record SystemSection(int n, int f, String leaderElection, int baseView) {
+  public record SystemSection(int n, int f) {
   }
 
-  public record ReplicaSection(String id, long senderId, String host, int consensusPort, int clientPort, String publicKeyPath, String privateKeyPath) {
+  public record ReplicaSection(String id, long senderId, String host, int consensusPort, int clientPort, String publicKeyPath, String privateKeyPath, String thresholdPublicKeyPath,
+      String thresholdPrivateSharePath) {
   }
 
   public record ClientSection(String id, long senderId, String host, String publicKeyPath, String privateKeyPath, int requestTimeoutMs, List<String> knownReplicas) {
@@ -24,6 +25,12 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     return replicas.stream().filter(r -> r.id().equals(replicaId)).findFirst().orElseThrow(() -> new IllegalArgumentException("Replica '%s' not found".formatted(replicaId)));
   }
 
+  public ReplicaSection requireReplicaBySenderId(int senderId) {
+    ValidationUtils.requireNonNegativeInt(senderId, "senderId");
+
+    return replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown replica senderId: " + senderId));
+  }
+
   public ReplicaSection firstKnownReplicaForClient() {
     if (client.knownReplicas().isEmpty()) {
       throw new IllegalArgumentException("No knownReplicas configured in client section");
@@ -32,6 +39,8 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     return requireReplica(client.knownReplicas().getFirst());
   }
 
+  // Loads the config from a properties file, validating all required properties and their
+  // consistency.
   public static ConfigParser load(Path path) throws IOException {
     ValidationUtils.requireNonNull(path, "path");
 
@@ -52,8 +61,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
   private static SystemSection readSystem(PropertyReader reader) {
     return new SystemSection(ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("system.n")), "system.n"),
-        ValidationUtils.requireNonNegativeInt(Integer.parseInt(reader.str("system.f")), "system.f"), reader.str("system.leaderElection"),
-        ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("system.baseView")), "system.baseView"));
+        ValidationUtils.requireNonNegativeInt(Integer.parseInt(reader.str("system.f")), "system.f"));
   }
 
   private static List<ReplicaSection> readReplicas(PropertyReader reader) {
@@ -66,7 +74,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     return new ReplicaSection(replicaId, ValidationUtils.requireNonNegativeLong(Long.parseLong(reader.str(prefix + "senderId")), prefix + "senderId"), reader.str(prefix + "host"),
         ValidationUtils.requireValidPort(Integer.parseInt(reader.str(prefix + "consensusPort")), prefix + "consensusPort"),
         ValidationUtils.requireValidPort(Integer.parseInt(reader.str(prefix + "clientPort")), prefix + "clientPort"), reader.str(prefix + "publicKeyPath"),
-        reader.str(prefix + "privateKeyPath"));
+        reader.str(prefix + "privateKeyPath"), reader.str(prefix + "thresholdPublicKeyPath"), reader.str(prefix + "thresholdPrivateSharePath"));
   }
 
   private static ClientSection readClient(PropertyReader reader) {
@@ -81,6 +89,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
         ValidationUtils.requirePositiveInt(Integer.parseInt(reader.str("timeouts.maxBackoffMs")), "timeouts.maxBackoffMs"));
   }
 
+  // Helper class to read and validate properties from the config file.
   private record PropertyReader(Properties props, Path path) {
     String str(String key) {
       String rawValue = props.getProperty(key);
@@ -125,6 +134,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     if (senderIds.contains(client.senderId())) {
       throw new IllegalArgumentException("client.senderId conflicts with replica");
     }
+
     ValidationUtils.requireNonEmpty(client.knownReplicas(), "client.knownReplicas");
 
     Set<String> seenKnownReplicas = new HashSet<>();
