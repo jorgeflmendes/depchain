@@ -14,6 +14,7 @@ import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
+import pt.ulisboa.depchain.shared.network.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 
@@ -23,18 +24,17 @@ public final class DpchClient {
   private static final String GREEN = "\u001B[32m";
   private static final String YELLOW = "\u001B[33m";
 
-  private final ConfigParser configParser;
   private final ConfigParser.ReplicaSection targetReplicaConfig;
   private final long localSenderId;
   private final PrivateKey localStaticSKey;
   private final Map<Long, PublicKey> staticPKeys;
 
   public DpchClient(String targetReplicaId, String configPath) throws Exception {
-    this.configParser = ConfigParser.load(Path.of(configPath));
-    this.targetReplicaConfig = configParser.requireReplica(targetReplicaId);
-    this.localSenderId = configParser.client().senderId();
-    this.localStaticSKey = PrivateKeyLoader.loadClientPrivateKey(configParser);
-    this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(configParser);
+    ConfigParser config = ConfigParser.load(Path.of(configPath));
+    this.targetReplicaConfig = config.requireReplica(targetReplicaId);
+    this.localSenderId = config.client().senderId();
+    this.localStaticSKey = PrivateKeyLoader.loadClientPrivateKey(config);
+    this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(config);
   }
 
   public void run() {
@@ -73,8 +73,13 @@ public final class DpchClient {
 
   private String runRequestLoop(AuthenticatedLink transport, String value, InetSocketAddress targetAddress) throws IOException, InterruptedException {
     long connectionId = ThreadLocalRandom.current().nextLong();
-    byte[] payload = SerializationUtil.encodeString(value);
-    transport.send(connectionId, payload, targetAddress);
+    try {
+      ClientRequest request = createClientRequest(value);
+      byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+      transport.send(connectionId, payload, targetAddress);
+    } catch (Exception exception) {
+      throw new IOException("Could not sign client request", exception);
+    }
 
     try {
       while (true) {
@@ -103,6 +108,11 @@ public final class DpchClient {
       Thread.currentThread().interrupt();
       return null;
     }
+  }
+
+  private ClientRequest createClientRequest(String value) throws Exception {
+    long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
+    return ClientRequest.signed(localSenderId, requestId, value, localStaticSKey);
   }
 
   private String handleReply(Dpch inbound, long connectionId) {

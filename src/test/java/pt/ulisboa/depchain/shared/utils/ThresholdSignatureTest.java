@@ -60,7 +60,7 @@ class ThresholdSignatureTest {
 
     Message signatureMessage = new Message(9, 2, MessageType.COMMIT, node, qc);
     signatureMessage.setSignature(new byte[]{1, 2, 3});
-    Message decodedSignature = SerializationUtil.decodeMessage(SerializationUtil.encodeMessage(signatureMessage));
+    Message decodedSignature = SerializationUtil.decodeReplicaMessage(SerializationUtil.encodeReplicaMessage(signatureMessage));
 
     assertEquals(signatureMessage.getCurrView(), decodedSignature.getCurrView());
     assertEquals(signatureMessage.getSenderId(), decodedSignature.getSenderId());
@@ -71,14 +71,14 @@ class ThresholdSignatureTest {
 
     Message commitmentMessage = new Message(9, 2, MessageType.COMMIT, node, qc);
     commitmentMessage.setPartialCommitment(new byte[]{4, 5, 6});
-    Message decodedCommitment = SerializationUtil.decodeMessage(SerializationUtil.encodeMessage(commitmentMessage));
+    Message decodedCommitment = SerializationUtil.decodeReplicaMessage(SerializationUtil.encodeReplicaMessage(commitmentMessage));
 
     assertArrayEquals(commitmentMessage.getPartialCommitment(), decodedCommitment.getPartialCommitment());
     assertNotNull(decodedCommitment.getJustify());
 
     Message contextMessage = new Message(9, 2, MessageType.COMMIT, node, qc);
     contextMessage.setThresholdContext(new byte[]{7, 8, 9}, new int[]{0, 2, 3});
-    Message decodedContext = SerializationUtil.decodeMessage(SerializationUtil.encodeMessage(contextMessage));
+    Message decodedContext = SerializationUtil.decodeReplicaMessage(SerializationUtil.encodeReplicaMessage(contextMessage));
 
     assertArrayEquals(contextMessage.getAggregatedCommitment(), decodedContext.getAggregatedCommitment());
     assertArrayEquals(contextMessage.getParticipantIndexes(), decodedContext.getParticipantIndexes());

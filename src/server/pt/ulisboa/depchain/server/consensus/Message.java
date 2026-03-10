@@ -5,7 +5,7 @@ import java.util.Arrays;
 public class Message {
   // Hotstuff message types.
   public enum MessageType {
-    NEW_VIEW, PREPARE, PRE_COMMIT, COMMIT, DECIDE
+    NEW_VIEW, PREPARE, PRE_COMMIT, COMMIT, DECIDE, FORWARDED_REQUEST
   }
 
   // Threshold signature payload types.
@@ -19,6 +19,7 @@ public class Message {
   private MessageType type;
   private Node node;
   private QuorumCertificate justify;
+  private String command;
 
   // Threshold signature things.
   private ThresholdPayloadType thresholdPayloadType; // It can be nothing (hotstuff stuff), a signature share, a commitment, or the full context.
@@ -33,6 +34,17 @@ public class Message {
     this.type = type;
     this.node = node;
     this.justify = justify;
+    this.command = null;
+    this.thresholdPayloadType = ThresholdPayloadType.HOTSTUFF;
+  }
+
+  public Message(int currView, int senderId, MessageType type, String command) {
+    this.currView = currView;
+    this.senderId = senderId;
+    this.type = type;
+    this.node = null;
+    this.justify = null;
+    this.command = command;
     this.thresholdPayloadType = ThresholdPayloadType.HOTSTUFF;
   }
 
@@ -54,6 +66,10 @@ public class Message {
 
   public QuorumCertificate getJustify() {
     return justify;
+  }
+
+  public String getCommand() {
+    return command;
   }
 
   public ThresholdPayloadType getThresholdPayloadType() {

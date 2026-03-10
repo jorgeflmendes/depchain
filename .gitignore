@@ -45,13 +45,8 @@ target/
 .DS_Store
 Thumbs.db
 
-# Local debug artifacts
-# artifacts/debug-diagrams/
-scripts
-scripts/udp_pingpong_trace.py
-
 # Generated keys
 config/keys/
 
-bin
-target
+# LaTeX auxiliary files
+*.tex

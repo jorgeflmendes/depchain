@@ -3,13 +3,16 @@ package pt.ulisboa.depchain.server.consensus;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.PublicKey;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
@@ -21,12 +24,16 @@ import pt.ulisboa.depchain.server.consensus.Message.MessageType;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
+import pt.ulisboa.depchain.shared.network.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class Replica {
+  private static final String CLIENT_COMMAND_PREFIX = "client|";
+
   private ConfigParser config;
+  private PublicKey clientPublicKey;
 
   // Transports for node-to-node and client communication.
   private AuthenticatedLink nodeTransport;
@@ -34,6 +41,9 @@ public class Replica {
 
   // Clients waiting for responses to close connections after the real command execution.
   private final Map<String, ConnectionKey> clientContexts;
+  private final Map<String, String> pendingForwardedRequests;
+  private final Set<String> acceptedRequestKeys;
+  private final Set<String> completedRequestKeys;
 
   // Replica config.
   private int id;
@@ -58,9 +68,13 @@ public class Replica {
   // Threshold signature protocol instance.
   private ThresholdSignatureProtocol thresholdProtocol;
 
-  public Replica(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey) {
+  public Replica(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey) {
     this.config = config;
     this.clientContexts = new ConcurrentHashMap<>();
+    this.clientPublicKey = clientPublicKey;
+    this.pendingForwardedRequests = new ConcurrentHashMap<>();
+    this.acceptedRequestKeys = ConcurrentHashMap.newKeySet();
+    this.completedRequestKeys = ConcurrentHashMap.newKeySet();
 
     this.id = id;
     this.n = config.system().n();
@@ -107,12 +121,29 @@ public class Replica {
   }
 
   public void receiveMessage(Message msg) {
+    if (msg.getType() == MessageType.FORWARDED_REQUEST) {
+      receiveForwardedRequest(msg.getCommand());
+      return;
+    }
+
     messageQueue.add(msg);
   }
 
-  public void receiveCommand(String cmd, ConnectionKey key) {
-    pendingCommands.add(cmd);
-    this.clientContexts.put(cmd, key);
+  public void receiveClientCommand(ClientRequest request, ConnectionKey key) {
+    if (!hasValidClientRequest(request)) {
+      return;
+    }
+
+    String requestKey = requestKey(request);
+    String internalCommand = encodeClientCommand(request);
+    if (completedRequestKeys.contains(requestKey)) {
+      return;
+    }
+
+    clientContexts.putIfAbsent(internalCommand, key);
+    String encodedRequest = SerializationUtil.encodeClientRequestString(request);
+    pendingForwardedRequests.putIfAbsent(requestKey, encodedRequest);
+    submitClientRequest(request, encodedRequest);
   }
 
   private void onPrepare() {
@@ -127,12 +158,7 @@ public class Replica {
       }
 
       // Propose extending the highest QC node with a new command (if any commands).
-      String cmd;
-      if (pendingCommands.isEmpty()) {
-        cmd = "no-op";
-      } else {
-        cmd = pendingCommands.poll();
-      }
+      String cmd = pollNextCommand();
       currentProposal = createLeaf(highQC.getNode().getThisHash(), cmd);
 
       // Broadcast the prepare proposal carrying the chosen high QC.
@@ -203,18 +229,25 @@ public class Replica {
   private void onNewView() {
     // Start a new view locally and notify the new leader.
     viewNumber++;
+    resubmitClientCommands();
     sendToLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, null, prepareQC));
   }
 
   private void executeCommand(Node node) {
-    System.out.println("[Replica " + id + "] Executing command: " + node.getCommand());
-    blockTree.put(node.getThisHash(), node);
+    String internalCommand = node.getCommand();
+    String requestKey = requestKey(internalCommand);
+    String clientCommand = clientCommand(internalCommand);
 
-    ConnectionKey key = clientContexts.remove(node.getCommand());
+    System.out.println("[Replica " + id + "] Executing command: " + clientCommand);
+    blockTree.put(node.getThisHash(), node);
+    completedRequestKeys.add(requestKey);
+    pendingForwardedRequests.remove(requestKey);
+
+    ConnectionKey key = clientContexts.remove(internalCommand);
     if (key != null && clientTransport != null) {
       try {
         // Send a response to the client and close the connection.
-        byte[] response = ("Received " + node.getCommand()).getBytes(StandardCharsets.UTF_8);
+        byte[] response = ("Received " + clientCommand).getBytes(StandardCharsets.UTF_8);
         clientTransport.send(key.connectionId(), response, key.endpoint());
         clientTransport.closeConnection(key.connectionId(), key.endpoint());
         System.out.printf("[Replica " + id + "] Connection %d closed for client %s%n", key.connectionId(), key.endpoint());
@@ -225,7 +258,7 @@ public class Replica {
   }
 
   private void broadcast(Message msg) {
-    byte[] payload = SerializationUtil.encodeMessage(msg);
+    byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
 
     for (ConfigParser.ReplicaSection peer : config.replicas()) {
       try {
@@ -253,7 +286,7 @@ public class Replica {
       if (leader != null) {
         InetAddress leaderHost = InetAddress.getByName(leader.host());
         InetSocketAddress addr = new InetSocketAddress(leaderHost, leader.consensusPort());
-        byte[] payload = SerializationUtil.encodeMessage(msg);
+        byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
         nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
       } else {
         System.err.println("[Replica " + id + "] Error finding leader config for view " + viewNumber);
@@ -349,6 +382,111 @@ public class Replica {
 
   private int getLeader(int view) {
     return view % n;
+  }
+
+  private void submitClientRequest(ClientRequest request, String encodedRequest) {
+    if (isLeader()) {
+      enqueueCommandIfNew(request);
+    } else {
+      forwardClientRequestToLeader(encodedRequest);
+    }
+  }
+
+  private void receiveForwardedRequest(String encodedRequest) {
+    if (encodedRequest == null) {
+      return;
+    }
+
+    if (!isLeader()) {
+      forwardClientRequestToLeader(encodedRequest);
+      return;
+    }
+
+    ClientRequest request = SerializationUtil.decodeClientRequestString(encodedRequest);
+    if (hasValidClientRequest(request)) {
+      enqueueCommandIfNew(request);
+    }
+  }
+
+  private void resubmitClientCommands() {
+    for (String encodedRequest : pendingForwardedRequests.values()) {
+      ClientRequest request = SerializationUtil.decodeClientRequestString(encodedRequest);
+      submitClientRequest(request, encodedRequest);
+    }
+  }
+
+  private void enqueueCommandIfNew(ClientRequest request) {
+    String requestKey = requestKey(request);
+    if (completedRequestKeys.contains(requestKey)) {
+      return;
+    }
+
+    if (acceptedRequestKeys.add(requestKey)) {
+      pendingCommands.add(encodeClientCommand(request));
+    }
+  }
+
+  private String pollNextCommand() {
+    while (!pendingCommands.isEmpty()) {
+      String nextCommand = pendingCommands.poll();
+      if (nextCommand != null && !completedRequestKeys.contains(requestKey(nextCommand))) {
+        return nextCommand;
+      }
+    }
+
+    return "no-op";
+  }
+
+  private void forwardClientRequestToLeader(String encodedRequest) {
+    sendToLeader(new Message(viewNumber, id, MessageType.FORWARDED_REQUEST, encodedRequest));
+  }
+
+  private String encodeClientCommand(ClientRequest request) {
+    String commandBytes = Base64.getEncoder().encodeToString(request.command().getBytes(StandardCharsets.UTF_8));
+    return CLIENT_COMMAND_PREFIX + request.clientSenderId() + "|" + request.requestId() + "|" + commandBytes;
+  }
+
+  private String requestKey(ClientRequest request) {
+    return request.clientSenderId() + ":" + request.requestId();
+  }
+
+  private String requestKey(String internalCommand) {
+    if (!internalCommand.startsWith(CLIENT_COMMAND_PREFIX)) {
+      return internalCommand;
+    }
+
+    String[] parts = internalCommand.split("\\|", 4);
+    if (parts.length != 4) {
+      return internalCommand;
+    }
+
+    return parts[1] + ":" + parts[2];
+  }
+
+  private String clientCommand(String internalCommand) {
+    if (!internalCommand.startsWith(CLIENT_COMMAND_PREFIX)) {
+      return internalCommand;
+    }
+
+    String[] parts = internalCommand.split("\\|", 4);
+    if (parts.length != 4) {
+      return internalCommand;
+    }
+
+    byte[] commandBytes = Base64.getDecoder().decode(parts[3]);
+    return new String(commandBytes, StandardCharsets.UTF_8);
+  }
+
+  private boolean hasValidClientRequest(ClientRequest request) {
+    if (request == null || request.clientSenderId() != config.client().senderId()) {
+      return false;
+    }
+
+    try {
+      return request.hasValidSignature(clientPublicKey);
+    } catch (Exception exception) {
+      return false;
+    }
   }
 
   private boolean isLeader() {

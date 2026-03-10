@@ -2,7 +2,6 @@ package pt.ulisboa.depchain.server;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -19,6 +18,7 @@ import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
+import pt.ulisboa.depchain.shared.network.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
@@ -33,12 +33,12 @@ public final class DpchServer {
   public DpchServer(String serverId, String configPath) throws Exception {
     this.configParser = ConfigParser.load(Path.of(configPath));
     this.replicaConfig = configParser.requireReplica(serverId);
-    byte[] thresholdPublicKey = PublicKeyLoader.loadReplicaThresholdPublicKey(configParser, replicaConfig.senderId());
-    Scalar share = PrivateKeyLoader.loadReplicaThresholdPrivateShare(configParser, replicaConfig.senderId());
-    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser, share, thresholdPublicKey);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(configParser);
-
+    byte[] thresholdPublicKey = PublicKeyLoader.loadReplicaThresholdPublicKey(configParser, replicaConfig.senderId());
+    Scalar share = PrivateKeyLoader.loadReplicaThresholdPrivateShare(configParser, replicaConfig.senderId());
+    PublicKey clientPublicKey = staticPKeys.get(configParser.client().senderId());
+    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser, share, thresholdPublicKey, clientPublicKey);
   }
 
   public void run() throws Exception {
@@ -105,9 +105,9 @@ public final class DpchServer {
     System.out.printf("Client request from %s%n", sender);
 
     try {
-      String requestText = new String(inbound.payload(), StandardCharsets.UTF_8);
+      ClientRequest request = SerializationUtil.decodeClientRequestBytes(inbound.payload());
       ConnectionKey key = new ConnectionKey(sender, inbound.connectionId());
-      this.replica.receiveCommand(requestText, key);
+      this.replica.receiveClientCommand(request, key);
       // TODO: Optionally, send to the client "Request received and being processed";
 
     } catch (RuntimeException exception) {
@@ -118,7 +118,7 @@ public final class DpchServer {
   // Handles messages from other replicas
   private void handleNodeRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
     try {
-      Message msg = SerializationUtil.decodeMessage(inbound.payload());
+      Message msg = SerializationUtil.decodeReplicaMessage(inbound.payload());
       this.replica.receiveMessage(msg);
     } catch (Exception e) {
       System.err.printf("Error handling node message from %s: %s%n", sender, e.getMessage());

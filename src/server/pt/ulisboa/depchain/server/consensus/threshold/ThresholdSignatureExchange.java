@@ -147,7 +147,7 @@ final class ThresholdSignatureExchange {
 
     ConfigParser.ReplicaSection replica = config.requireReplicaBySenderId(senderId);
 
-    byte[] payload = SerializationUtil.encodeMessage(msg);
+    byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
     InetAddress host = InetAddress.getByName(replica.host());
     InetSocketAddress address = new InetSocketAddress(host, replica.consensusPort());
     nodeTransport.send(0L, payload, address); // Inter replica messages can use 0.
