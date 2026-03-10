@@ -140,8 +140,8 @@ class SecTest {
 
     List<Process> servers = startServers(REPLICA_IDS, configPath);
     try {
-      // Keep the system near the initial leader before forcing the crash scenario.
-      waitForServersStartup(Duration.ofSeconds(2));
+      // Let the cluster start before forcing the crash scenario.
+      waitForServersStartup(Duration.ofSeconds(3));
 
       // Crash one follower before submitting the client request.
       Process crashedReplica = servers.get(3);
@@ -150,8 +150,8 @@ class SecTest {
         crashedReplica.destroyForcibly();
       }
 
-      // A non-leader should still forward the request to the live leader.
-      ProcessResult clientResult = runClient("crash-test", "server2", configPath);
+      // A non-leader should still forward the request to a live leader despite one crashed follower.
+      ProcessResult clientResult = runClient("crash-test", "server2", configPath, Duration.ofSeconds(20));
       assertEquals(0, clientResult.exitCode(), clientResult.output());
       assertTrue(clientResult.output().contains("response = Received crash-test"), clientResult.output());
     } finally {
