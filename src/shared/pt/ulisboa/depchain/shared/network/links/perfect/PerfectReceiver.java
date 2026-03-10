@@ -29,6 +29,12 @@ final class PerfectReceiver {
     while (context.running.get()) {
       try {
         handleInbound(PerfectContext.decodeInboundPacket(context.stubbornLink.receive()));
+      } catch (IllegalStateException exception) {
+        if (!context.running.get()) {
+          logger.warn("Ignoring PerfectLink shutdown race: " + exception.getMessage());
+          break;
+        }
+        throw exception;
       } catch (IOException exception) {
         if (!context.running.get()) {
           break;

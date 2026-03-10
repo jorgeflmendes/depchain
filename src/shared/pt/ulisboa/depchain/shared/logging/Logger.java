@@ -24,6 +24,10 @@ public class Logger {
     System.err.println(RED + "[ERROR] [" + name + "] " + message + RESET);
   }
 
+  public void warn(String message) {
+    System.out.println(YELLOW + "[WARN] [" + name + "] " + message + RESET);
+  }
+
   public void debug(String message) {
     System.out.println(YELLOW + "[DEBUG] [" + name + "] " + message + RESET);
   }

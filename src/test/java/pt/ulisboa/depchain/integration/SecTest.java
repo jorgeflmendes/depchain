@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStreamWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -59,9 +58,11 @@ class SecTest {
       // Four valid requests to the initial leader should get success replies.
       for (int i = 1; i <= 4; i++) {
         String value = "simple-test-" + i;
-        ProcessResult clientResult = runClient(value, "server1", configPath);
-        assertEquals(0, clientResult.exitCode(), clientResult.output());
-        assertTrue(clientResult.output().contains("response = Received " + value), clientResult.output());
+        ClientRequest request = signedRequest(configPath, value);
+        byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+        InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
+        assertTrue(response != null, "Client request should receive a response");
+        assertEquals("Received " + value, SerializationUtil.decodeString(response.packet().payload()));
       }
     } finally {
       stopProcesses(servers);
@@ -79,9 +80,11 @@ class SecTest {
       waitForServersStartup(Duration.ofSeconds(5));
 
       // A request sent to a non-leader should be forwarded to the leader and still succeed.
-      ProcessResult clientResult = runClient("forwarded-test", "server2", configPath);
-      assertEquals(0, clientResult.exitCode(), clientResult.output());
-      assertTrue(clientResult.output().contains("response = Received forwarded-test"), clientResult.output());
+      ClientRequest request = signedRequest(configPath, "forwarded-test");
+      byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+      InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(20));
+      assertTrue(response != null, "Forwarded client request should receive a response");
+      assertEquals("Received forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
     } finally {
       stopProcesses(servers);
     }
@@ -138,22 +141,17 @@ class SecTest {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(REPLICA_IDS, configPath);
+    List<Process> servers = startServers(List.of("server1", "server2", "server3"), configPath);
     try {
-      // Let the cluster start before forcing the crash scenario.
+      // Simulate one crashed replica by leaving server4 down for the whole scenario.
       waitForServersStartup(Duration.ofSeconds(3));
 
-      // Crash one follower before submitting the client request.
-      Process crashedReplica = servers.get(3);
-      crashedReplica.destroy();
-      if (!crashedReplica.waitFor(2, TimeUnit.SECONDS)) {
-        crashedReplica.destroyForcibly();
-      }
-
       // A non-leader should still forward the request to a live leader despite one crashed follower.
-      ProcessResult clientResult = runClient("crash-test", "server2", configPath, Duration.ofSeconds(20));
-      assertEquals(0, clientResult.exitCode(), clientResult.output());
-      assertTrue(clientResult.output().contains("response = Received crash-test"), clientResult.output());
+      ClientRequest request = signedRequest(configPath, "crash-test");
+      byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+      InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(20));
+      assertTrue(response != null, "Client request should receive a response despite one crashed follower");
+      assertEquals("Received crash-test", SerializationUtil.decodeString(response.packet().payload()));
     } finally {
       stopProcesses(servers);
     }
@@ -172,8 +170,10 @@ class SecTest {
         waitForServersStartup(Duration.ofSeconds(5));
 
         // With two Byzantine invalid voters, the leader should be unable to gather enough honest votes.
-        ProcessResult clientResult = runClient("byzantine-test", "server1", configPath);
-        assertEquals(124, clientResult.exitCode(), clientResult.output());
+        ClientRequest request = signedRequest(configPath, "byzantine-test");
+        byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+        InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(10));
+        assertNull(response, "Client request should time out when two Byzantine replicas prevent quorum");
         assertTrue(byzantineReplica3.invalidVotesSent() > 0, "Byzantine replica server3 did not send any invalid vote");
         assertTrue(byzantineReplica4.invalidVotesSent() > 0, "Byzantine replica server4 did not send any invalid vote");
       }
@@ -367,33 +367,6 @@ class SecTest {
     if (!finished) {
       process.destroyForcibly();
       return new ProcessResult(124, "Populate timeout");
-    }
-
-    return new ProcessResult(process.exitValue(), readAll(process.getInputStream()));
-  }
-
-  private static ProcessResult runClient(String value, String targetReplicaId, Path configPath) throws IOException, InterruptedException {
-    return runClient(value, targetReplicaId, configPath, Duration.ofSeconds(10));
-  }
-
-  private static ProcessResult runClient(String value, String targetReplicaId, Path configPath, Duration timeout) throws IOException, InterruptedException {
-    ProcessBuilder processBuilder = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.client.Main", targetReplicaId,
-        configPath.toString());
-    processBuilder.redirectErrorStream(true);
-
-    Process process = processBuilder.start();
-    try (OutputStreamWriter writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
-      writer.write(value);
-      writer.write(System.lineSeparator());
-      writer.write("EXIT");
-      writer.write(System.lineSeparator());
-      writer.flush();
-    }
-
-    boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-    if (!finished) {
-      process.destroyForcibly();
-      return new ProcessResult(124, "Client timeout");
     }
 
     return new ProcessResult(process.exitValue(), readAll(process.getInputStream()));

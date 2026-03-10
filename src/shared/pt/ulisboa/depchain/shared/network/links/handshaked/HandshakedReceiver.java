@@ -4,12 +4,15 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 
+import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.dpch.DpchType;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HandshakedReceiver {
+  private static final Logger logger = new Logger("HandshakedReceiver");
+
   private record InboundDecision(boolean deliverData, HandshakeReply reply) {
   }
 
@@ -29,6 +32,12 @@ final class HandshakedReceiver {
         if (delivered != null) {
           context.deliveryQueue.offer(delivered);
         }
+      } catch (IllegalStateException exception) {
+        if (!context.running.get()) {
+          logger.warn("Ignoring HandshakedLink shutdown race: " + exception.getMessage());
+          break;
+        }
+        throw exception;
       } catch (InterruptedException interrupted) {
         if (!context.running.get()) {
           break;
