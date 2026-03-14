@@ -149,13 +149,7 @@ public final class ThresholdSignatureProtocol {
   }
 
   private int findReplicaIndex(ConfigParser config, int senderId) {
-    for (int i = 0; i < config.replicas().size(); i++) {
-      if (config.replicas().get(i).senderId() == senderId) {
-        return i;
-      }
-    }
-
-    throw new IllegalArgumentException("Unknown replica senderId: " + senderId);
+    return config.replicaIndexForSenderId(senderId);
   }
 
   static boolean isSameNode(Node left, Node right) {

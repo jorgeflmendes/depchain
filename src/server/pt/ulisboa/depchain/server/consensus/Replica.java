@@ -284,22 +284,11 @@ public class Replica {
     try {
       // Discover the leader's address from the config.
       int leaderId = getLeader(viewNumber);
-      ConfigParser.ReplicaSection leader = null;
-      for (ConfigParser.ReplicaSection r : config.replicas()) {
-        if (r.senderId() == leaderId) {
-          leader = r;
-          break;
-        }
-      }
-
-      if (leader != null) {
-        InetAddress leaderHost = InetAddress.getByName(leader.host());
-        InetSocketAddress addr = new InetSocketAddress(leaderHost, leader.consensusPort());
-        byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
-        nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
-      } else {
-        logger.error("Error finding leader config for view " + viewNumber);
-      }
+      ConfigParser.ReplicaSection leader = config.requireReplicaBySenderId(leaderId);
+      InetAddress leaderHost = InetAddress.getByName(leader.host());
+      InetSocketAddress addr = new InetSocketAddress(leaderHost, leader.consensusPort());
+      byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
+      nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
     } catch (Exception e) {
       logger.error("Error sending message to leader: " + e.getMessage());
     }

@@ -25,7 +25,7 @@ public final class Populate {
 
     Path configPath;
     if (args.length == 0) {
-      configPath = Path.of("config", "config.properties");
+      configPath = Path.of("config", "config.yaml");
     } else if (args.length == 1) {
       configPath = Path.of(args[0]);
     } else {

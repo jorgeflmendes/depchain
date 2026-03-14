@@ -8,13 +8,13 @@ DepChain is a permissioned blockchain project for the Highly Dependable Systems 
 - Maven 3.9+
 
 ## Configuration
-Main runtime configuration is in `config/config.properties`, including:
+Main runtime configuration is in `config/config.yaml`, including:
 - system parameters (`system.n`, `system.f`),
-- replica ids, sender ids, hosts, consensus ports, and client ports,
-- replica static key paths (`publicKeyPath`, `privateKeyPath`),
-- replica threshold key material paths (`thresholdPublicKeyPath`, `thresholdPrivateSharePath`),
+- replica ids as YAML keys under `replicas`,
+- replica network fields grouped under `ports`,
+- replica key material grouped under `keys` and `keys.threshold`,
 - client identity and connectivity fields (`client.id`, `client.senderId`, `client.host`, `client.knownReplicas`),
-- client key paths (`client.publicKeyPath`, `client.privateKeyPath`),
+- client key paths grouped under `client.keys`,
 - client request timeout (`client.requestTimeoutMs`, where `0` means no timeout),
 - view change timeout (`timeouts.viewChangeMs`).
 
@@ -35,7 +35,7 @@ Populate [configPath]
 Maven:
 ```powershell
 mvn exec:java@populate
-mvn exec:java@populate "-Dexec.args=config/config.properties"
+mvn exec:java@populate "-Dexec.args=config/config.yaml"
 ```
 
 Client entrypoint usage:
@@ -45,8 +45,8 @@ Main <targetReplicaId> <configPath>
 
 Maven:
 ```powershell
-mvn exec:java@client "-Dexec.args=server1 config/config.properties"
-mvn exec:java@client "-Dexec.args=server2 config/config.properties"
+mvn exec:java@client "-Dexec.args=server1 config/config.yaml"
+mvn exec:java@client "-Dexec.args=server2 config/config.yaml"
 ```
 
 Server entrypoint usage:
@@ -56,16 +56,16 @@ Main <serverId> <configPath>
 
 Maven:
 ```powershell
-mvn exec:java@server "-Dexec.args=server1 config/config.properties"
-mvn exec:java@server "-Dexec.args=server2 config/config.properties"
-mvn exec:java@server "-Dexec.args=server3 config/config.properties"
-mvn exec:java@server "-Dexec.args=server4 config/config.properties"
+mvn exec:java@server "-Dexec.args=server1 config/config.yaml"
+mvn exec:java@server "-Dexec.args=server2 config/config.yaml"
+mvn exec:java@server "-Dexec.args=server3 config/config.yaml"
+mvn exec:java@server "-Dexec.args=server4 config/config.yaml"
 ```
 
 ## Integration Tests
 The integration tests run `Populate` internally for each scenario, so it does not need to be executed manually before `mvn verify`.
 They are also slow and timing-sensitive, so it may be necessary to increase some test timeouts depending on the machine.
-They are designed to succeed with the default `config/config.properties`.
+They are designed to succeed with the default `config/config.yaml`.
 
 Maven:
 ```powershell

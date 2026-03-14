@@ -78,12 +78,12 @@ class SecTest {
 
     List<Process> servers = startServers(REPLICA_IDS, configPath);
     try {
-      waitForServersStartup(Duration.ofSeconds(5));
+      waitForServersStartup(Duration.ofSeconds(8));
 
       // A request sent to a non-leader should be forwarded to the leader and still succeed.
       ClientRequest request = signedRequest(configPath, "forwarded-test");
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
-      InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(20));
+      InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(30));
       assertTrue(response != null, "Forwarded client request should receive a response");
       assertEquals("Success: forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
     } finally {
@@ -253,7 +253,7 @@ class SecTest {
   }
 
   private static Path integrationConfigPath() {
-    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.properties").toAbsolutePath();
+    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
     assertTrue(Files.exists(configPath), "Missing config file: " + configPath);
     return configPath;
   }

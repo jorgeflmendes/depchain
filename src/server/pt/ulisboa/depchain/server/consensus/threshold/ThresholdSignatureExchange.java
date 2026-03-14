@@ -209,15 +209,7 @@ final class ThresholdSignatureExchange {
   }
 
   private int replicaIndexForSender(int senderId) {
-    ValidationUtils.requireNonNegativeInt(senderId, "senderId");
-
-    for (int i = 0; i < config.replicas().size(); i++) {
-      if (config.replicas().get(i).senderId() == senderId) {
-        return i;
-      }
-    }
-
-    throw new IllegalArgumentException("Unknown replica senderId: " + senderId);
+    return config.replicaIndexForSenderId(senderId);
   }
 
 }
