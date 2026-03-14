@@ -9,13 +9,12 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import com.weavechain.curve25519.Scalar;
-
 import pt.ulisboa.depchain.server.consensus.Message;
 import pt.ulisboa.depchain.server.consensus.Replica;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
+import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
 import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.model.ClientRequest;
 import pt.ulisboa.depchain.shared.network.dpch.Dpch;
@@ -38,10 +37,9 @@ public final class DpchServer {
     this.replicaConfig = configParser.requireReplica(serverId);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(configParser);
-    byte[] thresholdPublicKey = PublicKeyLoader.loadReplicaThresholdPublicKey(configParser, replicaConfig.senderId());
-    Scalar share = PrivateKeyLoader.loadReplicaThresholdPrivateShare(configParser, replicaConfig.senderId());
+    ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = staticPKeys.get(configParser.client().senderId());
-    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser, share, thresholdPublicKey, clientPublicKey);
+    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey);
   }
 
   public void run() throws Exception {

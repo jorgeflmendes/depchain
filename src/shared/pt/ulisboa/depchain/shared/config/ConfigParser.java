@@ -26,7 +26,11 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
   }
 
   public ReplicaSection requireReplicaBySenderId(int senderId) {
-    ValidationUtils.requireNonNegativeInt(senderId, "senderId");
+    return requireReplicaBySenderId((long) senderId);
+  }
+
+  public ReplicaSection requireReplicaBySenderId(long senderId) {
+    ValidationUtils.requireNonNegativeLong(senderId, "senderId");
 
     return replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown replica senderId: " + senderId));
   }
