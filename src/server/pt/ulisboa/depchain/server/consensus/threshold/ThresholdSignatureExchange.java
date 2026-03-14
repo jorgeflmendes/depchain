@@ -209,7 +209,7 @@ final class ThresholdSignatureExchange {
   }
 
   private int replicaIndexForSender(int senderId) {
-    return config.replicaIndexForSenderId(senderId);
+    return config.requireReplicaIndexForSenderId(senderId);
   }
 
 }

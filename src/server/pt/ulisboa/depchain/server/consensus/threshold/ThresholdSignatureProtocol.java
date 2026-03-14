@@ -149,7 +149,7 @@ public final class ThresholdSignatureProtocol {
   }
 
   private int findReplicaIndex(ConfigParser config, int senderId) {
-    return config.replicaIndexForSenderId(senderId);
+    return config.requireReplicaIndexForSenderId(senderId);
   }
 
   static boolean isSameNode(Node left, Node right) {

@@ -34,7 +34,7 @@ public final class DpchServer {
 
   public DpchServer(String serverId, String configPath) throws Exception {
     this.configParser = ConfigParser.load(Path.of(configPath));
-    this.replicaConfig = configParser.requireReplica(serverId);
+    this.replicaConfig = configParser.requireReplicaById(serverId);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(configParser);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());

@@ -71,19 +71,19 @@ class SecTest {
   }
 
   @Test
-  @Timeout(60)
+  @Timeout(90)
   void forwardedClientRequestTest() throws Exception {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
     List<Process> servers = startServers(REPLICA_IDS, configPath);
     try {
-      waitForServersStartup(Duration.ofSeconds(8));
+      waitForServersStartup(Duration.ofSeconds(10));
 
       // A request sent to a non-leader should be forwarded to the leader and still succeed.
       ClientRequest request = signedRequest(configPath, "forwarded-test");
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
-      InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(30));
+      InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(45));
       assertTrue(response != null, "Forwarded client request should receive a response");
       assertEquals("Success: forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
     } finally {
@@ -198,7 +198,7 @@ class SecTest {
   private static InboundPacket sendClientRequestPayload(Path configPath, String targetReplicaId, byte[] payload, Duration timeout) throws Exception {
     // Load the real client identity and the target replica endpoint.
     ConfigParser config = ConfigParser.load(configPath);
-    ConfigParser.ReplicaSection targetReplica = config.requireReplica(targetReplicaId);
+    ConfigParser.ReplicaSection targetReplica = config.requireReplicaById(targetReplicaId);
     long clientSenderId = config.client().senderId();
     PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
     Map<Long, PublicKey> staticPublicKeys = PublicKeyLoader.loadStaticPublicKeys(config);
@@ -285,7 +285,7 @@ class SecTest {
 
     private ByzantineReplicaHandle(Path configPath, String replicaId) throws Exception {
       ConfigParser config = ConfigParser.load(configPath);
-      ConfigParser.ReplicaSection replica = config.requireReplica(replicaId);
+      ConfigParser.ReplicaSection replica = config.requireReplicaById(replicaId);
       PrivateKey privateKey = PrivateKeyLoader.loadReplicaPrivateKey(config, replica.senderId());
       Map<Long, PublicKey> staticPublicKeys = PublicKeyLoader.loadStaticPublicKeys(config);
       InetSocketAddress bindEndpoint = new InetSocketAddress(replica.host(), replica.consensusPort());

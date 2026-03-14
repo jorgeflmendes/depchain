@@ -99,8 +99,8 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
       host = ValidationUtils.requireNonBlank(host, "client.host");
       ValidationUtils.requireNonNull(keys, "client.keys");
       ValidationUtils.requireNonNegativeInt(requestTimeoutMs, "client.requestTimeoutMs");
-      knownReplicas = List.copyOf(ValidationUtils.requireNonEmpty(knownReplicas, "client.knownReplicas"));
-      knownReplicas.forEach(replicaId -> ValidationUtils.requireNonBlank(replicaId, "client.knownReplicas entry"));
+      knownReplicas = List.copyOf(ValidationUtils.requireNonEmpty(knownReplicas, "client.knownReplicas").stream()
+          .map(replicaId -> ValidationUtils.requireNonBlank(replicaId, "client.knownReplicas entry")).toList());
     }
 
     public String publicKeyPath() {
@@ -126,7 +126,14 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
   }
 
   public ReplicaSection requireReplica(String replicaId) {
-    return replicas.stream().filter(r -> r.id().equals(replicaId)).findFirst().orElseThrow(() -> new IllegalArgumentException("Replica '%s' not found".formatted(replicaId)));
+    return requireReplicaById(replicaId);
+  }
+
+  public ReplicaSection requireReplicaById(String replicaId) {
+    ValidationUtils.requireNonBlank(replicaId, "replicaId");
+
+    return ValidationUtils.requirePresent(replicas.stream().filter(replica -> replica.id().equals(replicaId)).findFirst().orElse(null),
+        "Replica '%s' not found".formatted(replicaId));
   }
 
   public ReplicaSection requireReplicaBySenderId(int senderId) {
@@ -135,14 +142,24 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
   public ReplicaSection requireReplicaBySenderId(long senderId) {
     ValidationUtils.requireNonNegativeLong(senderId, "senderId");
-    return replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown replica senderId: " + senderId));
+
+    return ValidationUtils.requirePresent(replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElse(null),
+        "Unknown replica senderId: " + senderId);
   }
 
   public int replicaIndexForSenderId(int senderId) {
-    return replicaIndexForSenderId((long) senderId);
+    return requireReplicaIndexForSenderId(senderId);
   }
 
   public int replicaIndexForSenderId(long senderId) {
+    return requireReplicaIndexForSenderId(senderId);
+  }
+
+  public int requireReplicaIndexForSenderId(int senderId) {
+    return requireReplicaIndexForSenderId((long) senderId);
+  }
+
+  public int requireReplicaIndexForSenderId(long senderId) {
     ValidationUtils.requireNonNegativeLong(senderId, "senderId");
 
     for (int i = 0; i < replicas.size(); i++) {
@@ -155,7 +172,11 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
   }
 
   public ReplicaSection firstKnownReplicaForClient() {
-    return requireReplica(client.knownReplicas().getFirst());
+    return requireFirstKnownReplicaForClient();
+  }
+
+  public ReplicaSection requireFirstKnownReplicaForClient() {
+    return requireReplicaById(client.knownReplicas().getFirst());
   }
 
   public static ConfigParser load(Path path) throws IOException {
@@ -171,9 +192,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
   private static List<ReplicaSection> normalizeReplicas(LinkedHashMap<String, ReplicaInput> replicas) {
     ValidationUtils.requireNonNull(replicas, "replicas");
-    if (replicas.isEmpty()) {
-      throw new IllegalArgumentException("replicas must not be empty");
-    }
+    ValidationUtils.requireNonEmpty(replicas.entrySet(), "replicas");
 
     return replicas.entrySet().stream().map(entry -> entry.getValue().toReplica(entry.getKey())).toList();
   }
@@ -187,15 +206,10 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     Set<Long> senderIds = new HashSet<>();
 
     for (ReplicaSection replica : replicas) {
-      if (!ids.add(replica.id())) {
-        throw new IllegalArgumentException("Duplicate replica id: " + replica.id());
-      }
-      if (!senderIds.add(replica.senderId())) {
-        throw new IllegalArgumentException("Duplicate senderId: " + replica.senderId());
-      }
-      if (!endpoints.add(replica.host() + ":" + replica.consensusPort()) || !endpoints.add(replica.host() + ":" + replica.clientPort())) {
-        throw new IllegalArgumentException("Duplicate endpoint in replica: " + replica.id());
-      }
+      requireUnique(ids, replica.id(), "Duplicate replica id: " + replica.id());
+      requireUnique(senderIds, replica.senderId(), "Duplicate senderId: " + replica.senderId());
+      requireUnique(endpoints, endpointKey(replica.host(), replica.consensusPort()), "Duplicate endpoint in replica: " + replica.id());
+      requireUnique(endpoints, endpointKey(replica.host(), replica.clientPort()), "Duplicate endpoint in replica: " + replica.id());
     }
 
     if (senderIds.contains(client.senderId())) {
@@ -204,12 +218,19 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
     Set<String> seenKnownReplicas = new HashSet<>();
     for (String replicaId : client.knownReplicas()) {
-      if (!ids.contains(replicaId)) {
-        throw new IllegalArgumentException("client.knownReplicas contains unknown replica '%s'".formatted(replicaId));
-      }
-      if (!seenKnownReplicas.add(replicaId)) {
-        throw new IllegalArgumentException("Duplicate id '%s' in client.knownReplicas".formatted(replicaId));
-      }
+      ValidationUtils.requirePresent(ids.contains(replicaId) ? replicaId : null, "client.knownReplicas contains unknown replica '%s'".formatted(replicaId));
+      requireUnique(seenKnownReplicas, replicaId, "Duplicate id '%s' in client.knownReplicas".formatted(replicaId));
+    }
+  }
+
+  private static String endpointKey(String host, int port) {
+    return host + ":" + port;
+  }
+
+  private static <T> void requireUnique(Set<T> seen, T value, String message) {
+    ValidationUtils.requireNonNull(seen, "seen");
+    if (!seen.add(value)) {
+      throw new IllegalArgumentException(message);
     }
   }
 

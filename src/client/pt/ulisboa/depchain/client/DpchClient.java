@@ -31,7 +31,7 @@ public final class DpchClient {
 
   public DpchClient(String targetReplicaId, String configPath) throws Exception {
     ConfigParser config = ConfigParser.load(Path.of(configPath));
-    this.targetReplicaConfig = config.requireReplica(targetReplicaId);
+    this.targetReplicaConfig = config.requireReplicaById(targetReplicaId);
     this.localSenderId = config.client().senderId();
     this.localStaticSKey = PrivateKeyLoader.loadClientPrivateKey(config);
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(config);
