@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.network.dpch;
+package pt.ulisboa.depchain.shared.network.packet;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -21,7 +21,7 @@ public final class DpchSerialization {
   private static final byte FORMAT_VERSION = 1;
 
   // Message record into raw bytes.
-  public static byte[] toBytes(Dpch value) throws IOException {
+  public static byte[] toBytes(DpchPacket value) throws IOException {
     ValidationUtils.requireNonNull(value, "value");
 
     try (ByteArrayOutputStream output = new ByteArrayOutputStream(); DataOutputStream dataOutput = new DataOutputStream(output)) {
@@ -32,7 +32,7 @@ public final class DpchSerialization {
   }
 
   // Raw bytes to message record with validation.
-  public static Dpch fromBytes(byte[] bytes, int offset, int length) throws IOException {
+  public static DpchPacket fromBytes(byte[] bytes, int offset, int length) throws IOException {
     ValidationUtils.requireValidSlice(bytes, offset, length);
     if (length < HEADER_SIZE) {
       throw new IOException("DPCH packet shorter than header (" + length + " < " + HEADER_SIZE + ")");
@@ -58,12 +58,12 @@ public final class DpchSerialization {
       int payloadLength = length - HEADER_SIZE;
       byte[] payload = dataInput.readNBytes(payloadLength);
 
-      return Dpch.fromDecoded(connectionId, flags, sequenceNumber, payload);
+      return DpchPacket.fromDecoded(connectionId, flags, sequenceNumber, payload);
     }
   }
 
   // Write full DPCH packet header and payload.
-  private static void writeHeader(DataOutputStream output, Dpch packet) throws IOException {
+  private static void writeHeader(DataOutputStream output, DpchPacket packet) throws IOException {
     byte[] payload = packet.payloadInternal();
 
     output.writeByte(MAGIC_HI);

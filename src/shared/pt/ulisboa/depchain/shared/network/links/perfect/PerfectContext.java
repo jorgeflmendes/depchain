@@ -5,15 +5,12 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Map;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.dpch.DpchSerialization;
-import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchSerialization;
+import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.shared.network.links.AsyncLinkContext;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
@@ -23,31 +20,36 @@ import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-final class PerfectContext {
+final class PerfectContext extends AsyncLinkContext<InboundPacket> {
   static final byte[] ACK_DATA = new byte[]{DpchType.DATA.code()};
   static final byte[] ACK_SYN = new byte[]{DpchType.SYN.code()};
   static final byte[] ACK_FIN = new byte[]{DpchType.FIN.code()};
 
   final StubbornLink stubbornLink;
 
-  final Map<ConnectionKey, SenderState> sendSequences = new ConcurrentHashMap<>();
-  final Map<ConnectionKey, ReceiverState> receiverStates = new ConcurrentHashMap<>();
-  final BlockingQueue<InboundPacket> deliveryQueue = new LinkedBlockingQueue<>();
-  final AtomicBoolean running = new AtomicBoolean(true);
+  final Map<ConnectionKey, PerfectConnectionState> connectionStates = new ConcurrentHashMap<>();
 
   PerfectContext(StubbornLink stubbornLink) {
     this.stubbornLink = ValidationUtils.requireNonNull(stubbornLink, "stubbornLink");
   }
 
-  InboundPacket receive() throws InterruptedException {
-    return deliveryQueue.take();
+  void shutdown() {
+    shutdownInbox();
+    for (PerfectConnectionState connectionState : connectionStates.values()) {
+      connectionState.senderState().notifyWaiters();
+    }
   }
 
-  InboundPacket receive(long timeoutMs) throws InterruptedException {
-    return deliveryQueue.poll(ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs"), TimeUnit.MILLISECONDS);
+  void releaseConnection(long connectionId, InetSocketAddress remoteEndpoint) {
+    ValidationUtils.requireNonNull(remoteEndpoint, "remoteEndpoint");
+    ConnectionKey key = new ConnectionKey(remoteEndpoint, connectionId);
+    PerfectConnectionState connectionState = connectionStates.remove(key);
+    if (connectionState != null) {
+      cancelTrackedBatch(connectionState.senderState().takeAllTracked(connectionId), remoteEndpoint);
+    }
   }
 
-  boolean waitUntilNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType, long timeoutMs) throws InterruptedException {
+  boolean awaitNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType, long timeoutMs) throws InterruptedException {
     ValidationUtils.requireAllNonNull(named("remoteEndpoint", remoteEndpoint), named("packetType", packetType));
     if (packetType == DpchType.ACK) {
       throw new IllegalArgumentException("ACK packets are not tracked");
@@ -59,30 +61,24 @@ final class PerfectContext {
     if (checkedTimeoutMs < Long.MAX_VALUE - nowMs) {
       deadlineMs = TimeUtil.deadlineAfter(nowMs, checkedTimeoutMs);
     }
-    if (!running.get()) {
+    if (!isRunning()) {
       return false;
     }
 
-    SenderState senderState = sendSequences.get(new ConnectionKey(remoteEndpoint, connectionId));
-    return senderState == null || senderState.waitUntilNoPending(this, connectionId, remoteEndpoint, packetType, deadlineMs);
+    PerfectConnectionState connectionState = connectionStates.get(new ConnectionKey(remoteEndpoint, connectionId));
+    return connectionState == null || connectionState.senderState().waitUntilNoPending(this, connectionId, remoteEndpoint, packetType, deadlineMs);
   }
 
-  LinkFailureException trackedFailureOrNull(long connectionId, InetSocketAddress remoteEndpoint, int sequenceNumber, DpchType packetType) {
+  LinkFailureException pollTerminalFailure(long connectionId, InetSocketAddress remoteEndpoint, int sequenceNumber, DpchType packetType) {
     ValidationUtils.requireAllNonNull(named("remoteEndpoint", remoteEndpoint), named("packetType", packetType));
     TrackedKey trackedKey = new TrackedKey(connectionId, sequenceNumber, Byte.toUnsignedInt(packetType.code()));
-    return stubbornLink.trackedFailureOrNull(trackedKey, remoteEndpoint);
+    return stubbornLink.pollTerminalFailure(trackedKey, remoteEndpoint);
   }
 
-  void throwIfTrackedFailed(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) {
-    ValidationUtils.requireAllNonNull(named("remoteEndpoint", remoteEndpoint), named("packetType", packetType));
-    SenderState senderState = sendSequences.get(new ConnectionKey(remoteEndpoint, connectionId));
-    if (senderState == null) {
-      return;
-    }
-
-    LinkFailureException failure = senderState.failureForTypeOrNull(this, connectionId, remoteEndpoint, packetType);
-    if (failure != null) {
-      throw failure;
+  void cancelTrackedBatch(Iterable<TrackedKey> trackedKeys, InetSocketAddress remoteEndpoint) {
+    ValidationUtils.requireAllNonNull(named("trackedKeys", trackedKeys), named("remoteEndpoint", remoteEndpoint));
+    for (TrackedKey trackedKey : trackedKeys) {
+      stubbornLink.cancelTracked(trackedKey, remoteEndpoint);
     }
   }
 
@@ -116,7 +112,7 @@ final class PerfectContext {
     }
   }
 
-  static byte[] serializePacket(Dpch packet) {
+  static byte[] serializePacket(DpchPacket packet) {
     try {
       return DpchSerialization.toBytes(packet);
     } catch (IOException exception) {
@@ -125,8 +121,12 @@ final class PerfectContext {
   }
 
   static InboundPacket decodeInboundPacket(InboundBytes datagram) throws IOException {
+    if (datagram == null) {
+      return null;
+    }
     byte[] payload = datagram.payload();
-    Dpch packet = DpchSerialization.fromBytes(payload, 0, payload.length);
+    DpchPacket packet = DpchSerialization.fromBytes(payload, 0, payload.length);
     return new InboundPacket(datagram.sender(), packet);
   }
 }
+

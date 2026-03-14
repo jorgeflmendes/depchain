@@ -5,6 +5,7 @@ public enum AuthOpcode {
   INIT((byte) 1), REPLY((byte) 2), DATA((byte) 3);
 
   private final byte code;
+  private static final AuthOpcode[] BY_UNSIGNED_CODE = buildLookup();
 
   AuthOpcode(byte code) {
     this.code = code;
@@ -15,12 +16,20 @@ public enum AuthOpcode {
   }
 
   public static AuthOpcode fromCode(byte code) {
-    for (AuthOpcode opcode : values()) {
-      if (opcode.code == code) {
-        return opcode;
-      }
+    int unsignedCode = Byte.toUnsignedInt(code);
+    AuthOpcode opcode = BY_UNSIGNED_CODE[unsignedCode];
+    if (opcode == null) {
+      throw new IllegalArgumentException("Unsupported authentication opcode: " + unsignedCode);
     }
+    return opcode;
+  }
 
-    throw new IllegalArgumentException("Unsupported authentication opcode: " + Byte.toUnsignedInt(code));
+  private static AuthOpcode[] buildLookup() {
+    AuthOpcode[] lookup = new AuthOpcode[256];
+    for (AuthOpcode opcode : values()) {
+      lookup[Byte.toUnsignedInt(opcode.code)] = opcode;
+    }
+    return lookup;
   }
 }
+

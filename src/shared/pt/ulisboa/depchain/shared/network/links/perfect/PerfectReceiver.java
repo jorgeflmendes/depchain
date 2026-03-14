@@ -7,8 +7,8 @@ import java.net.InetSocketAddress;
 import java.util.List;
 
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchType;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
@@ -26,17 +26,18 @@ final class PerfectReceiver {
   }
 
   void runInboundLoop() {
-    while (context.running.get()) {
+    while (context.isRunning()) {
       try {
-        handleInbound(PerfectContext.decodeInboundPacket(context.stubbornLink.receive()));
-      } catch (IllegalStateException exception) {
-        if (!context.running.get()) {
-          logger.warn("Ignoring PerfectLink shutdown race: " + exception.getMessage());
-          break;
+        InboundPacket inbound = PerfectContext.decodeInboundPacket(context.stubbornLink.receive());
+        if (inbound == null) {
+          if (!context.isRunning()) {
+            break;
+          }
+          continue;
         }
-        throw exception;
+        receivePacket(inbound);
       } catch (IOException exception) {
-        if (!context.running.get()) {
+        if (!context.isRunning()) {
           break;
         }
         logger.debug("PerfectLink worker error: " + exception.getMessage());
@@ -44,8 +45,8 @@ final class PerfectReceiver {
     }
   }
 
-  private void handleInbound(InboundPacket inbound) {
-    Dpch packet = inbound.packet();
+  private void receivePacket(InboundPacket inbound) {
+    DpchPacket packet = inbound.packet();
     InetSocketAddress remote = inbound.sender();
     ConnectionKey key = new ConnectionKey(remote, packet.connectionId());
 
@@ -58,68 +59,59 @@ final class PerfectReceiver {
     }
   }
 
-  private void handleAck(Dpch ackPacket, DpchType fallbackAcknowledgedType, ConnectionKey key, InetSocketAddress remote) {
+  private void handleAck(DpchPacket ackPacket, DpchType fallbackAcknowledgedType, ConnectionKey key, InetSocketAddress remote) {
     DpchType acknowledgedType = PerfectContext.decodeAcknowledgedType(ackPacket.payload(), fallbackAcknowledgedType);
     int acknowledgedSequence = ackPacket.sequenceNumber();
     if (acknowledgedType == null || acknowledgedSequence < 0) {
       return;
     }
 
-    List<TrackedKey> cancellations = new java.util.ArrayList<>();
+    List<TrackedKey> cancellations = new java.util.ArrayList<>(1);
     // Resolve ACKs against the current sender state without racing with cleanup.
-    context.sendSequences.computeIfPresent(key, (ignored, senderState) -> {
-      cancellations.addAll(senderState.acknowledge(ackPacket.connectionId(), acknowledgedSequence, acknowledgedType));
-      return senderState;
+    context.connectionStates.computeIfPresent(key, (ignored, connectionState) -> {
+      cancellations.addAll(connectionState.senderState().acknowledge(ackPacket.connectionId(), acknowledgedSequence, acknowledgedType));
+      return connectionState;
     });
-    for (TrackedKey trackedKey : cancellations) {
-      context.stubbornLink.cancelTracked(trackedKey, remote);
-    }
+    context.cancelTrackedBatch(cancellations, remote);
   }
 
-  private void handleReliable(InboundPacket inbound, Dpch packet, DpchType reliableType, ConnectionKey key) {
-    List<InboundPacket> readyToDeliver = new java.util.ArrayList<>();
-    boolean[] shouldAckData = new boolean[1];
+  private void handleReliable(InboundPacket inbound, DpchPacket packet, DpchType reliableType, ConnectionKey key) {
+    List<InboundPacket> readyToDeliver = new java.util.ArrayList<>(1);
+    boolean shouldAckData = false;
+    PerfectConnectionState connectionState = context.connectionStates.computeIfAbsent(key, ignored -> new PerfectConnectionState());
+    ReceiverState receiverState = connectionState.receiverState();
 
-    // Create or reuse the receiver state atomically for this stream.
-    context.receiverStates.compute(key, (ignored, existingState) -> {
-      ReceiverState receiverState = existingState;
-      if (receiverState == null) {
-        receiverState = new ReceiverState(0);
+    synchronized (receiverState) {
+      int sequenceNumber = packet.sequenceNumber();
+      if (sequenceNumber < 0) {
+        return;
       }
 
-      synchronized (receiverState) {
-        int sequenceNumber = packet.sequenceNumber();
-        if (sequenceNumber < 0) {
-          return receiverState;
-        }
-
-        if (receiverState.isAlreadyDelivered(sequenceNumber)) {
-          if (reliableType == DpchType.DATA) {
-            shouldAckData[0] = true;
-          } else {
-            readyToDeliver.add(inbound);
-          }
+      if (receiverState.isAlreadyDelivered(sequenceNumber)) {
+        if (reliableType == DpchType.DATA) {
+          shouldAckData = true;
         } else {
-          if (reliableType == DpchType.DATA) {
-            shouldAckData[0] = true;
-          }
-          if (receiverState.bufferIfNew(sequenceNumber, inbound)) {
-            while (receiverState.hasNextInOrderReady()) {
-              readyToDeliver.add(receiverState.pollNextInOrder());
-            }
+          readyToDeliver.add(inbound);
+        }
+      } else {
+        if (reliableType == DpchType.DATA) {
+          shouldAckData = true;
+        }
+        if (receiverState.bufferIfNew(sequenceNumber, inbound)) {
+          while (receiverState.hasNextInOrderReady()) {
+            readyToDeliver.add(receiverState.pollNextInOrder());
           }
         }
       }
-
-      return receiverState;
-    });
-
-    for (InboundPacket delivered : readyToDeliver) {
-      context.deliveryQueue.offer(delivered);
     }
 
-    if (shouldAckData[0]) {
+    for (InboundPacket delivered : readyToDeliver) {
+      context.offer(delivered);
+    }
+
+    if (shouldAckData) {
       sender.sendAckBestEffort(packet.connectionId(), packet.sequenceNumber(), inbound.sender(), PerfectContext.ACK_DATA);
     }
   }
 }
+

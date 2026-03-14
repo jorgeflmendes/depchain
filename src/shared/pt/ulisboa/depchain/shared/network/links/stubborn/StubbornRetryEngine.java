@@ -22,6 +22,7 @@ final class StubbornRetryEngine {
   }
 
   void runRetryLoop() {
+    java.util.Collection<TrackedMessage> remainingTracked = java.util.List.of();
     try {
       while (context.running.get()) {
         try {
@@ -37,7 +38,11 @@ final class StubbornRetryEngine {
       }
     } finally {
       synchronized (context.stateLock) {
+        remainingTracked = context.retryRegistry.takeAllTrackedMessages();
         context.retryRegistry.clear();
+      }
+      for (TrackedMessage trackedMessage : remainingTracked) {
+        trackedMessage.notifyTerminalState();
       }
     }
   }
@@ -45,42 +50,54 @@ final class StubbornRetryEngine {
   // Waits for the next pending retry to be due and returns it, or returns null if the sender is
   // closed.
   private PendingRetry awaitPendingRetry() throws InterruptedException {
-    synchronized (context.stateLock) {
-      while (context.running.get()) {
-        long now = TimeUtil.nowMs();
-        context.retryRegistry.prunePendingCancels(now);
+    while (true) {
+      TrackedMessage terminalTracked = null;
+      boolean closed = false;
 
-        RetryRegistry.ScheduledRetry scheduledRetry = context.retryRegistry.peekScheduled();
-        if (scheduledRetry == null) { // No pending retries, so wait again.
-          context.stateLock.wait();
-          continue;
+      synchronized (context.stateLock) {
+        while (context.running.get()) {
+          long now = TimeUtil.nowMs();
+
+          RetryRegistry.ScheduledRetry scheduledRetry = context.retryRegistry.peekScheduledRetry();
+          if (scheduledRetry == null) { // No pending retries, so wait again.
+            context.stateLock.wait();
+            continue;
+          }
+
+          long waitMs = TimeUtil.remainingMsUntil(scheduledRetry.dueAtMs(), now);
+          if (waitMs > 0L) { // The next retry is scheduled for the future, so wait till then.
+            context.stateLock.wait(waitMs);
+            continue;
+          }
+
+          context.retryRegistry.pollScheduledRetry();
+          TrackedTargetKey targetKey = scheduledRetry.target();
+          TrackedMessage tracked = context.retryRegistry.getTrackedMessage(targetKey);
+          if (tracked == null || tracked.nextRetryAtMs() != scheduledRetry.dueAtMs()) { // The tracked message was removed or rescheduled, so skip.
+            continue;
+          }
+
+          if (context.shouldStopTracking(tracked)) { // The tracked message has reached the maximum retry attempts, so stop tracking and skip.
+            terminalTracked = context.retryRegistry.removeTrackedMessage(targetKey);
+            context.retryRegistry.recordTerminalFailure(targetKey, new LinkFailureException("Tracked message failed after max retries: " + targetKey));
+            break;
+          }
+          // Update the tracked message with the new retry attempt and next retry time.
+          tracked.markRetried(TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(tracked.retryAttempt() + 1)));
+          context.retryRegistry.putTrackedMessage(targetKey, tracked);
+          return new PendingRetry(tracked.payloadView(), targetKey);
         }
 
-        long waitMs = TimeUtil.remainingMsUntil(scheduledRetry.dueAtMs(), now);
-        if (waitMs > 0L) { // The next retry is scheduled for the future, so wait till then.
-          context.stateLock.wait(waitMs);
-          continue;
-        }
-
-        context.retryRegistry.pollScheduled();
-        TrackedTargetKey targetKey = scheduledRetry.target();
-        TrackedMessage tracked = context.retryRegistry.getTracked(targetKey);
-        if (tracked == null || tracked.nextRetryAtMs() != scheduledRetry.dueAtMs()) { // The tracked message was removed or rescheduled, so skip.
-          continue;
-        }
-
-        if (context.shouldStopTracking(tracked, now)) { // The tracked message has reached the maximum retry attempts, so stop tracking and skip.
-          context.retryRegistry.removeTracked(targetKey);
-          context.retryRegistry.recordFailed(targetKey, new LinkFailureException("Tracked message failed after max retries: " + targetKey));
-          continue;
-        }
-        // Update the tracked message with the new retry attempt and next retry time.
-        tracked.markRetried(TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(tracked.retryAttempt() + 1)));
-        context.retryRegistry.putTracked(targetKey, tracked);
-        return new PendingRetry(tracked.payload(), targetKey);
+        closed = !context.running.get();
       }
 
-      return null;
+      if (closed) {
+        return null;
+      }
+      if (terminalTracked != null) {
+        terminalTracked.notifyTerminalState();
+      }
     }
   }
 }
+

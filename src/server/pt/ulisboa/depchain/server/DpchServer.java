@@ -17,7 +17,7 @@ import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
 import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.model.ClientRequest;
-import pt.ulisboa.depchain.shared.network.dpch.Dpch;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
@@ -101,7 +101,7 @@ public final class DpchServer {
   }
 
   // Handles messages from clients
-  private void handleClientRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
+  private void handleClientRequest(AuthenticatedLink transport, DpchPacket inbound, InetSocketAddress sender) {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
     logger.info("Client request from " + sender);
 
@@ -116,7 +116,7 @@ public final class DpchServer {
   }
 
   // Handles messages from other replicas
-  private void handleNodeRequest(AuthenticatedLink transport, Dpch inbound, InetSocketAddress sender) {
+  private void handleNodeRequest(AuthenticatedLink transport, DpchPacket inbound, InetSocketAddress sender) {
     try {
       Message msg = SerializationUtil.decodeReplicaMessage(inbound.payload());
       this.replica.receiveMessage(msg);

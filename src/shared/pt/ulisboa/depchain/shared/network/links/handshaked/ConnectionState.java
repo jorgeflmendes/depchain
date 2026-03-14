@@ -1,5 +1,10 @@
 package pt.ulisboa.depchain.shared.network.links.handshaked;
 
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+
+import pt.ulisboa.depchain.shared.network.links.RunOnce;
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+
 // Per-stream handshake lifecycle for local and remote sides.
 public final class ConnectionState {
   private enum SideState {
@@ -12,33 +17,59 @@ public final class ConnectionState {
 
   // If a local close has been requested by the application.
   private boolean localCloseRequested;
+  private final Runnable onStateChange;
+  private final RunOnce onTerminal;
 
   public ConnectionState() {
+    this(() -> {
+    }, () -> {
+    });
+  }
+
+  public ConnectionState(Runnable onStateChange, Runnable onTerminal) {
+    ValidationUtils.requireAllNonNull(named("onStateChange", onStateChange), named("onTerminal", onTerminal));
+    this.onStateChange = onStateChange;
+    this.onTerminal = new RunOnce(onTerminal);
     this.localCloseRequested = false;
   }
 
   public void markLocalEstablished() {
     if (local == SideState.NEW) {
       local = SideState.ESTABLISHED;
+      signalStateChange();
     }
   }
 
   public void requestLocalClose() {
-    localCloseRequested = true;
+    if (!localCloseRequested) {
+      localCloseRequested = true;
+      signalStateChange();
+    }
   }
 
   public void markLocalFinished() {
-    local = SideState.FINISHED;
+    if (local != SideState.FINISHED) {
+      local = SideState.FINISHED;
+      signalStateChange();
+    }
   }
 
   public void markRemoteEstablishedIfNotFinished() {
-    if (remote != SideState.FINISHED) {
+    if (remote == SideState.NEW) {
       remote = SideState.ESTABLISHED;
+      signalStateChange();
     }
   }
 
   public void markRemoteFinished() {
-    remote = SideState.FINISHED;
+    if (remote != SideState.FINISHED) {
+      remote = SideState.FINISHED;
+      signalStateChange();
+    }
+  }
+
+  public void signalWaiters() {
+    onStateChange.run();
   }
 
   public boolean shouldSendSyn() {
@@ -76,4 +107,12 @@ public final class ConnectionState {
   public boolean isClosing() {
     return localCloseRequested || local == SideState.FINISHED || remote == SideState.FINISHED;
   }
+
+  private void signalStateChange() {
+    onStateChange.run();
+    if (isCloseConverged()) {
+      onTerminal.run();
+    }
+  }
 }
+

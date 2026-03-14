@@ -5,13 +5,15 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 
-import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.logging.Logger;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchType;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectSender {
+  private static final Logger logger = new Logger("PerfectSender");
   private final PerfectContext context;
 
   PerfectSender(PerfectContext context) {
@@ -35,12 +37,8 @@ final class PerfectSender {
     sendAckBestEffort(connectionId, acknowledgedSequence, remoteEndpoint, PerfectContext.ackPayloadFor(acknowledgedType));
   }
 
-  boolean waitUntilNoPendingData(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return waitUntilNoPendingType(connectionId, remoteEndpoint, DpchType.DATA, timeoutMs);
-  }
-
-  boolean waitUntilNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType, long timeoutMs) throws InterruptedException {
-    return context.waitUntilNoPendingType(connectionId, remoteEndpoint, packetType, timeoutMs);
+  boolean awaitNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType, long timeoutMs) throws InterruptedException {
+    return context.awaitNoPendingType(connectionId, remoteEndpoint, packetType, timeoutMs);
   }
 
   void cancelPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) {
@@ -48,21 +46,25 @@ final class PerfectSender {
     List<TrackedKey> cancellations = new ArrayList<>();
 
     // Drop pending tracked packets of this type for this connection.
-    context.sendSequences.computeIfPresent(key, (ignored, senderState) -> {
-      cancellations.addAll(senderState.cancelPendingType(connectionId, packetType));
-      return senderState;
+    context.connectionStates.computeIfPresent(key, (ignored, connectionState) -> {
+      cancellations.addAll(connectionState.senderState().cancelPendingType(connectionId, packetType));
+      return connectionState;
     });
-
-    for (TrackedKey trackedKey : cancellations) {
-      context.stubbornLink.cancelTracked(trackedKey, remoteEndpoint);
-    }
+    context.cancelTrackedBatch(cancellations, remoteEndpoint);
   }
 
   void sendAckBestEffort(long connectionId, int sequenceNumber, InetSocketAddress remote, byte[] ackPayload) {
+    if (!context.isRunning()) {
+      return;
+    }
+
     try {
-      context.stubbornLink.send(PerfectContext.serializePacket(Dpch.from(connectionId, DpchType.ACK, sequenceNumber, ackPayload)), remote);
-    } catch (IOException exception) {
-      throw new IllegalStateException("Failed to send ACK for connection " + connectionId + " seq=" + sequenceNumber, exception);
+      context.stubbornLink.send(PerfectContext.serializePacket(DpchPacket.from(connectionId, DpchType.ACK, sequenceNumber, ackPayload)), remote);
+    } catch (IOException | RuntimeException exception) {
+      if (!context.isRunning()) {
+        return;
+      }
+      logger.debug("Failed to send ACK for connection " + connectionId + " seq=" + sequenceNumber + ": " + exception.getMessage());
     }
   }
 
@@ -70,20 +72,29 @@ final class PerfectSender {
     ConnectionKey key = new ConnectionKey(remoteEndpoint, connectionId);
     boolean reusePendingControl = (type == DpchType.SYN || type == DpchType.FIN);
     int[] sequenceNumberHolder = new int[1];
+    SenderState[] senderStateHolder = new SenderState[1];
 
     // Create or reuse the sender state atomically for this stream.
-    context.sendSequences.compute(key, (ignored, existingState) -> {
-      SenderState senderState = existingState;
-      if (senderState == null) {
-        senderState = new SenderState();
+    context.connectionStates.compute(key, (ignored, existingState) -> {
+      PerfectConnectionState connectionState = existingState;
+      if (connectionState == null) {
+        connectionState = new PerfectConnectionState();
       }
 
+      SenderState senderState = connectionState.senderState();
+      senderStateHolder[0] = senderState;
       sequenceNumberHolder[0] = senderState.nextOrPendingSequence(type, reusePendingControl);
-      return senderState;
+      return connectionState;
     });
     int sequenceNumber = sequenceNumberHolder[0];
+    SenderState senderState = senderStateHolder[0];
 
-    Dpch packet = Dpch.from(connectionId, type, withAck, sequenceNumber, payload);
-    context.stubbornLink.sendTracked(new TrackedKey(connectionId, sequenceNumber, Byte.toUnsignedInt(type.code())), PerfectContext.serializePacket(packet), remoteEndpoint);
+    DpchPacket packet = DpchPacket.from(connectionId, type, withAck, sequenceNumber, payload);
+    context.stubbornLink.sendTrackedWithTerminalNotification(
+        new TrackedKey(connectionId, sequenceNumber, Byte.toUnsignedInt(type.code())),
+        PerfectContext.serializePacket(packet),
+        remoteEndpoint,
+        senderState::notifyWaiters);
   }
 }
+

@@ -5,15 +5,15 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.net.InetSocketAddress;
 
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HandshakedReceiver {
   private static final Logger logger = new Logger("HandshakedReceiver");
-
-  private record InboundDecision(boolean deliverData, HandshakeReply reply) {
+  private record ReceiveResult(boolean deliver, HandshakeReply reply) {
   }
 
   private final HandshakedContext context;
@@ -26,20 +26,28 @@ final class HandshakedReceiver {
   }
 
   void runInboundLoop() {
-    while (context.running.get()) {
+    while (context.isRunning()) {
       try {
-        InboundPacket delivered = handleInbound(context.perfectLink.receive());
-        if (delivered != null) {
-          context.deliveryQueue.offer(delivered);
+        InboundPacket inbound = context.perfectLink.receive();
+        if (inbound == null) {
+          if (!context.isRunning()) {
+            break;
+          }
+          continue;
         }
+        InboundPacket packet = receivePacket(inbound);
+        if (packet != null) {
+          context.offer(packet);
+        }
+      } catch (LinkClosedException closed) {
+        break;
       } catch (IllegalStateException exception) {
-        if (!context.running.get()) {
-          logger.warn("Ignoring HandshakedLink shutdown race: " + exception.getMessage());
+        if (!context.isRunning()) {
           break;
         }
-        throw exception;
+        logger.debug("HandshakedPerfectLink worker error: " + exception.getMessage());
       } catch (InterruptedException interrupted) {
-        if (!context.running.get()) {
+        if (!context.isRunning()) {
           break;
         }
         Thread.currentThread().interrupt();
@@ -48,7 +56,11 @@ final class HandshakedReceiver {
     }
   }
 
-  private InboundPacket handleInbound(InboundPacket inbound) {
+  private InboundPacket receivePacket(InboundPacket inbound) {
+    if (inbound == null) {
+      return null;
+    }
+
     DpchType packetType = inbound.packet().type();
     if (!handlesInboundType(packetType)) {
       return null;
@@ -60,48 +72,51 @@ final class HandshakedReceiver {
 
     ConnectionKey connectionKey = new ConnectionKey(remote, connectionId);
     ConnectionState connectionState = context.connectionStateRegistry.getOrCreate(connectionKey);
-    InboundDecision decision;
+    ReceiveResult result;
     synchronized (connectionState) {
-      decision = decideInboundLocked(connectionState, packetType, inbound.packet().hasType(DpchType.ACK));
+      result = decidePacket(connectionState, packetType, inbound.packet().hasType(DpchType.ACK));
     }
 
-    sender.sendControlReply(decision.reply(), connectionId, sequenceNumber, packetType, remote);
+    sender.sendHandshakeReply(result.reply(), connectionId, sequenceNumber, packetType, remote);
     if (packetType == DpchType.FIN) {
-      // Stop retrying old data once the peer started closing this connection.
-      context.perfectLink.cancelPendingType(connectionId, remote, DpchType.DATA);
+      // Stop retrying old packets once the peer started closing this connection.
+      context.perfectLink.cancelPendingData(connectionId, remote);
+      context.perfectLink.cancelPendingControl(connectionId, remote);
     }
-    if (packetType == DpchType.SYN || packetType == DpchType.FIN) {
+    if (packetType == DpchType.FIN) {
       synchronized (connectionState) {
-        connectionState.notifyAll();
+        if (connectionState.isCloseConverged()) {
+          context.perfectLink.releaseConnection(connectionId, remote);
+        }
       }
     }
-    if (decision.deliverData()) {
+    if (result.deliver()) {
       return inbound;
     }
     return null;
   }
 
-  private static InboundDecision decideInboundLocked(ConnectionState state, DpchType type, boolean inboundHasAck) {
+  private static ReceiveResult decidePacket(ConnectionState state, DpchType type, boolean hasAck) {
     if (type == DpchType.SYN) {
-      return decideSynLocked(state, inboundHasAck);
+      return decideSyn(state, hasAck);
     }
     if (type == DpchType.FIN) {
-      return decideFinLocked(state);
+      return decideFin(state);
     }
-    return decideDataLocked(state);
+    return decideData(state);
   }
 
-  private static InboundDecision decideSynLocked(ConnectionState state, boolean inboundHasAck) {
+  private static ReceiveResult decideSyn(ConnectionState state, boolean hasAck) {
     state.markRemoteEstablishedIfNotFinished();
     if (state.isClosing()) {
-      return new InboundDecision(false, HandshakeReply.ACK);
+      return new ReceiveResult(false, HandshakeReply.ACK);
     }
 
-    if (!inboundHasAck) {
+    if (!hasAck) {
       if (state.shouldSendSyn()) {
         state.markLocalEstablished();
       }
-      return new InboundDecision(false, HandshakeReply.SYN_ACK);
+      return new ReceiveResult(false, HandshakeReply.SYN_ACK);
     }
 
     HandshakeReply reply = HandshakeReply.ACK;
@@ -110,10 +125,10 @@ final class HandshakedReceiver {
       reply = HandshakeReply.SYN_ACK;
     }
 
-    return new InboundDecision(false, reply);
+    return new ReceiveResult(false, reply);
   }
 
-  private static InboundDecision decideFinLocked(ConnectionState state) {
+  private static ReceiveResult decideFin(ConnectionState state) {
     state.markRemoteFinished();
     HandshakeReply reply = HandshakeReply.ACK;
 
@@ -124,14 +139,15 @@ final class HandshakedReceiver {
       reply = HandshakeReply.FIN_ACK;
     }
 
-    return new InboundDecision(false, reply);
+    return new ReceiveResult(false, reply);
   }
 
-  private static InboundDecision decideDataLocked(ConnectionState state) {
-    return new InboundDecision(state.canExchangeData(), HandshakeReply.NONE);
+  private static ReceiveResult decideData(ConnectionState state) {
+    return new ReceiveResult(state.canExchangeData(), HandshakeReply.NONE);
   }
 
   private static boolean handlesInboundType(DpchType type) {
     return type == DpchType.SYN || type == DpchType.FIN || type == DpchType.DATA;
   }
 }
+

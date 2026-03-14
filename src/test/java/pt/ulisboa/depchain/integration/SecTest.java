@@ -3,10 +3,13 @@ package pt.ulisboa.depchain.integration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -17,8 +20,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Tag;
@@ -52,9 +57,9 @@ class SecTest {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(REPLICA_IDS, configPath);
+    List<StartedServer> servers = startServers(REPLICA_IDS, configPath);
     try {
-      waitForServersStartup(Duration.ofSeconds(2));
+      waitForServersStartup(servers, Duration.ofSeconds(10));
 
       // Four valid requests to the initial leader should get success replies.
       for (int i = 1; i <= 4; i++) {
@@ -62,7 +67,7 @@ class SecTest {
         ClientRequest request = signedRequest(configPath, value);
         byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
-        assertTrue(response != null, "Client request should receive a response");
+        assertResponseNotNull(response, "Client request should receive a response", servers);
         assertEquals("Success: " + value, SerializationUtil.decodeString(response.packet().payload()));
       }
     } finally {
@@ -76,15 +81,15 @@ class SecTest {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(REPLICA_IDS, configPath);
+    List<StartedServer> servers = startServers(REPLICA_IDS, configPath);
     try {
-      waitForServersStartup(Duration.ofSeconds(10));
+      waitForServersStartup(servers, Duration.ofSeconds(15));
 
       // A request sent to a non-leader should be forwarded to the leader and still succeed.
       ClientRequest request = signedRequest(configPath, "forwarded-test");
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(45));
-      assertTrue(response != null, "Forwarded client request should receive a response");
+      assertResponseNotNull(response, "Forwarded client request should receive a response", servers);
       assertEquals("Success: forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
     } finally {
       stopProcesses(servers);
@@ -97,15 +102,15 @@ class SecTest {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(REPLICA_IDS, configPath);
+    List<StartedServer> servers = startServers(REPLICA_IDS, configPath);
     try {
-      waitForServersStartup(Duration.ofSeconds(5));
+      waitForServersStartup(servers, Duration.ofSeconds(15));
 
       // Build one real signed request and execute it successfully once.
       ClientRequest request = signedRequest(configPath, "replayed-test");
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket firstResponse = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(10));
-      assertTrue(firstResponse != null, "Initial client request should receive a response");
+      assertResponseNotNull(firstResponse, "Initial client request should receive a response", servers);
       assertEquals("Success: replayed-test", SerializationUtil.decodeString(firstResponse.packet().payload()));
 
       // Replaying the exact same signed request should be ignored by deduplication.
@@ -124,9 +129,9 @@ class SecTest {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(REPLICA_IDS, configPath);
+    List<StartedServer> servers = startServers(REPLICA_IDS, configPath);
     try {
-      waitForServersStartup(Duration.ofSeconds(5));
+      waitForServersStartup(servers, Duration.ofSeconds(15));
 
       // A forged client signature should be ignored.
       InboundPacket response = sendForgedClientRequest(configPath, "server1", "forged-test");
@@ -136,23 +141,22 @@ class SecTest {
     }
   }
 
-
   @Test
   @Timeout(60)
   void oneByzantineReplicaInvalidVoteTest() throws Exception {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
+    List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
       try (ByzantineReplicaHandle byzantineReplica3 = new ByzantineReplicaHandle(configPath, "server3")) {
-        waitForServersStartup(Duration.ofSeconds(5));
+        waitForServersStartup(servers, Duration.ofSeconds(15));
 
         // With only one Byzantine invalid voter, the honest replicas should still complete the request.
         ClientRequest request = signedRequest(configPath, "one-byzantine-test");
         byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
-        assertTrue(response != null, "Client request should still receive a response with one Byzantine invalid vote");
+        assertResponseNotNull(response, "Client request should still receive a response with one Byzantine invalid vote", servers);
         assertEquals("Success: one-byzantine-test", SerializationUtil.decodeString(response.packet().payload()));
         assertTrue(byzantineReplica3.invalidVotesSent() > 0, "Byzantine replica server3 did not send any invalid vote");
       }
@@ -167,11 +171,11 @@ class SecTest {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
-    List<Process> servers = startServers(HONEST_REPLICA_IDS, configPath);
+    List<StartedServer> servers = startServers(HONEST_REPLICA_IDS, configPath);
     try {
       try (ByzantineReplicaHandle byzantineReplica3 = new ByzantineReplicaHandle(configPath, "server3");
           ByzantineReplicaHandle byzantineReplica4 = new ByzantineReplicaHandle(configPath, "server4")) {
-        waitForServersStartup(Duration.ofSeconds(5));
+        waitForServersStartup(servers, Duration.ofSeconds(15));
 
         // With two Byzantine invalid voters, the leader should be unable to gather enough honest votes.
         ClientRequest request = signedRequest(configPath, "byzantine-test");
@@ -263,16 +267,32 @@ class SecTest {
     assertEquals(0, populateResult.exitCode(), populateResult.output());
   }
 
-  private static List<Process> startServers(List<String> replicaIds, Path configPath) throws IOException {
-    List<Process> servers = new ArrayList<>();
+  private static void assertResponseNotNull(InboundPacket response, String message, List<StartedServer> servers) {
+    if (response != null) {
+      return;
+    }
+
+    StringBuilder failure = new StringBuilder(message).append(System.lineSeparator());
+    for (StartedServer server : servers) {
+      failure.append(server.describeState()).append(System.lineSeparator());
+    }
+    fail(failure.toString());
+  }
+
+  private static List<StartedServer> startServers(List<String> replicaIds, Path configPath) throws IOException {
+    List<StartedServer> servers = new ArrayList<>();
     for (String replicaId : replicaIds) {
       servers.add(startServer(replicaId, configPath));
     }
     return servers;
   }
 
-  private static void waitForServersStartup(Duration duration) throws InterruptedException {
-    Thread.sleep(duration.toMillis());
+  private static void waitForServersStartup(List<StartedServer> servers, Duration timeout) throws InterruptedException {
+    long deadlineMs = System.currentTimeMillis() + timeout.toMillis();
+    for (StartedServer server : servers) {
+      long remainingMs = Math.max(1L, deadlineMs - System.currentTimeMillis());
+      assertTrue(server.awaitReady(Duration.ofMillis(remainingMs)), "Server did not become ready: " + server.describeState());
+    }
   }
 
   private static final class ByzantineReplicaHandle implements AutoCloseable {
@@ -354,11 +374,11 @@ class SecTest {
     }
   }
 
-  private static Process startServer(String replicaId, Path configPath) throws IOException {
+  private static StartedServer startServer(String replicaId, Path configPath) throws IOException {
     ProcessBuilder processBuilder = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.server.Main", replicaId,
         configPath.toString());
     processBuilder.redirectErrorStream(true);
-    return processBuilder.start();
+    return new StartedServer(replicaId, processBuilder.start());
   }
 
   private static ProcessResult runPopulate(Path configPath) throws IOException, InterruptedException {
@@ -376,14 +396,15 @@ class SecTest {
     return new ProcessResult(process.exitValue(), readAll(process.getInputStream()));
   }
 
-  private static void stopProcesses(List<Process> processes) {
-    for (Process process : processes) {
-      if (process.isAlive()) {
-        process.destroy();
+  private static void stopProcesses(List<StartedServer> servers) {
+    for (StartedServer server : servers) {
+      if (server.process().isAlive()) {
+        server.process().destroy();
       }
     }
 
-    for (Process process : processes) {
+    for (StartedServer server : servers) {
+      Process process = server.process();
       if (!process.isAlive()) {
         continue;
       }
@@ -396,6 +417,10 @@ class SecTest {
         Thread.currentThread().interrupt();
         process.destroyForcibly();
       }
+    }
+
+    for (StartedServer server : servers) {
+      server.awaitOutputDrain(Duration.ofSeconds(1));
     }
 
     try {
@@ -420,5 +445,80 @@ class SecTest {
     inputStream.transferTo(output);
 
     return output.toString(StandardCharsets.UTF_8);
+  }
+
+  private static final class StartedServer {
+    private static final String CLIENT_LISTENER_MARKER = " client listener: ";
+    private static final String NODE_LISTENER_MARKER = " node listener: ";
+
+    private final String replicaId;
+    private final Process process;
+    private final StringBuilder output = new StringBuilder();
+    private final CountDownLatch ready = new CountDownLatch(2);
+    private final AtomicBoolean clientReady = new AtomicBoolean();
+    private final AtomicBoolean nodeReady = new AtomicBoolean();
+    private final Thread outputReader;
+
+    private StartedServer(String replicaId, Process process) {
+      this.replicaId = replicaId;
+      this.process = process;
+      this.outputReader = Thread.ofVirtual().name("server-output-" + replicaId).start(this::readOutputLoop);
+    }
+
+    private Process process() {
+      return process;
+    }
+
+    private boolean awaitReady(Duration timeout) throws InterruptedException {
+      if (ready.await(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+        return process.isAlive();
+      }
+
+      return false;
+    }
+
+    private void awaitOutputDrain(Duration timeout) {
+      try {
+        outputReader.join(timeout.toMillis());
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+      }
+    }
+
+    private String describeState() {
+      String state;
+      if (process.isAlive()) {
+        state = "alive";
+      } else {
+        state = "exited(" + process.exitValue() + ")";
+      }
+
+      return "Server " + replicaId + " [" + state + ", clientReady=" + clientReady.get() + ", nodeReady=" + nodeReady.get() + "]\n" + outputSnapshot();
+    }
+
+    private void readOutputLoop() {
+      try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          synchronized (output) {
+            output.append(line).append(System.lineSeparator());
+          }
+
+          if (line.contains("Replica " + replicaId + CLIENT_LISTENER_MARKER) && clientReady.compareAndSet(false, true)) {
+            ready.countDown();
+          }
+          if (line.contains("Replica " + replicaId + NODE_LISTENER_MARKER) && nodeReady.compareAndSet(false, true)) {
+            ready.countDown();
+          }
+        }
+      } catch (IOException ignored) {
+      }
+    }
+
+    private String outputSnapshot() {
+      synchronized (output) {
+        return output.toString();
+      }
+    }
   }
 }

@@ -1,11 +1,11 @@
-package pt.ulisboa.depchain.shared.network.dpch;
+package pt.ulisboa.depchain.shared.network.packet;
 
 import java.io.IOException;
 import java.util.Arrays;
 
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public final class Dpch {
+public final class DpchPacket {
   public static final int MAX_PAYLOAD_LENGTH = 0xFFFF;
   public static final int MAX_PACKET_NUMBER = 0xFFFF;
 
@@ -16,12 +16,12 @@ public final class Dpch {
   private final byte[] payload;
 
   // Creates a DPCH from type without ACK.
-  public static Dpch from(long connectionId, DpchType type, int sequenceNumber, byte[] payload) {
+  public static DpchPacket from(long connectionId, DpchType type, int sequenceNumber, byte[] payload) {
     return from(connectionId, type, false, sequenceNumber, payload);
   }
 
   // Creates a DPCH from type combining with ACK if requested.
-  public static Dpch from(long connectionId, DpchType type, boolean withAck, int sequenceNumber, byte[] payload) {
+  public static DpchPacket from(long connectionId, DpchType type, boolean withAck, int sequenceNumber, byte[] payload) {
     ValidationUtils.requireNonNull(type, "type");
 
     int flags;
@@ -34,11 +34,11 @@ public final class Dpch {
       flags = DpchFlags.fromType(type);
     }
 
-    return new Dpch(connectionId, flags, sequenceNumber, payload, true);
+    return new DpchPacket(connectionId, flags, sequenceNumber, payload, true);
   }
 
   // Private constructor to control the copying of the payload.
-  private Dpch(long connectionId, int flags, int sequenceNumber, byte[] payload, boolean copyPayload) {
+  private DpchPacket(long connectionId, int flags, int sequenceNumber, byte[] payload, boolean copyPayload) {
     ValidationUtils.requireNonNull(payload, "payload");
     ValidationUtils.requireInClosedRangeInt(payload.length, 0, MAX_PAYLOAD_LENGTH, "payload.length");
     ValidationUtils.requireInClosedRangeInt(sequenceNumber, 0, MAX_PACKET_NUMBER, "sequenceNumber");
@@ -89,8 +89,8 @@ public final class Dpch {
   }
 
   // Fast path for decoder (without copying the payload)
-  static Dpch fromDecoded(long connectionId, int flags, int sequenceNumber, byte[] payload) {
-    return new Dpch(connectionId, flags, sequenceNumber, payload, false);
+  static DpchPacket fromDecoded(long connectionId, int flags, int sequenceNumber, byte[] payload) {
+    return new DpchPacket(connectionId, flags, sequenceNumber, payload, false);
   }
 
   // Internal read-only use to void repeated copying during serialization.

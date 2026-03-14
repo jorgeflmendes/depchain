@@ -3,15 +3,16 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 
-import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.packet.DpchType;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
-import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
+import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
-public class PerfectLink implements BlockingLink<InboundPacket> {
-  public static final int DEFAULT_MAX_PACKET_SIZE = FairLossLink.DEFAULT_MAX_PACKET_SIZE;
+public final class PerfectLink implements BlockingLink<InboundPacket> {
+  public static final int MAX_PACKET_SIZE = FairLossLink.MAX_PACKET_SIZE;
+  private static final byte[] EMPTY_CONTROL_PAYLOAD = new byte[0];
 
   private final PerfectContext context;
   private final PerfectSender sender;
@@ -35,8 +36,24 @@ public class PerfectLink implements BlockingLink<InboundPacket> {
     return new PerfectLink(stubbornLink);
   }
 
-  public void send(long connectionId, DpchType packetType, boolean withAck, byte[] payload, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, packetType, withAck, payload, remoteEndpoint);
+  public void sendData(long connectionId, byte[] payload, InetSocketAddress remoteEndpoint) {
+    sender.send(connectionId, DpchType.DATA, false, payload, remoteEndpoint);
+  }
+
+  public void sendSyn(long connectionId, InetSocketAddress remoteEndpoint) {
+    sender.send(connectionId, DpchType.SYN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
+  }
+
+  public void sendSynAck(long connectionId, InetSocketAddress remoteEndpoint) {
+    sender.send(connectionId, DpchType.SYN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
+  }
+
+  public void sendFin(long connectionId, InetSocketAddress remoteEndpoint) {
+    sender.send(connectionId, DpchType.FIN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
+  }
+
+  public void sendFinAck(long connectionId, InetSocketAddress remoteEndpoint) {
+    sender.send(connectionId, DpchType.FIN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
   }
 
   public void sendAck(long connectionId, int acknowledgedSequence, DpchType acknowledgedType, InetSocketAddress remoteEndpoint) {
@@ -53,33 +70,44 @@ public class PerfectLink implements BlockingLink<InboundPacket> {
     return context.receive(timeoutMs);
   }
 
-  public boolean waitUntilNoPendingData(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.waitUntilNoPendingData(connectionId, remoteEndpoint, timeoutMs);
+  public boolean awaitNoPendingSyn(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
+    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchType.SYN, timeoutMs);
   }
 
-  public boolean waitUntilNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType, long timeoutMs) throws InterruptedException {
-    return sender.waitUntilNoPendingType(connectionId, remoteEndpoint, packetType, timeoutMs);
+  public boolean awaitNoPendingFin(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
+    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchType.FIN, timeoutMs);
   }
 
-  public void cancelPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) {
-    sender.cancelPendingType(connectionId, remoteEndpoint, packetType);
+  public boolean awaitNoPendingData(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
+    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchType.DATA, timeoutMs);
   }
 
-  public void throwIfTrackedFailed(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType) throws LinkFailureException {
-    context.throwIfTrackedFailed(connectionId, remoteEndpoint, packetType);
+  public void cancelPendingData(long connectionId, InetSocketAddress remoteEndpoint) {
+    sender.cancelPendingType(connectionId, remoteEndpoint, DpchType.DATA);
+  }
+
+  public void cancelPendingControl(long connectionId, InetSocketAddress remoteEndpoint) {
+    sender.cancelPendingType(connectionId, remoteEndpoint, DpchType.SYN);
+    sender.cancelPendingType(connectionId, remoteEndpoint, DpchType.FIN);
+  }
+
+  public void releaseConnection(long connectionId, InetSocketAddress remoteEndpoint) {
+    context.releaseConnection(connectionId, remoteEndpoint);
   }
 
   @Override
   public void close() throws Exception {
-    if (!context.running.compareAndSet(true, false)) {
+    if (!context.stop()) {
       return;
     }
 
     try {
+      context.shutdown();
+      workerThread.interrupt();
       context.stubbornLink.close();
     } finally {
-      workerThread.interrupt();
-      workerThread.join(2_000L);
+      LinkThreadUtil.awaitStop(workerThread, "perfect-link");
     }
   }
 }
+

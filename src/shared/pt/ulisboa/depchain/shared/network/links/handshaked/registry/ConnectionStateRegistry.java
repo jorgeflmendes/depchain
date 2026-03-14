@@ -14,10 +14,23 @@ public final class ConnectionStateRegistry {
   }
 
   public ConnectionState getOrCreate(ConnectionKey key) {
-    return states.computeIfAbsent(key, ignored -> new ConnectionState());
+    return states.computeIfAbsent(key, this::newState);
   }
 
-  public void removeIfSame(ConnectionKey key, ConnectionState state) {
-    states.remove(key, state);
+  public void signalAllStates() {
+    for (ConnectionState state : states.values()) {
+      state.signalWaiters();
+    }
+  }
+
+  private ConnectionState newState(ConnectionKey key) {
+    ConnectionState[] holder = new ConnectionState[1];
+    holder[0] = new ConnectionState(() -> {
+      synchronized (holder[0]) {
+        holder[0].notifyAll();
+      }
+    }, () -> states.remove(key, holder[0]));
+    return holder[0];
   }
 }
+

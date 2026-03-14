@@ -4,7 +4,6 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 import java.security.KeyPair;
-import java.util.Queue;
 
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
@@ -19,67 +18,89 @@ final class AuthenticatedSender {
 
   void send(long connectionId, byte[] payload, InetSocketAddress remoteEndpoint) {
     ValidationUtils.requireAllNonNull(named("payload", payload), named("remoteEndpoint", remoteEndpoint));
-    // Use the same key shape as the lower layers to avoid peer collisions.
     ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, connectionId);
-    if (context.hasSharedSecret(connectionKey)) { // Already handshaked, send secure data.
-      sendSecureData(connectionKey, payload, remoteEndpoint);
-    } else if (context.hasEphemeralPrivateKey(connectionKey)) { // Handshake initiated, queue payloads until reply arrives.
-      context.enqueuePendingPayload(connectionKey, payload);
-    } else { // No handshake, initiate it.
-      context.enqueuePendingPayload(connectionKey, payload);
-      sendHandshakeInit(connectionKey, remoteEndpoint);
+    AuthenticatedConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
+    AuthenticatedConnectionState.SendPlan sendPlan = connectionState.planSend(payload);
+
+    switch (sendPlan.action()) {
+      case SEND -> sendData(connectionKey, connectionState, payload, remoteEndpoint);
+      case START_HANDSHAKE -> sendInit(connectionKey, connectionState, remoteEndpoint);
+      case WAIT -> {
+      }
     }
   }
 
   void closeConnection(long connectionId, InetSocketAddress remoteEndpoint) {
     ValidationUtils.requireNonNull(remoteEndpoint, "remoteEndpoint");
-    context.handshakedLink.closeConnection(connectionId, remoteEndpoint);
-  }
-
-  private void sendHandshakeInit(ConnectionKey connectionKey, InetSocketAddress remoteEndpoint) {
-    ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("remoteEndpoint", remoteEndpoint));
-
+    ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, connectionId);
+    AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
+    if (connectionState != null) {
+      connectionState.beginClose();
+    }
     try {
-      KeyPair localEKeys = CryptoUtil.newECKeyPair();
-      context.putEphemeralPrivateKey(connectionKey, localEKeys.getPrivate());
-      byte[] initPayload = AuthenticatedPayload.encodeEcdsa(AuthOpcode.INIT, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
-      context.handshakedLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
-    } catch (Exception exception) {
-      throw new IllegalStateException("Failed to send authenticated handshake init", exception);
+      context.handshakedLink.closeConnection(connectionId, remoteEndpoint);
+    } finally {
+      if (connectionState != null) {
+        connectionState.close();
+      }
     }
   }
 
-  void sendHandshakeReply(ConnectionKey connectionKey, KeyPair localEKeys, InetSocketAddress remoteEndpoint) {
+  private void sendInit(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InetSocketAddress remoteEndpoint) {
+    ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("connectionState", connectionState), named("remoteEndpoint", remoteEndpoint));
+
+    KeyPair localEKeys;
+    try {
+      localEKeys = CryptoUtil.newECKeyPair();
+    } catch (Exception exception) {
+      throw new IllegalStateException("Failed to allocate authenticated handshake key pair", exception);
+    }
+
+    if (!connectionState.tryMarkHandshakeInitiated(localEKeys.getPrivate())) {
+      return;
+    }
+
+    try {
+      byte[] initPayload = AuthenticatedPayload.encodeEcdsa(AuthOpcode.INIT, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
+      context.handshakedLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
+    } catch (Exception exception) {
+      connectionState.rollbackHandshake(localEKeys.getPrivate());
+      throw new IllegalStateException("Failed to send authenticated init", exception);
+    }
+  }
+
+  void sendReply(ConnectionKey connectionKey, KeyPair localEKeys, InetSocketAddress remoteEndpoint) {
     ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("localEKeys", localEKeys), named("remoteEndpoint", remoteEndpoint));
 
     try {
       byte[] replyPayload = AuthenticatedPayload.encodeEcdsa(AuthOpcode.REPLY, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
       context.handshakedLink.send(connectionKey.connectionId(), replyPayload, remoteEndpoint);
     } catch (Exception exception) {
-      throw new IllegalStateException("Failed to send authenticated handshake reply", exception);
+      throw new IllegalStateException("Failed to send authenticated reply", exception);
     }
   }
 
-  void flushPendingPayloads(ConnectionKey connectionKey, InetSocketAddress remoteEndpoint) {
-    ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("remoteEndpoint", remoteEndpoint));
+  void sendQueuedPayloads(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState,
+      java.util.List<byte[]> queuedPayloads, InetSocketAddress remoteEndpoint) {
+    ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("connectionState", connectionState),
+        named("queuedPayloads", queuedPayloads), named("remoteEndpoint", remoteEndpoint));
 
-    Queue<byte[]> pendingPayloads = context.removePendingPayloads(connectionKey);
-    byte[] pendingPayload;
-    while ((pendingPayload = pendingPayloads.poll()) != null) {
-      sendSecureData(connectionKey, pendingPayload, remoteEndpoint);
+    for (byte[] queuedPayload : queuedPayloads) {
+      sendData(connectionKey, connectionState, queuedPayload, remoteEndpoint);
     }
   }
 
-  private void sendSecureData(ConnectionKey connectionKey, byte[] payload, InetSocketAddress remoteEndpoint) {
+  private void sendData(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, byte[] payload, InetSocketAddress remoteEndpoint) {
     ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("payload", payload), named("remoteEndpoint", remoteEndpoint));
 
-    long nonce = context.incrementSentNonce(connectionKey);
+    AuthenticatedConnectionState.SecureSendContext secureSend = connectionState.reserveSecureSend();
 
     try {
-      byte[] securePayload = AuthenticatedPayload.encodeHmac(AuthOpcode.DATA, payload, context.getSharedSecret(connectionKey), nonce);
+      byte[] securePayload = AuthenticatedPayload.encodeHmac(AuthOpcode.DATA, payload, secureSend.sharedSecret(), secureSend.nonce());
       context.handshakedLink.send(connectionKey.connectionId(), securePayload, remoteEndpoint);
     } catch (Exception exception) {
-      throw new IllegalStateException("Failed to send authenticated secure data", exception);
+      throw new IllegalStateException("Failed to send authenticated data", exception);
     }
   }
 }
+

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
+import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
@@ -51,18 +52,16 @@ public final class HandshakedPerfectLink implements BlockingLink<InboundPacket> 
 
   @Override
   public void close() throws Exception {
-    if (!context.running.compareAndSet(true, false)) {
+    if (!context.stop()) {
       return;
     }
     try {
+      context.shutdown();
+      workerThread.interrupt();
       context.perfectLink.close();
     } finally {
-      workerThread.interrupt();
-      try {
-        workerThread.join(2_000L);
-      } catch (InterruptedException interrupted) {
-        Thread.currentThread().interrupt();
-      }
+      LinkThreadUtil.awaitStop(workerThread, "handshaked-perfect-link");
     }
   }
 }
+

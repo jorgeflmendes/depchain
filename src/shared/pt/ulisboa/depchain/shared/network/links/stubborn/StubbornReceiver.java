@@ -14,14 +14,33 @@ final class StubbornReceiver {
 
   // Receives a message, blocking until one is available or the receiver is closed.
   InboundBytes receive() throws IOException {
-    context.ensureOpen();
-    return context.fairLossLink.receive();
+    if (!context.running.get()) {
+      return null;
+    }
+    try {
+      return context.fairLossLink.receive();
+    } catch (IOException exception) {
+      if (!context.running.get()) {
+        return null;
+      }
+      throw exception;
+    }
   }
 
   // Receives a message with a timeout, returning null if the timeout expires or the receiver is
   // closed.
   InboundBytes receive(long timeoutMs) throws IOException {
-    context.ensureOpen();
-    return context.fairLossLink.receive(timeoutMs);
+    if (!context.running.get()) {
+      return null;
+    }
+    try {
+      return context.fairLossLink.receive(timeoutMs);
+    } catch (IOException exception) {
+      if (!context.running.get()) {
+        return null;
+      }
+      throw exception;
+    }
   }
 }
+

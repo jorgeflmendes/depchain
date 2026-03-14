@@ -8,8 +8,8 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
-import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchType;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
@@ -27,7 +27,7 @@ final class SenderState {
       }
     }
 
-    if (nextSequence > Dpch.MAX_PACKET_NUMBER) {
+    if (nextSequence > DpchPacket.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Sender sequence number exhausted for stream");
     }
 
@@ -81,9 +81,20 @@ final class SenderState {
     return cancellations;
   }
 
+  synchronized List<TrackedKey> takeAllTracked(long connectionId) {
+    List<TrackedKey> cancellations = new ArrayList<>(inFlightBySeq.size());
+    for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
+      cancellations.add(new TrackedKey(connectionId, entry.getKey(), Byte.toUnsignedInt(entry.getValue().code())));
+    }
+
+    inFlightBySeq.clear();
+    notifyAll();
+    return cancellations;
+  }
+
   synchronized boolean waitUntilNoPending(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchType type, long deadlineMs) throws InterruptedException {
-    while (hasPending(type)) {
-      LinkFailureException failure = failureForTypeOrNull(context, connectionId, remoteEndpoint, type);
+    while (context.isRunning() && hasPending(type)) {
+      LinkFailureException failure = pollTerminalFailureForType(context, connectionId, remoteEndpoint, type);
       if (failure != null) {
         throw failure;
       }
@@ -92,9 +103,13 @@ final class SenderState {
       if (remainingMs <= 0L) {
         return false;
       }
-      wait(Math.min(remainingMs, 100L));
+      wait(remainingMs);
     }
-    return true;
+    return !hasPending(type);
+  }
+
+  synchronized void notifyWaiters() {
+    notifyAll();
   }
 
   private boolean hasPending(DpchType type) {
@@ -106,13 +121,13 @@ final class SenderState {
     return false;
   }
 
-  synchronized LinkFailureException failureForTypeOrNull(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchType type) {
+  synchronized LinkFailureException pollTerminalFailureForType(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchType type) {
     for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
       if (entry.getValue() != type) {
         continue;
       }
 
-      LinkFailureException failure = context.trackedFailureOrNull(connectionId, remoteEndpoint, entry.getKey(), entry.getValue());
+      LinkFailureException failure = context.pollTerminalFailure(connectionId, remoteEndpoint, entry.getKey(), entry.getValue());
       if (failure != null) {
         return failure;
       }
@@ -121,3 +136,4 @@ final class SenderState {
     return null;
   }
 }
+

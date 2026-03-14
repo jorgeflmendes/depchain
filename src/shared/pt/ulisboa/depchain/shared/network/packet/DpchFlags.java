@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.network.dpch;
+package pt.ulisboa.depchain.shared.network.packet;
 
 import java.io.IOException;
 

@@ -36,54 +36,62 @@ final class StubbornSender {
   }
 
   // Sends a message and tracks it for retries until an ACK is received or the sender is closed.
-  TrackedKey sendTracked(TrackedKey key, byte[] payload, InetSocketAddress remoteEndpoint) {
+  TrackedKey sendTrackedWithTerminalNotification(TrackedKey key, byte[] payload, InetSocketAddress remoteEndpoint, Runnable onTerminalState) {
     context.ensureOpen();
-    ValidationUtils.requireAllNonNull(named("key", key), named("payload", payload), named("remoteEndpoint", remoteEndpoint));
+    ValidationUtils.requireAllNonNull(named("key", key), named("payload", payload), named("remoteEndpoint", remoteEndpoint), named("onTerminalState", onTerminalState));
 
     long now = TimeUtil.nowMs();
     TrackedMessage tracked;
+    TrackedTargetKey targetKey = new TrackedTargetKey(remoteEndpoint, key);
 
     synchronized (context.stateLock) {
       context.ensureOpen();
-      TrackedTargetKey targetKey = new TrackedTargetKey(remoteEndpoint, key);
-      if (context.retryRegistry.shouldSkipTrackedRegistration(targetKey, now)) { // A pending cancel was recorded for this key, so skip registration
-        return key;
-      }
-
       long nextRetryAtMs = TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(0));
-      tracked = new TrackedMessage(key, payload, 0, now, nextRetryAtMs);
-      context.retryRegistry.putTracked(targetKey, tracked);
+      tracked = new TrackedMessage(key, payload, 0, now, nextRetryAtMs, onTerminalState);
+      context.retryRegistry.putTrackedMessage(targetKey, tracked);
       context.stateLock.notifyAll();
     }
 
-    sendBestEffort(tracked.payload(), remoteEndpoint, tracked.key());
+    try {
+      sendBestEffort(tracked.payloadView(), remoteEndpoint, tracked.key());
+    } catch (RuntimeException exception) {
+      TrackedMessage removedTracked;
+      synchronized (context.stateLock) {
+        removedTracked = context.retryRegistry.removeTrackedMessage(targetKey);
+        context.retryRegistry.recordTerminalFailure(targetKey, new LinkFailureException("Tracked message failed to send: " + targetKey));
+        context.stateLock.notifyAll();
+      }
+      if (removedTracked != null) {
+        removedTracked.notifyTerminalState();
+      }
+      throw exception;
+    }
     return tracked.key();
   }
 
   // Cancels the tracking of a message, preventing any future retries.
   void cancelTracked(TrackedKey key, InetSocketAddress remoteEndpoint) {
-    context.ensureOpen();
     ValidationUtils.requireAllNonNull(named("key", key), named("remoteEndpoint", remoteEndpoint));
+    if (!context.running.get()) {
+      return;
+    }
 
-    long now = TimeUtil.nowMs();
     synchronized (context.stateLock) {
-      context.ensureOpen();
-
-      TrackedTargetKey targetKey = new TrackedTargetKey(remoteEndpoint, key);
-      // No tracked was removed, so record a pending cancel to prevent future registration (race
-      // condition).
-      if (context.retryRegistry.removeTracked(targetKey) == null) {
-        context.retryRegistry.recordPendingCancel(targetKey, now);
+      if (!context.running.get()) {
+        return;
       }
 
+      TrackedTargetKey targetKey = new TrackedTargetKey(remoteEndpoint, key);
+      context.retryRegistry.removeTrackedMessage(targetKey);
       context.stateLock.notifyAll();
     }
   }
 
-  LinkFailureException trackedFailureOrNull(TrackedKey key, InetSocketAddress remoteEndpoint) {
+  LinkFailureException pollTerminalFailure(TrackedKey key, InetSocketAddress remoteEndpoint) {
     ValidationUtils.requireAllNonNull(named("key", key), named("remoteEndpoint", remoteEndpoint));
     synchronized (context.stateLock) {
-      return context.retryRegistry.trackedFailureOrNull(new TrackedTargetKey(remoteEndpoint, key));
+      return context.retryRegistry.pollTerminalFailure(new TrackedTargetKey(remoteEndpoint, key));
     }
   }
 }
+

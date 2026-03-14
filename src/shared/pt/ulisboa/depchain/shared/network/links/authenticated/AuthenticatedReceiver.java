@@ -9,8 +9,10 @@ import java.security.PublicKey;
 import javax.crypto.SecretKey;
 
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
-import pt.ulisboa.depchain.shared.network.dpch.Dpch;
-import pt.ulisboa.depchain.shared.network.dpch.DpchType;
+import pt.ulisboa.depchain.shared.logging.Logger;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedEcdsaPayload;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedHmacPayload;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
@@ -19,6 +21,7 @@ import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class AuthenticatedReceiver {
+  private static final Logger logger = new Logger("AuthenticatedReceiver");
   private final AuthenticatedContext context;
   private final AuthenticatedSender sender;
 
@@ -28,73 +31,67 @@ final class AuthenticatedReceiver {
     this.sender = sender;
   }
 
-  InboundPacket receive() throws InterruptedException {
-    return handleInbound(context.handshakedLink.receive());
+  void runInboundLoop() {
+    while (context.isRunning()) {
+      try {
+        InboundPacket inbound = context.handshakedLink.receive();
+        InboundPacket packet = receivePacket(inbound);
+        if (packet != null) {
+          context.offer(packet);
+        }
+      } catch (LinkClosedException closed) {
+        break;
+      } catch (IllegalStateException exception) {
+        if (!context.isRunning()) {
+          break;
+        }
+        logger.debug("AuthenticatedLink worker error: " + exception.getMessage());
+      } catch (InterruptedException interrupted) {
+        if (!context.isRunning()) {
+          break;
+        }
+        Thread.currentThread().interrupt();
+        break;
+      }
+    }
   }
 
-  InboundPacket receive(long timeoutMs) throws InterruptedException {
-    return handleInbound(context.handshakedLink.receive(timeoutMs));
-  }
-
-  private InboundPacket handleInbound(InboundPacket inbound) {
+  private InboundPacket receivePacket(InboundPacket inbound) {
     if (inbound == null) {
       return null;
     }
 
     ConnectionKey connectionKey = new ConnectionKey(inbound.sender(), inbound.packet().connectionId());
-    if (context.hasSharedSecret(connectionKey)) { // Already Handshaked
-      return handleSecureData(connectionKey, inbound);
-    } else if (context.hasEphemeralPrivateKey(connectionKey)) { // Handshake initiated, waiting for reply
-      return handleHandshakeAfterInit(connectionKey, inbound);
-    } else { // No handshake, expecting initiation
-      return handleHandshakeInit(connectionKey, inbound);
+    AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
+    if (connectionState != null && connectionState.receiveMode() == AuthenticatedConnectionState.ReceiveMode.DATA) {
+      return handleData(connectionState, inbound);
     }
+    if (connectionState != null && connectionState.receiveMode() == AuthenticatedConnectionState.ReceiveMode.HANDSHAKE) {
+      return handleHandshake(connectionKey, connectionState, inbound);
+    }
+    return handleInit(connectionKey, inbound);
   }
 
   // If both sides sent INIT, the higher senderId keeps the initiator role.
-  private InboundPacket handleHandshakeAfterInit(ConnectionKey connectionKey, InboundPacket inbound) {
-    if (inbound.packet().type() != DpchType.DATA) {
+  private InboundPacket handleHandshake(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InboundPacket inbound) {
+    DecodedEcdsaPayload decodedPayload = decodeHandshakePayload(inbound);
+    if (decodedPayload == null) {
       return null;
     }
 
-    DecodedEcdsaPayload decodedPayload;
-    try {
-      decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
-    } catch (IllegalArgumentException ignored) {
-      return null;
-    }
-
-    if (decodedPayload.opcode() == AuthOpcode.REPLY) {
-      return handleHandshakeReply(connectionKey, inbound);
-    }
-
-    if (decodedPayload.opcode() != AuthOpcode.INIT) {
-      return null;
-    }
-
-    // When both sides initiate at the same time, the higher senderId keeps the initiator role.
-    if (decodedPayload.senderId() <= context.localSenderId) {
-      return null;
-    }
-
-    context.removeEphemeralPrivateKey(connectionKey);
-    return handleHandshakeInit(connectionKey, inbound);
+    return switch (connectionState.decideHandshake(decodedPayload.opcode(), decodedPayload.senderId(), context.localSenderId)) {
+      case USE_REPLY -> handleReply(connectionKey, inbound);
+      case RESTART -> handleInit(connectionKey, inbound);
+      case IGNORE -> null;
+    };
   }
 
-  private InboundPacket handleHandshakeInit(ConnectionKey connectionKey, InboundPacket inbound) {
-    if (inbound.packet().type() != DpchType.DATA) {
-      return null;
-    }
+  private InboundPacket handleInit(ConnectionKey connectionKey, InboundPacket inbound) {
+    return handleInit(connectionKey, inbound, decodeHandshakePayload(inbound));
+  }
 
-    // The first packet must contain an ECDSA-signed ephemeral key.
-    DecodedEcdsaPayload decodedPayload;
-    try {
-      decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
-    } catch (IllegalArgumentException ignored) {
-      return null;
-    }
-
-    if (decodedPayload.opcode() != AuthOpcode.INIT) {
+  private InboundPacket handleInit(ConnectionKey connectionKey, InboundPacket inbound, DecodedEcdsaPayload decodedPayload) {
+    if (decodedPayload == null || decodedPayload.opcode() != AuthOpcode.INIT) {
       return null;
     }
 
@@ -106,21 +103,13 @@ final class AuthenticatedReceiver {
     }
 
     // Only trust the peer ephemeral key if the static signature is valid.
-    boolean isValidEcdsaHandshake;
-    try {
-      isValidEcdsaHandshake = AuthenticatedPayload.verifyEcdsa(inbound.packet().payload(), senderStaticPKey);
-    } catch (Exception ignored) {
-      isValidEcdsaHandshake = false;
-    }
-    if (!isValidEcdsaHandshake) {
+    if (!verifyHandshakePayload(decodedPayload, senderStaticPKey)) {
       return null;
     }
 
     // Decode the sender's ephemeral public key.
-    PublicKey peerEphemeralPKey;
-    try {
-      peerEphemeralPKey = PublicKeyLoader.decodePublicKey(decodedPayload.publicKeyBytes());
-    } catch (Exception exception) {
+    PublicKey peerEphemeralPKey = decodePublicKey(decodedPayload.publicKeyBytes());
+    if (peerEphemeralPKey == null) {
       return null;
     }
 
@@ -133,37 +122,18 @@ final class AuthenticatedReceiver {
     }
 
     // Derive the shared secret (K) via ECDH using both ephemeral keys.
-    SecretKey sharedSecret;
-    try {
-      CryptoUtil.KeyContext hkdfContext = newHandshakeKeyContext(connectionKey);
-      sharedSecret = CryptoUtil.deriveCommonKey(localEKeys.getPrivate(), peerEphemeralPKey, hkdfContext);
-    } catch (Exception exception) {
-      throw new IllegalStateException("Failed to derive shared secret", exception);
-    }
+    SecretKey sharedSecret = deriveSharedSecret(connectionKey, localEKeys.getPrivate(), peerEphemeralPKey);
 
-    // Send the handshake reply containing our ECDSA-signed ephemeral public key and save the shared
-    // secret K.
-    sender.sendHandshakeReply(connectionKey, localEKeys, inbound.sender());
-    context.putSharedSecret(connectionKey, sharedSecret);
-    context.ensureNonceState(connectionKey);
-    sender.flushPendingPayloads(connectionKey, inbound.sender());
+    sender.sendReply(connectionKey, localEKeys, inbound.sender());
+    AuthenticatedConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
+    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret);
+    sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
     return null;
   }
 
-  private InboundPacket handleHandshakeReply(ConnectionKey connectionKey, InboundPacket inbound) {
-    if (inbound.packet().type() != DpchType.DATA) {
-      return null;
-    }
-
-    // The reply must contain an ECDSA-signed ephemeral key.
-    DecodedEcdsaPayload decodedPayload;
-    try {
-      decodedPayload = AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
-    } catch (IllegalArgumentException ignored) {
-      return null;
-    }
-
-    if (decodedPayload.opcode() != AuthOpcode.REPLY) {
+  private InboundPacket handleReply(ConnectionKey connectionKey, InboundPacket inbound) {
+    DecodedEcdsaPayload decodedPayload = decodeHandshakePayload(inbound);
+    if (decodedPayload == null || decodedPayload.opcode() != AuthOpcode.REPLY) {
       return null;
     }
 
@@ -175,51 +145,37 @@ final class AuthenticatedReceiver {
     }
 
     // Verify the handshake reply signature using the responder's static public key.
-    boolean isValidEcdsaReply;
-    try {
-      isValidEcdsaReply = AuthenticatedPayload.verifyEcdsa(inbound.packet().payload(), responderStaticPKey);
-    } catch (Exception ignored) {
-      isValidEcdsaReply = false;
-    }
-    if (!isValidEcdsaReply) {
+    if (!verifyHandshakePayload(decodedPayload, responderStaticPKey)) {
       return null;
     }
 
     // Decode the responder's ephemeral public key.
-    PublicKey peerEphemeralPKey;
-    try {
-      peerEphemeralPKey = PublicKeyLoader.decodePublicKey(decodedPayload.publicKeyBytes());
-    } catch (Exception exception) {
+    PublicKey peerEphemeralPKey = decodePublicKey(decodedPayload.publicKeyBytes());
+    if (peerEphemeralPKey == null) {
       return null;
     }
 
     // Retrieve our pending ephemeral private key generated during HANDSHAKE_INIT.
-    PrivateKey localEphemeralSKey = context.getEphemeralPrivateKey(connectionKey);
+    AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
+    if (connectionState == null) {
+      return null;
+    }
+
+    PrivateKey localEphemeralSKey = connectionState.ephemeralPrivateKey();
     if (localEphemeralSKey == null) {
       return null;
     }
 
     // Derive the shared secret (K) via ECDH using both ephemeral keys.
-    SecretKey sharedSecret;
-    try {
-      CryptoUtil.KeyContext hkdfContext = newHandshakeKeyContext(connectionKey);
-      sharedSecret = CryptoUtil.deriveCommonKey(localEphemeralSKey, peerEphemeralPKey, hkdfContext);
-    } catch (Exception exception) {
-      throw new IllegalStateException("Failed to derive shared SecretKey K", exception);
-    }
+    SecretKey sharedSecret = deriveSharedSecret(connectionKey, localEphemeralSKey, peerEphemeralPKey);
 
-    // Save the shared secret (K) in the connection context for subsequent HMAC validations.
-    context.putSharedSecret(connectionKey, sharedSecret);
-
-    // Destroy the pending ephemeral private key from memory (perfect forward secrecy).
-    context.removeEphemeralPrivateKey(connectionKey);
-    context.ensureNonceState(connectionKey);
-    sender.flushPendingPayloads(connectionKey, inbound.sender());
+    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret);
+    sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
 
     return null;
   }
 
-  private InboundPacket handleSecureData(ConnectionKey connectionKey, InboundPacket inbound) {
+  private InboundPacket handleData(AuthenticatedConnectionState connectionState, InboundPacket inbound) {
     if (inbound.packet().type() != DpchType.DATA) {
       return null;
     }
@@ -239,7 +195,7 @@ final class AuthenticatedReceiver {
     // Verify the HMAC using the shared secret K for this connection.
     boolean isValidHmac;
     try {
-      isValidHmac = AuthenticatedPayload.verifyHmac(inbound.packet().payload(), context.getSharedSecret(connectionKey));
+      isValidHmac = AuthenticatedPayload.verifyHmac(decodedPayload, connectionState.sharedSecret());
     } catch (Exception ignored) {
       isValidHmac = false;
     }
@@ -248,14 +204,48 @@ final class AuthenticatedReceiver {
     }
 
     // Validate the nonce to protect against replay attacks.
-    long expectedNonce = context.getReceivedNonce(connectionKey) + 1;
-    if (decodedPayload.nonce() != expectedNonce) {
+    if (!connectionState.validateAndIncrementReceivedNonce(decodedPayload.nonce())) {
+      return null;
+    }
+    DpchPacket decodedPacket = DpchPacket.from(inbound.packet().connectionId(), inbound.packet().type(), inbound.packet().sequenceNumber(), decodedPayload.payload());
+    return new InboundPacket(inbound.sender(), decodedPacket);
+  }
+
+  private DecodedEcdsaPayload decodeHandshakePayload(InboundPacket inbound) {
+    if (inbound.packet().type() != DpchType.DATA) {
       return null;
     }
 
-    context.incrementReceivedNonce(connectionKey);
-    Dpch decodedPacket = Dpch.from(inbound.packet().connectionId(), inbound.packet().type(), inbound.packet().sequenceNumber(), decodedPayload.payload());
-    return new InboundPacket(inbound.sender(), decodedPacket);
+    try {
+      return AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
+    } catch (IllegalArgumentException ignored) {
+      return null;
+    }
+  }
+
+  private boolean verifyHandshakePayload(DecodedEcdsaPayload payload, PublicKey staticPublicKey) {
+    try {
+      return AuthenticatedPayload.verifyEcdsa(payload, staticPublicKey);
+    } catch (Exception ignored) {
+      return false;
+    }
+  }
+
+  private PublicKey decodePublicKey(byte[] publicKeyBytes) {
+    try {
+      return PublicKeyLoader.decodePublicKey(publicKeyBytes);
+    } catch (Exception ignored) {
+      return null;
+    }
+  }
+
+  private SecretKey deriveSharedSecret(ConnectionKey connectionKey, PrivateKey localPrivateKey, PublicKey peerPublicKey) {
+    try {
+      CryptoUtil.KeyContext hkdfContext = newHandshakeKeyContext(connectionKey);
+      return CryptoUtil.deriveCommonKey(localPrivateKey, peerPublicKey, hkdfContext);
+    } catch (Exception exception) {
+      throw new IllegalStateException("Failed to derive shared secret", exception);
+    }
   }
 
   private static CryptoUtil.KeyContext newHandshakeKeyContext(ConnectionKey connectionKey) {
@@ -263,3 +253,4 @@ final class AuthenticatedReceiver {
     return new CryptoUtil.KeyContext("SESSION_" + connectionKey.connectionId(), "HANDSHAKE");
   }
 }
+
