@@ -457,12 +457,6 @@ class SecTest {
     for (StartedServer server : servers) {
       server.awaitOutputDrain(Duration.ofSeconds(1));
     }
-
-    try {
-      Thread.sleep(Duration.ofSeconds(3).toMillis());
-    } catch (InterruptedException interrupted) {
-      Thread.currentThread().interrupt();
-    }
   }
 
   private static String javaExecutable() {

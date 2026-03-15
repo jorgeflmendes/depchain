@@ -33,6 +33,7 @@ public final class DpchClient {
   private static final Logger logger = LoggerFactory.getLogger(DpchClient.class);
 
   private final ConfigParser.ReplicaSection targetReplicaConfig;
+  private final InetSocketAddress targetAddress;
   private final long localSenderId;
   private final PrivateKey localStaticSKey;
   private final Map<Long, PublicKey> staticPKeys;
@@ -41,6 +42,7 @@ public final class DpchClient {
   public DpchClient(String targetReplicaId, String configPath) throws Exception {
     ConfigParser config = ConfigParser.load(Path.of(configPath));
     this.targetReplicaConfig = config.requireReplicaById(targetReplicaId);
+    this.targetAddress = new InetSocketAddress(targetReplicaConfig.host(), targetReplicaConfig.clientPort());
     this.localSenderId = config.client().senderId();
     this.localStaticSKey = PrivateKeyLoader.loadClientPrivateKey(config);
     this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(config);
@@ -48,14 +50,17 @@ public final class DpchClient {
   }
 
   public void run() {
-    try (Scanner scanner = new Scanner(System.in)) {
-      runInputLoop(scanner);
+    try (AuthenticatedLink transport = AuthenticatedLink.unbound(localSenderId, localStaticSKey, staticPKeys);
+        Scanner scanner = new Scanner(System.in)) {
+      runInputLoop(scanner, transport);
+    } catch (Exception exception) {
+      throw new IllegalStateException("Failed to initialize client transport", exception);
     }
 
     logger.info("Shutting down...");
   }
 
-  private void runInputLoop(Scanner scanner) {
+  private void runInputLoop(Scanner scanner, AuthenticatedLink transport) {
     while (true) {
       logger.info("Enter a value to append or 'EXIT' to quit:");
       String input = scanner.nextLine();
@@ -65,7 +70,7 @@ public final class DpchClient {
       }
 
       try {
-        String response = sendAppendRequest(input);
+        String response = sendAppendRequest(transport, input);
         if (response == null) {
           logger.info("Request timed out.");
           continue;
@@ -77,12 +82,8 @@ public final class DpchClient {
     }
   }
 
-  private String sendAppendRequest(String value) throws Exception {
-    InetSocketAddress targetAddress = new InetSocketAddress(targetReplicaConfig.host(), targetReplicaConfig.clientPort());
-
-    try (AuthenticatedLink transport = AuthenticatedLink.unbound(localSenderId, localStaticSKey, staticPKeys)) {
-      return runRequestLoop(transport, value, targetAddress);
-    }
+  private String sendAppendRequest(AuthenticatedLink transport, String value) throws Exception {
+    return runRequestLoop(transport, value, targetAddress);
   }
 
   private String runRequestLoop(AuthenticatedLink transport, String value, InetSocketAddress targetAddress) throws IOException, InterruptedException {
@@ -127,9 +128,9 @@ public final class DpchClient {
         }
       }
 
-      long deadlineMs = TimeUtil.deadlineAfterNow(requestTimeoutMs);
-      while (!TimeUtil.hasTimedOut(deadlineMs)) {
-        long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
+      long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(requestTimeoutMs);
+      while (!TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
+        long remainingMs = TimeUtil.monotonicRemainingMsUntil(deadlineNanos);
         InboundPacket inbound = transport.receive(remainingMs);
         if (inbound != null) {
           return inbound;

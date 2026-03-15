@@ -62,35 +62,35 @@ public final class DpchServer {
       this.replica.initNetwork(nodeTransport, clientTransport);
       workers.submit(() -> this.replica.run());
 
-      // New thread for handling messages from other replicas
-      workers.submit(() -> runNodeLoop(nodeTransport, workers));
+      // Dedicated loop for inter-replica traffic.
+      workers.submit(() -> runNodeLoop(nodeTransport));
 
-      // This thread will handle client requests
-      runClientLoop(clientTransport, workers);
+      // This thread handles client traffic inline to avoid per-packet task churn.
+      runClientLoop(clientTransport);
     }
   }
 
   // Loop for handling messages from clients
-  private void runClientLoop(AuthenticatedLink transport, ExecutorService workers) {
+  private void runClientLoop(AuthenticatedLink transport) {
     while (true) {
       InboundPacket request = receiveNextInbound(transport);
       if (request == null) {
         continue;
       }
 
-      workers.submit(() -> handleClientRequest(transport, request.packet(), request.sender()));
+      handleClientRequest(transport, request.packet(), request.sender());
     }
   }
 
   // Loop for handling messages from other replicas
-  private void runNodeLoop(AuthenticatedLink transport, ExecutorService workers) {
+  private void runNodeLoop(AuthenticatedLink transport) {
     while (true) {
       InboundPacket request = receiveNextInbound(transport);
       if (request == null) {
         continue;
       }
 
-      workers.submit(() -> handleNodeRequest(transport, request.packet(), request.sender()));
+      handleNodeRequest(transport, request.packet(), request.sender());
     }
   }
 
@@ -107,7 +107,7 @@ public final class DpchServer {
   // Handles messages from clients
   private void handleClientRequest(AuthenticatedLink transport, DpchPacket inbound, InetSocketAddress sender) {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
-    logger.info("Client request from {}", sender);
+    logger.debug("Client request from {}", sender);
 
     try {
       ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.getPayload()), "ClientRequest");

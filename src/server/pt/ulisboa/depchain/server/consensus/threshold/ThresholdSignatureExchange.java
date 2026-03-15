@@ -2,12 +2,15 @@ package pt.ulisboa.depchain.server.consensus.threshold;
 
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.TimeUnit;
@@ -38,6 +41,7 @@ final class ThresholdSignatureExchange {
 
   private final ConfigParser config;
   private final long viewChangeTimeoutMs;
+  private final Map<Integer, InetSocketAddress> consensusEndpointsBySenderId;
 
   private AuthenticatedLink nodeTransport;
 
@@ -47,6 +51,7 @@ final class ThresholdSignatureExchange {
 
     this.config = config;
     this.viewChangeTimeoutMs = viewChangeTimeoutMs;
+    this.consensusEndpointsBySenderId = buildConsensusEndpointsBySenderId(config);
   }
 
   void initTransport(AuthenticatedLink nodeTransport) {
@@ -154,52 +159,59 @@ final class ThresholdSignatureExchange {
     ValidationUtils.requireNonNegativeInt(senderId, "senderId");
     ValidationUtils.requireAllNonNull(named("msg", msg), named("nodeTransport", nodeTransport));
 
-    ConfigParser.ReplicaSection replica = config.requireReplicaBySenderId(senderId);
     byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
-    InetAddress host = InetAddress.getByName(replica.host());
-    InetSocketAddress address = new InetSocketAddress(host, replica.consensusPort());
-    nodeTransport.send(0L, payload, address);
+    nodeTransport.send(0L, payload, requireConsensusEndpoint(senderId));
   }
 
   private List<Message> collectMatchingMessages(int expectedCount, BlockingDeque<Message> messageQueue, Predicate<Message> matcher) {
     ValidationUtils.requireNonNegativeInt(expectedCount, "expectedCount");
     ValidationUtils.requireAllNonNull(named("messageQueue", messageQueue), named("matcher", matcher));
 
-    long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
+    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
     LinkedHashMap<Integer, Message> messagesBySender = new LinkedHashMap<>();
-    while (messagesBySender.size() < expectedCount) {
-      Message msg = takeMessageUntilDeadline(messageQueue, deadlineMs);
-      if (matcher.test(msg)) {
-        messagesBySender.putIfAbsent(msg.getReplicaSenderId(), msg);
-      } else {
-        messageQueue.addLast(msg);
+    ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
+    try {
+      while (messagesBySender.size() < expectedCount) {
+        Message msg = takeMessageUntilDeadline(messageQueue, deadlineNanos);
+        if (matcher.test(msg)) {
+          messagesBySender.putIfAbsent(msg.getReplicaSenderId(), msg);
+        } else {
+          deferredMessages.addLast(msg);
+        }
       }
-    }
 
-    return new ArrayList<>(messagesBySender.values());
+      return new ArrayList<>(messagesBySender.values());
+    } finally {
+      restoreDeferredMessages(messageQueue, deferredMessages);
+    }
   }
 
   private Message waitForMatchingMessage(BlockingDeque<Message> messageQueue, Predicate<Message> matcher) {
     ValidationUtils.requireAllNonNull(named("messageQueue", messageQueue), named("matcher", matcher));
 
-    long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
-    while (true) {
-      Message msg = takeMessageUntilDeadline(messageQueue, deadlineMs);
-      if (matcher.test(msg)) {
-        return msg;
-      }
+    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+    ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
+    try {
+      while (true) {
+        Message msg = takeMessageUntilDeadline(messageQueue, deadlineNanos);
+        if (matcher.test(msg)) {
+          return msg;
+        }
 
-      messageQueue.addLast(msg);
+        deferredMessages.addLast(msg);
+      }
+    } finally {
+      restoreDeferredMessages(messageQueue, deferredMessages);
     }
   }
 
-  private Message takeMessageUntilDeadline(BlockingDeque<Message> messageQueue, long deadlineMs) {
-    if (TimeUtil.hasTimedOut(deadlineMs)) {
+  private Message takeMessageUntilDeadline(BlockingDeque<Message> messageQueue, long deadlineNanos) {
+    if (TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
       throw new ViewChangeTimeoutException("Timed out waiting for threshold messages");
     }
 
     try {
-      long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
+      long remainingMs = TimeUtil.monotonicRemainingMsUntil(deadlineNanos);
       Message msg = messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
       if (msg == null) {
         throw new ViewChangeTimeoutException("Timed out waiting for threshold messages");
@@ -223,5 +235,31 @@ final class ThresholdSignatureExchange {
 
   private int replicaIndexForSender(int senderId) {
     return config.requireReplicaIndexForSenderId(senderId);
+  }
+
+  private InetSocketAddress requireConsensusEndpoint(int senderId) {
+    InetSocketAddress endpoint = consensusEndpointsBySenderId.get(senderId);
+    if (endpoint == null) {
+      throw new IllegalArgumentException("Unknown consensus endpoint for senderId " + senderId);
+    }
+    return endpoint;
+  }
+
+  private static void restoreDeferredMessages(BlockingDeque<Message> messageQueue, ArrayDeque<Message> deferredMessages) {
+    while (!deferredMessages.isEmpty()) {
+      messageQueue.addFirst(deferredMessages.removeLast());
+    }
+  }
+
+  private static Map<Integer, InetSocketAddress> buildConsensusEndpointsBySenderId(ConfigParser config) {
+    Map<Integer, InetSocketAddress> endpointsBySenderId = new HashMap<>();
+    for (ConfigParser.ReplicaSection replica : config.replicas()) {
+      try {
+        endpointsBySenderId.put(Math.toIntExact(replica.senderId()), new InetSocketAddress(java.net.InetAddress.getByName(replica.host()), replica.consensusPort()));
+      } catch (UnknownHostException exception) {
+        throw new IllegalStateException("Unable to resolve consensus host for replica " + replica.id(), exception);
+      }
+    }
+    return Map.copyOf(endpointsBySenderId);
   }
 }

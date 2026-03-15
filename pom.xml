@@ -19,6 +19,8 @@
     <slf4j.version>2.0.17</slf4j.version>
     <logback.version>1.5.17</logback.version>
     <bouncycastle.version>1.81</bouncycastle.version>
+    <cluster.config.path>config/config.yaml</cluster.config.path>
+    <cluster.client.replicaId>server1</cluster.client.replicaId>
   </properties>
 
   <dependencies>
@@ -251,6 +253,28 @@
             </goals>
             <configuration>
               <mainClass>pt.ulisboa.depchain.client.Main</mainClass>
+            </configuration>
+          </execution>
+          <execution>
+            <id>open-local-cluster</id>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>powershell</executable>
+              <arguments>
+                <argument>-NoProfile</argument>
+                <argument>-ExecutionPolicy</argument>
+                <argument>Bypass</argument>
+                <argument>-File</argument>
+                <argument>${project.basedir}/scripts/open-local-cluster.ps1</argument>
+                <argument>-ProjectDir</argument>
+                <argument>${project.basedir}</argument>
+                <argument>-ConfigPath</argument>
+                <argument>${cluster.config.path}</argument>
+                <argument>-ClientReplicaId</argument>
+                <argument>${cluster.client.replicaId}</argument>
+              </arguments>
             </configuration>
           </execution>
         </executions>

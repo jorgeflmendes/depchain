@@ -1,19 +1,20 @@
 package pt.ulisboa.depchain.server.consensus;
 
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
+import java.util.ArrayDeque;
 import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
@@ -45,8 +46,6 @@ import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class Replica {
-  private static final long NO_OP_DELAY_MS = 100L;
-
   private ConfigParser config;
   private PublicKey clientPublicKey;
 
@@ -65,13 +64,15 @@ public class Replica {
   private long viewChangeTimeoutMs;
 
   private int viewNumber;
+  private QuorumCertificate highQC;
   private QuorumCertificate lockedQC;
   private QuorumCertificate prepareQC;
   private Node currentProposal;
   private Map<String, Node> blockTree;
+  private final Map<Integer, InetSocketAddress> consensusEndpointsBySenderId;
 
   private BlockingDeque<Message> messageQueue;
-  private Queue<ClientRequest> pendingCommands;
+  private final BlockingQueue<ClientRequest> pendingCommands;
 
   private ThresholdSignatureProtocol thresholdProtocol;
   private final Logger logger;
@@ -92,14 +93,16 @@ public class Replica {
     this.viewChangeTimeoutMs = config.timeouts().viewChangeMs();
 
     this.thresholdProtocol = new ThresholdSignatureProtocol(id, config, localThresholdShare, publicThresholdKey);
+    this.highQC = thresholdProtocol.genesisQC();
     this.lockedQC = thresholdProtocol.genesisQC();
     this.prepareQC = thresholdProtocol.genesisQC();
     this.currentProposal = ConsensusUtil.GENESIS_NODE;
     this.viewNumber = 0;
     this.blockTree = new HashMap<>();
+    this.consensusEndpointsBySenderId = buildConsensusEndpointsBySenderId(config);
 
     this.messageQueue = new LinkedBlockingDeque<>();
-    this.pendingCommands = new LinkedList<>();
+    this.pendingCommands = new LinkedBlockingQueue<>();
 
     blockTree.put(ConsensusUtil.GENESIS_NODE.getNodeHash(), ConsensusUtil.GENESIS_NODE);
   }
@@ -133,6 +136,7 @@ public class Replica {
       return;
     }
 
+    observeMessage(msg);
     messageQueue.add(msg);
   }
 
@@ -153,28 +157,30 @@ public class Replica {
 
   private void onPrepare() {
     if (isLeader()) {
-      List<Message> msgs = waitForQuorumMessages(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, viewNumber, quorum - 1);
-      QuorumCertificate highQC = prepareQC;
+      long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+      List<Message> msgs = waitForQuorumMessagesUntil(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, viewNumber, quorum - 1, deadlineNanos);
+      QuorumCertificate selectedHighQC = highQC;
       for (Message m : msgs) {
         QuorumCertificate justifyQc = m.hasPhaseCertificate() ? m.getPhaseCertificate().getJustifyQc() : null;
-        if (justifyQc != null && justifyQc.getViewNumber() > highQC.getViewNumber()) {
-          highQC = justifyQc;
+        if (justifyQc != null && justifyQc.getViewNumber() > selectedHighQC.getViewNumber()) {
+          selectedHighQC = justifyQc;
         }
       }
+      updateHighQC(selectedHighQC);
 
-      ClientRequest request = pollNextCommand();
+      ClientRequest request = awaitNextCommandUntil(deadlineNanos);
       if (request == null) {
-        waitBeforeNoOpProposal();
-        currentProposal = createLeaf(highQC.getCertifiedNode().getNodeHash(), ConsensusUtil.NO_OP_COMMAND);
-      } else {
-        NodeCommand command = NodeCommand.newBuilder()
-            .setAppend(AppendNodeCommand.newBuilder().setClientRequestKey(request.getAppend().getRequestKey()).setValue(request.getAppend().getValue()))
-            .build();
-        currentProposal = createLeaf(highQC.getCertifiedNode().getNodeHash(), command);
+        throw new ViewChangeTimeoutException("Timed out waiting for client command");
       }
 
+      NodeCommand command = NodeCommand.newBuilder()
+          .setAppend(AppendNodeCommand.newBuilder().setClientRequestKey(request.getAppend().getRequestKey()).setValue(request.getAppend().getValue()))
+          .build();
+      currentProposal = createLeaf(selectedHighQC.getCertifiedNode().getNodeHash(), command);
+      observeNode(currentProposal);
+
       Message proposal = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE)
-          .setProposal(ProposalMessage.newBuilder().setProposedNode(currentProposal).setJustifyQc(highQC)).build();
+          .setProposal(ProposalMessage.newBuilder().setProposedNode(currentProposal).setJustifyQc(selectedHighQC)).build();
       broadcast(proposal);
     } else {
       Message prepareMsg = waitForMessageFromSender(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber));
@@ -186,9 +192,12 @@ public class Replica {
       Node proposedNode = prepareMsg.hasProposal() ? prepareMsg.getProposal().getProposedNode() : null;
 
       boolean hasValidJustify = justify != null && verifyQC(justify);
+      boolean hasValidProposedNode = proposedNode != null && hasValidNode(proposedNode);
       boolean extendsJustifiedNode = justify != null && proposedNode != null && ConsensusUtil.extendsNode(proposedNode, justify.getCertifiedNode());
       boolean isSafeProposal = proposedNode != null && safeNode(proposedNode, justify);
-      if (hasValidJustify && extendsJustifiedNode && isSafeProposal) {
+      if (hasValidJustify && hasValidProposedNode && extendsJustifiedNode && isSafeProposal) {
+        observeQuorumCertificate(justify);
+        observeNode(proposedNode);
         currentProposal = proposedNode;
         sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, currentProposal));
       }
@@ -198,10 +207,12 @@ public class Replica {
   private void onPreCommit() {
     if (isLeader()) {
       prepareQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, currentProposal);
+      updateHighQC(prepareQC);
       broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC));
     } else {
       Message msg = waitForQCMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber));
       prepareQC = msg.getPhaseCertificate().getJustifyQc();
+      updateHighQC(prepareQC);
       sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC.getCertifiedNode()));
     }
   }
@@ -210,10 +221,12 @@ public class Replica {
     if (isLeader()) {
       QuorumCertificate preCommitQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, currentProposal);
       lockedQC = preCommitQC;
+      updateHighQC(preCommitQC);
       broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, preCommitQC));
     } else {
       Message msg = waitForQCMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, viewNumber, getLeader(viewNumber));
       lockedQC = msg.getPhaseCertificate().getJustifyQc();
+      updateHighQC(lockedQC);
       sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, lockedQC.getCertifiedNode()));
     }
   }
@@ -221,11 +234,14 @@ public class Replica {
   private void onDecide() {
     if (isLeader()) {
       QuorumCertificate commitQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, currentProposal);
+      updateHighQC(commitQC);
       broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE, commitQC));
       executeCommand(currentProposal);
     } else {
       Message msg = waitForQCMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, viewNumber, getLeader(viewNumber));
-      executeCommand(msg.getPhaseCertificate().getJustifyQc().getCertifiedNode());
+      QuorumCertificate decideQC = msg.getPhaseCertificate().getJustifyQc();
+      updateHighQC(decideQC);
+      executeCommand(decideQC.getCertifiedNode());
     }
   }
 
@@ -241,9 +257,9 @@ public class Replica {
     ClientRequestKey requestKey = command.hasAppend() ? command.getAppend().getClientRequestKey() : null;
 
     if (!ConsensusUtil.isNoOp(command)) {
-      logger.info("Executing command: {}", clientCommand);
+      logger.debug("Executing command: {}", clientCommand);
     }
-    blockTree.put(node.getNodeHash(), node);
+    observeNode(node);
     if (requestKey == null) {
       return;
     }
@@ -266,10 +282,12 @@ public class Replica {
     byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
 
     for (ConfigParser.ReplicaSection peer : config.replicas()) {
+      if (peer.senderId() == id) {
+        continue;
+      }
+
       try {
-        InetAddress peerHost = InetAddress.getByName(peer.host());
-        InetSocketAddress addr = new InetSocketAddress(peerHost, peer.consensusPort());
-        nodeTransport.send(0L, payload, addr);
+        nodeTransport.send(0L, payload, requireConsensusEndpoint(peer.senderId()));
       } catch (Exception e) {
         logger.error("Error in broadcast to {}", peer.id(), e);
       }
@@ -279,11 +297,13 @@ public class Replica {
   private void sendToLeader(Message msg) {
     try {
       int leaderId = getLeader(viewNumber);
-      ConfigParser.ReplicaSection leader = config.requireReplicaBySenderId(leaderId);
-      InetAddress leaderHost = InetAddress.getByName(leader.host());
-      InetSocketAddress addr = new InetSocketAddress(leaderHost, leader.consensusPort());
+      if (leaderId == id) {
+        receiveMessage(msg);
+        return;
+      }
+
       byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
-      nodeTransport.send(0L, payload, addr);
+      nodeTransport.send(0L, payload, requireConsensusEndpoint(leaderId));
     } catch (Exception e) {
       logger.error("Error sending message to leader", e);
     }
@@ -301,55 +321,66 @@ public class Replica {
     return thresholdProtocol.verifyQC(qc);
   }
 
-  private List<Message> waitForQuorumMessages(ConsensusMessageType type, int view, int requiredCount) {
+  private List<Message> waitForQuorumMessagesUntil(ConsensusMessageType type, int view, int requiredCount, long deadlineNanos) {
     LinkedHashMap<Integer, Message> msgsBySender = new LinkedHashMap<>();
-    long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
-    while (msgsBySender.size() < requiredCount) {
-      Message msg = pollMessageUntil(deadlineMs, "waiting for " + type + " messages");
+    ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
+    try {
+      while (msgsBySender.size() < requiredCount) {
+        Message msg = pollMessageUntil(deadlineNanos, "waiting for " + type + " messages");
 
-      if (msg != null && matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {
-        msgsBySender.putIfAbsent(msg.getReplicaSenderId(), msg);
-      } else if (msg != null) {
-        messageQueue.addLast(msg);
+        if (matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {
+          msgsBySender.putIfAbsent(msg.getReplicaSenderId(), msg);
+        } else {
+          deferredMessages.addLast(msg);
+        }
       }
-    }
 
-    return new ArrayList<>(msgsBySender.values());
+      return new ArrayList<>(msgsBySender.values());
+    } finally {
+      restoreDeferredMessages(deferredMessages);
+    }
   }
 
   private Message waitForMessageFromSender(ConsensusMessageType type, int view, int sender) {
-    long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
-    while (true) {
-      Message msg = pollMessageUntil(deadlineMs, "waiting for " + type + " from " + sender);
-      if (msg != null && msg.getReplicaSenderId() == sender && matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {
-        return msg;
-      } else if (msg != null) {
-        messageQueue.addLast(msg);
+    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+    ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
+    try {
+      while (true) {
+        Message msg = pollMessageUntil(deadlineNanos, "waiting for " + type + " from " + sender);
+        if (msg.getReplicaSenderId() == sender && matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {
+          return msg;
+        }
+        deferredMessages.addLast(msg);
       }
+    } finally {
+      restoreDeferredMessages(deferredMessages);
     }
   }
 
   private Message waitForQCMessage(ConsensusMessageType type, int view, int sender) {
-    long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
-    while (true) {
-      Message msg = pollMessageUntil(deadlineMs, "waiting for QC " + type);
-      QuorumCertificate justifyQc = msg != null && msg.hasPhaseCertificate() ? msg.getPhaseCertificate().getJustifyQc() : null;
-      if (msg != null && matchingQC(justifyQc, type, view) && msg.getReplicaSenderId() == sender && !thresholdProtocol.isAuxiliaryMessage(msg) && verifyQC(justifyQc)) {
-        return msg;
+    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+    ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
+    try {
+      while (true) {
+        Message msg = pollMessageUntil(deadlineNanos, "waiting for QC " + type);
+        QuorumCertificate justifyQc = msg.hasPhaseCertificate() ? msg.getPhaseCertificate().getJustifyQc() : null;
+        if (matchingQC(justifyQc, type, view) && msg.getReplicaSenderId() == sender && !thresholdProtocol.isAuxiliaryMessage(msg) && verifyQC(justifyQc)) {
+          return msg;
+        }
+        deferredMessages.addLast(msg);
       }
-      if (msg != null) {
-        messageQueue.addLast(msg);
-      }
+    } finally {
+      restoreDeferredMessages(deferredMessages);
     }
   }
 
-  private Message pollMessageUntil(long deadlineMs, String description) {
-    if (TimeUtil.hasTimedOut(deadlineMs)) {
+  private Message pollMessageUntil(long deadlineNanos, String description) {
+    if (TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
       throw new ViewChangeTimeoutException("Timed out " + description);
     }
 
     try {
-      long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
+      long remainingMs = TimeUtil.monotonicRemainingMsUntil(deadlineNanos);
       Message msg = messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
       if (msg == null) {
         throw new ViewChangeTimeoutException("Timed out " + description);
@@ -371,7 +402,7 @@ public class Replica {
     if (node == null || qc == null) {
       return false;
     }
-    return ConsensusUtil.extendsNode(node, lockedQC.getCertifiedNode()) || qc.getViewNumber() > lockedQC.getViewNumber();
+    return extendsKnownBranch(node, lockedQC.getCertifiedNode()) || qc.getViewNumber() > lockedQC.getViewNumber();
   }
 
   private int getLeader(int view) {
@@ -402,8 +433,19 @@ public class Replica {
   }
 
   private void resubmitClientCommands() {
+    if (pendingForwardedRequests.isEmpty()) {
+      return;
+    }
+
+    if (isLeader()) {
+      for (ClientRequest request : pendingForwardedRequests.values()) {
+        enqueueCommandIfNew(request);
+      }
+      return;
+    }
+
     for (ClientRequest request : pendingForwardedRequests.values()) {
-      submitClientRequest(request);
+      forwardClientRequestToLeader(request);
     }
   }
 
@@ -414,27 +456,36 @@ public class Replica {
     }
 
     if (acceptedRequestIds.add(requestKey)) {
-      pendingCommands.add(request);
+      pendingCommands.offer(request);
     }
   }
 
-  private ClientRequest pollNextCommand() {
-    while (!pendingCommands.isEmpty()) {
-      ClientRequest nextRequest = pendingCommands.poll();
-      if (nextRequest != null && !completedRequestIds.contains(nextRequest.getAppend().getRequestKey())) {
+  private ClientRequest awaitNextCommandUntil(long deadlineNanos) {
+    while (true) {
+      ClientRequest nextRequest = pollPendingCommand(deadlineNanos);
+      if (nextRequest == null) {
+        return null;
+      }
+      if (!completedRequestIds.contains(nextRequest.getAppend().getRequestKey())) {
         return nextRequest;
+      }
+    }
+  }
+
+  private ClientRequest pollPendingCommand(long deadlineNanos) {
+    while (!TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
+      try {
+        ClientRequest nextRequest = pendingCommands.poll(TimeUtil.monotonicRemainingMsUntil(deadlineNanos), TimeUnit.MILLISECONDS);
+        if (nextRequest != null) {
+          return nextRequest;
+        }
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new ViewChangeTimeoutException("Interrupted while waiting for client command");
       }
     }
 
     return null;
-  }
-
-  private void waitBeforeNoOpProposal() {
-    try {
-      TimeUnit.MILLISECONDS.sleep(NO_OP_DELAY_MS);
-    } catch (InterruptedException interrupted) {
-      Thread.currentThread().interrupt();
-    }
   }
 
   private void forwardClientRequestToLeader(ClientRequest request) {
@@ -477,5 +528,115 @@ public class Replica {
 
   private boolean matchingQC(QuorumCertificate qc, ConsensusMessageType t, int v) {
     return qc != null && qc.getMessageType() == t && qc.getViewNumber() == v;
+  }
+
+  private void observeMessage(Message msg) {
+    if (msg == null) {
+      return;
+    }
+
+    switch (msg.getBodyCase()) {
+      case PROPOSAL -> {
+        observeQuorumCertificateIfValid(msg.getProposal().getJustifyQc());
+        observeNode(msg.getProposal().getProposedNode());
+      }
+      case PHASE_CERTIFICATE -> observeQuorumCertificateIfValid(msg.getPhaseCertificate().getJustifyQc());
+      case VOTE -> observeNode(msg.getVote().getVotedNode());
+      case COMMITMENT -> observeNode(msg.getCommitment().getVotedNode());
+      case THRESHOLD_CONTEXT -> observeNode(msg.getThresholdContext().getVotedNode());
+      default -> {
+      }
+    }
+  }
+
+  private void observeQuorumCertificateIfValid(QuorumCertificate qc) {
+    if (qc != null && verifyQC(qc)) {
+      observeQuorumCertificate(qc);
+    }
+  }
+
+  private void observeQuorumCertificate(QuorumCertificate qc) {
+    if (qc == null) {
+      return;
+    }
+
+    observeNode(qc.getCertifiedNode());
+    updateHighQC(qc);
+  }
+
+  private void updateHighQC(QuorumCertificate candidateQc) {
+    if (candidateQc == null) {
+      return;
+    }
+
+    if (highQC == null || candidateQc.getViewNumber() > highQC.getViewNumber()) {
+      highQC = candidateQc;
+    }
+  }
+
+  private void observeNode(Node node) {
+    if (node == null || !hasValidNode(node)) {
+      return;
+    }
+
+    blockTree.putIfAbsent(node.getNodeHash(), node);
+  }
+
+  private boolean hasValidNode(Node node) {
+    if (node == null) {
+      return false;
+    }
+    if (ConsensusUtil.isSameNode(node, ConsensusUtil.GENESIS_NODE)) {
+      return true;
+    }
+
+    byte[] expectedHashPayload = ConsensusPayloadUtil.nodeHashPayload(node.getParentNodeHash(), node.getViewNumber(), node.getCommand());
+    return node.getNodeHash().equals(CryptoUtil.sha256Hex(expectedHashPayload));
+  }
+
+  private boolean extendsKnownBranch(Node node, Node ancestor) {
+    if (node == null || ancestor == null) {
+      return false;
+    }
+    if (ConsensusUtil.isSameNode(node, ancestor)) {
+      return true;
+    }
+
+    Node current = node;
+    while (current != null && !ConsensusUtil.isSameNode(current, ancestor)) {
+      String parentHash = current.getParentNodeHash();
+      if (parentHash.equals(current.getNodeHash()) || parentHash.equals("0")) {
+        return ancestor.getNodeHash().equals(parentHash);
+      }
+      current = blockTree.get(parentHash);
+    }
+
+    return current != null && ConsensusUtil.isSameNode(current, ancestor);
+  }
+
+  private void restoreDeferredMessages(ArrayDeque<Message> deferredMessages) {
+    while (!deferredMessages.isEmpty()) {
+      messageQueue.addFirst(deferredMessages.removeLast());
+    }
+  }
+
+  private InetSocketAddress requireConsensusEndpoint(long senderId) {
+    InetSocketAddress endpoint = consensusEndpointsBySenderId.get(Math.toIntExact(senderId));
+    if (endpoint == null) {
+      throw new IllegalArgumentException("Unknown consensus endpoint for senderId " + senderId);
+    }
+    return endpoint;
+  }
+
+  private static Map<Integer, InetSocketAddress> buildConsensusEndpointsBySenderId(ConfigParser config) {
+    Map<Integer, InetSocketAddress> endpointsBySenderId = new HashMap<>();
+    for (ConfigParser.ReplicaSection replica : config.replicas()) {
+      try {
+        endpointsBySenderId.put(Math.toIntExact(replica.senderId()), new InetSocketAddress(java.net.InetAddress.getByName(replica.host()), replica.consensusPort()));
+      } catch (UnknownHostException exception) {
+        throw new IllegalStateException("Unable to resolve consensus host for replica " + replica.id(), exception);
+      }
+    }
+    return Map.copyOf(endpointsBySenderId);
   }
 }
