@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package depchain;
+
+import "validate.proto";
+import "client.proto";
+import "common.proto";
+
+option java_multiple_files = true;
+option java_package = "pt.ulisboa.depchain.proto";
+
+enum ConsensusMessageType {
+  CONSENSUS_MESSAGE_TYPE_UNSPECIFIED = 0;
+  CONSENSUS_MESSAGE_TYPE_NEW_VIEW = 1;
+  CONSENSUS_MESSAGE_TYPE_PREPARE = 2;
+  CONSENSUS_MESSAGE_TYPE_PRE_COMMIT = 3;
+  CONSENSUS_MESSAGE_TYPE_COMMIT = 4;
+  CONSENSUS_MESSAGE_TYPE_DECIDE = 5;
+  CONSENSUS_MESSAGE_TYPE_FORWARDED_REQUEST = 6;
+}
+
+message AppendNodeCommand {
+  ClientRequestKey client_request_key = 1 [(buf.validate.field).required = true];
+  optional string value = 2 [(buf.validate.field).required = true];
+}
+
+message NoOpCommand {}
+
+message GenesisCommand {}
+
+message NodeCommand {
+  oneof body {
+    option (buf.validate.oneof).required = true;
+    AppendNodeCommand append = 1;
+    NoOpCommand no_op = 2;
+    GenesisCommand genesis = 3;
+  }
+}
+
+message Node {
+  option (buf.validate.message).cel = {
+    id: "node.parent-hash.shape"
+    message: "parent_node_hash must be the genesis marker '0' or a 64-char lowercase SHA-256 hex string"
+    expression: "this.parent_node_hash == '0' || this.parent_node_hash.matches('^[0-9a-f]{64}$')"
+  };
+  option (buf.validate.message).cel = {
+    id: "node.hash.shape"
+    message: "node_hash must be the genesis marker '0' or a 64-char lowercase SHA-256 hex string"
+    expression: "this.node_hash == '0' || this.node_hash.matches('^[0-9a-f]{64}$')"
+  };
+  option (buf.validate.message).cel = {
+    id: "node.genesis.layout"
+    message: "genesis nodes must use the genesis command and the fixed parent/hash markers"
+    expression: "has(this.command.genesis) ? (this.parent_node_hash == '0' && this.node_hash == '0' && this.view_number == 0) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "node.non-genesis.hashes"
+    message: "non-genesis nodes must use SHA-256-shaped hashes"
+    expression: "!has(this.command.genesis) ? (this.node_hash.matches('^[0-9a-f]{64}$') && (this.parent_node_hash == '0' || this.parent_node_hash.matches('^[0-9a-f]{64}$'))) : true"
+  };
+
+  string parent_node_hash = 1 [(buf.validate.field).string.min_len = 1];
+  string node_hash = 2 [(buf.validate.field).string.min_len = 1];
+  optional int32 view_number = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  NodeCommand command = 4 [(buf.validate.field).required = true];
+}
+
+message QuorumCertificate {
+  option (buf.validate.message).cel = {
+    id: "qc.type.specified"
+    message: "quorum certificate phase must be specified"
+    expression: "this.message_type != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "qc.genesis.shape"
+    message: "the genesis quorum certificate must be DECIDE at view -1 with no signature"
+    expression: "this.view_number == -1 ? (this.message_type == 5 && has(this.certified_node.command.genesis) && size(this.quorum_signature) == 0) : true"
+  };
+
+  optional ConsensusMessageType message_type = 1 [(buf.validate.field).required = true];
+  optional int32 view_number = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = -1
+  ];
+  Node certified_node = 3 [(buf.validate.field).required = true];
+  optional bytes quorum_signature = 4 [(buf.validate.field).bytes.len = 64];
+}
+
+message ThresholdVotePayload {
+  option (buf.validate.message).cel = {
+    id: "threshold.vote.type.specified"
+    message: "threshold vote payload type must be specified"
+    expression: "this.message_type in [2, 3, 4]"
+  };
+
+  optional ConsensusMessageType message_type = 1 [(buf.validate.field).required = true];
+  optional int32 view_number = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  Node voted_node = 3 [(buf.validate.field).required = true];
+}
+
+message ThresholdSignatureContext {
+  bytes aggregated_commitment = 1 [(buf.validate.field).bytes.len = 32];
+  repeated uint32 participant_replica_indexes = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    unique: true
+  }];
+}
+
+message Message {
+  option (buf.validate.message).cel = {
+    id: "replica.message.type.specified"
+    message: "replica message type must be specified"
+    expression: "this.message_type != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.forwarded-shape"
+    message: "FORWARDED_REQUEST messages must carry only a forwarded client request"
+    expression: "this.message_type == 6 ? (has(this.forwarded_request) && !has(this.message_node) && !has(this.justify_qc) && !has(this.threshold_signature_share) && !has(this.threshold_signature_commitment) && !has(this.threshold_signature_context)) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.threshold-shape"
+    message: "threshold auxiliary messages must carry a node and no QC or forwarded request"
+    expression: "(has(this.threshold_signature_share) || has(this.threshold_signature_commitment) || has(this.threshold_signature_context)) ? (this.message_type in [2, 3, 4] && has(this.message_node) && !has(this.justify_qc) && !has(this.forwarded_request)) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.prepare-shape"
+    message: "non-threshold PREPARE messages must carry a proposal node and justify QC"
+    expression: "(this.message_type == 2 && !has(this.threshold_signature_share) && !has(this.threshold_signature_commitment) && !has(this.threshold_signature_context)) ? (has(this.message_node) && has(this.justify_qc) && !has(this.forwarded_request)) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message-phase-qc-shape"
+    message: "NEW_VIEW, PRE_COMMIT, COMMIT, and DECIDE messages must carry a justify QC when not carrying threshold payloads"
+    expression: "(this.message_type in [1, 3, 4, 5] && !has(this.threshold_signature_share) && !has(this.threshold_signature_commitment) && !has(this.threshold_signature_context)) ? (has(this.justify_qc) && !has(this.forwarded_request)) : true"
+  };
+
+  optional int32 view_number = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  optional uint32 replica_sender_id = 2 [(buf.validate.field).required = true];
+  optional ConsensusMessageType message_type = 3 [(buf.validate.field).required = true];
+
+  Node message_node = 4;
+  QuorumCertificate justify_qc = 5;
+  depchain.ClientRequest forwarded_request = 6;
+
+  oneof threshold_payload {
+    bytes threshold_signature_share = 7 [(buf.validate.field).bytes.len = 32];
+    bytes threshold_signature_commitment = 8 [(buf.validate.field).bytes.len = 32];
+    ThresholdSignatureContext threshold_signature_context = 9;
+  }
+}

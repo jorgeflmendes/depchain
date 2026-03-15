@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package depchain;
+
+import "validate.proto";
+
+option java_multiple_files = true;
+option java_package = "pt.ulisboa.depchain.proto";
+
+message DpchPacket {
+  option (buf.validate.message).cel = {
+    id: "dpch.flags.valid"
+    message: "header_flags must be one of the supported DPCH flag combinations"
+    expression: "this.header_flags in [1u, 2u, 4u, 6u, 8u, 10u]"
+  };
+
+  optional uint64 connection_id = 1 [(buf.validate.field).required = true];
+  optional uint32 sequence_number = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint32.lte = 65535
+  ];
+  optional uint32 header_flags = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint32.lte = 15
+  ];
+  optional bytes payload = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.max_len = 65535
+  ];
+}
