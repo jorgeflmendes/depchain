@@ -9,6 +9,9 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import pt.ulisboa.depchain.proto.ClientRequest;
@@ -19,14 +22,13 @@ import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
 public final class DpchServer {
-  private static final Logger logger = new Logger("DpchServer");
+  private static final Logger logger = LoggerFactory.getLogger(DpchServer.class);
 
   private final ConfigParser configParser;
   private final ConfigParser.ReplicaSection replicaConfig;
@@ -53,8 +55,8 @@ public final class DpchServer {
         AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);
         AuthenticatedLink nodeTransport = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys)) {
 
-      logger.info("Replica " + replicaConfig.id() + " client listener: " + replicaConfig.host() + ":" + replicaConfig.clientPort());
-      logger.info("Replica " + replicaConfig.id() + " node listener: " + replicaConfig.host() + ":" + replicaConfig.consensusPort());
+      logger.info("Replica {} client listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
+      logger.info("Replica {} node listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
 
       // Set up the replica with the transports and start the hotstuff loop
       this.replica.initNetwork(nodeTransport, clientTransport);
@@ -105,14 +107,14 @@ public final class DpchServer {
   // Handles messages from clients
   private void handleClientRequest(AuthenticatedLink transport, DpchPacket inbound, InetSocketAddress sender) {
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
-    logger.info("Client request from " + sender);
+    logger.info("Client request from {}", sender);
 
     try {
       ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.getPayload()), "ClientRequest");
       ConnectionKey key = new ConnectionKey(sender, inbound.getConnectionId());
       this.replica.receiveClientCommand(request, key);
     } catch (InvalidProtocolBufferException | RuntimeException exception) {
-      logger.error("Client request error from " + senderText + ": " + exception.getMessage());
+      logger.error("Client request error from {}", senderText, exception);
     }
   }
 
@@ -122,7 +124,7 @@ public final class DpchServer {
       Message msg = ProtoValidationUtil.requireValid(Message.parseFrom(inbound.getPayload()), "ReplicaMessage");
       this.replica.receiveMessage(msg);
     } catch (InvalidProtocolBufferException | RuntimeException e) {
-      logger.error("Error handling node message from " + sender + ": " + e.getMessage());
+      logger.error("Error handling node message from {}", sender, e);
     }
   }
 }

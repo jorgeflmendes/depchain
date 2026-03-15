@@ -4,13 +4,15 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 
-import pt.ulisboa.depchain.shared.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HandshakedSender {
-  private static final Logger logger = new Logger("HandshakedSender");
+  private static final Logger logger = LoggerFactory.getLogger(HandshakedSender.class);
   private final HandshakedContext context;
 
   HandshakedSender(HandshakedContext context) {
@@ -42,7 +44,7 @@ final class HandshakedSender {
       if (!context.isRunning()) {
         return;
       }
-      logger.debug("Failed to send handshake control reply for connection " + connectionId + ": " + exception.getMessage());
+      logger.debug("Failed to send handshake control reply for connection {}", connectionId, exception);
     }
   }
 

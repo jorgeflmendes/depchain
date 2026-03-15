@@ -6,9 +6,11 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
@@ -16,7 +18,7 @@ import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectReceiver {
-  private static final Logger logger = new Logger("PerfectReceiver");
+  private static final Logger logger = LoggerFactory.getLogger(PerfectReceiver.class);
   private final PerfectContext context;
   private final PerfectSender sender;
 
@@ -41,7 +43,7 @@ final class PerfectReceiver {
         if (!context.isRunning()) {
           break;
         }
-        logger.debug("PerfectLink worker error: " + exception.getMessage());
+        logger.debug("PerfectLink worker error", exception);
       }
     }
   }

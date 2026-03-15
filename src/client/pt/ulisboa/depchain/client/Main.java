@@ -1,9 +1,10 @@
 package pt.ulisboa.depchain.client;
 
-import pt.ulisboa.depchain.shared.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class Main {
-  private static final Logger logger = new Logger("ClientMain");
+  private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
   public static void main(String[] args) throws Exception {
     if (args.length < 2) {

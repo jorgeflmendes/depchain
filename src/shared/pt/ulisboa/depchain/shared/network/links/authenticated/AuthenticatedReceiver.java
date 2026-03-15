@@ -6,6 +6,9 @@ import java.security.KeyPair;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.crypto.SecretKey;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
@@ -14,7 +17,6 @@ import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
@@ -22,7 +24,7 @@ import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class AuthenticatedReceiver {
-  private static final Logger logger = new Logger("AuthenticatedReceiver");
+  private static final Logger logger = LoggerFactory.getLogger(AuthenticatedReceiver.class);
   private final AuthenticatedContext context;
   private final AuthenticatedSender sender;
 
@@ -46,7 +48,7 @@ final class AuthenticatedReceiver {
         if (!context.isRunning()) {
           break;
         }
-        logger.debug("AuthenticatedLink worker error: " + exception.getMessage());
+        logger.debug("AuthenticatedLink worker error", exception);
       } catch (InterruptedException interrupted) {
         if (!context.isRunning()) {
           break;

@@ -4,8 +4,10 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
@@ -13,7 +15,7 @@ import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HandshakedReceiver {
-  private static final Logger logger = new Logger("HandshakedReceiver");
+  private static final Logger logger = LoggerFactory.getLogger(HandshakedReceiver.class);
   private record ReceiveResult(boolean deliver, HandshakeReply reply) {
   }
 
@@ -46,7 +48,7 @@ final class HandshakedReceiver {
         if (!context.isRunning()) {
           break;
         }
-        logger.debug("HandshakedPerfectLink worker error: " + exception.getMessage());
+        logger.debug("HandshakedPerfectLink worker error", exception);
       } catch (InterruptedException interrupted) {
         if (!context.isRunning()) {
           break;

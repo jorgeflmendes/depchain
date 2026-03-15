@@ -1,0 +1,22 @@
+<configuration>
+  <property name="ROOT_LOG_LEVEL" value="${ROOT_LOG_LEVEL:-INFO}" />
+  <property name="APP_LOG_LEVEL" value="${APP_LOG_LEVEL:-INFO}" />
+  <property name="LINKS_LOG_LEVEL" value="${LINKS_LOG_LEVEL:-DEBUG}" />
+  <property name="CONSOLE_LOG_PATTERN" value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{40} - %msg%n" />
+
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="pt.ulisboa.depchain" level="${APP_LOG_LEVEL}" />
+  <logger name="pt.ulisboa.depchain.shared.network.links" level="${LINKS_LOG_LEVEL}" />
+  <logger name="io.netty" level="WARN" />
+  <logger name="org.bouncycastle" level="WARN" />
+  <logger name="com.google.protobuf" level="WARN" />
+
+  <root level="${ROOT_LOG_LEVEL}">
+    <appender-ref ref="STDOUT" />
+  </root>
+</configuration>

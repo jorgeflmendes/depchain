@@ -14,6 +14,11 @@
     <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
     <os.maven.version>1.7.1</os.maven.version>
     <protovalidate.version>1.0.0</protovalidate.version>
+    <threshold.sig.version>1.2</threshold.sig.version>
+    <curve25519.elisabeth.version>0.1.5</curve25519.elisabeth.version>
+    <slf4j.version>2.0.17</slf4j.version>
+    <logback.version>1.5.17</logback.version>
+    <bouncycastle.version>1.81</bouncycastle.version>
   </properties>
 
   <dependencies>
@@ -31,12 +36,12 @@
     <dependency>
       <groupId>com.weavechain</groupId>
       <artifactId>threshold-sig</artifactId>
-      <version>1.2</version>
+      <version>${threshold.sig.version}</version>
     </dependency>
     <dependency>
       <groupId>com.weavechain</groupId>
       <artifactId>curve25519-elisabeth</artifactId>
-      <version>0.1.5</version>
+      <version>${curve25519.elisabeth.version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.protobuf</groupId>
@@ -47,6 +52,26 @@
       <groupId>build.buf</groupId>
       <artifactId>protovalidate</artifactId>
       <version>${protovalidate.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>${logback.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
     </dependency>
   </dependencies>
 

@@ -13,10 +13,11 @@ public final class ThresholdKeyLoader {
 
   public static ReplicaThresholdKeyMaterial loadReplicaThresholdKeyMaterial(ConfigParser config, long senderId) throws Exception {
     ValidationUtils.requireNonNull(config, "config");
+    ValidationUtils.requireNonNegativeLong(senderId, "senderId");
 
-    ConfigParser.ReplicaSection replica = KeyMaterialSupport.requireReplica(config, senderId);
-    byte[] publicKey = KeyMaterialSupport.readSerialized(Path.of(replica.thresholdPublicKeyPath()), byte[].class);
-    Scalar privateShare = KeyMaterialSupport.readSerialized(Path.of(replica.thresholdPrivateSharePath()), Scalar.class);
+    ConfigParser.ReplicaSection replica = config.requireReplicaBySenderId(senderId);
+    byte[] publicKey = readSerialized(Path.of(replica.thresholdPublicKeyPath()), byte[].class);
+    Scalar privateShare = readSerialized(Path.of(replica.thresholdPrivateSharePath()), Scalar.class);
     return new ReplicaThresholdKeyMaterial(publicKey, privateShare);
   }
 
@@ -38,6 +39,20 @@ public final class ThresholdKeyLoader {
     @Override
     public byte[] publicKey() {
       return publicKey.clone();
+    }
+  }
+
+  private static <T> T readSerialized(Path path, Class<T> type) throws Exception {
+    ValidationUtils.requireNonNull(path, "path");
+    ValidationUtils.requireNonNull(type, "type");
+
+    try (var input = java.nio.file.Files.newInputStream(path); var in = new java.io.ObjectInputStream(input)) {
+      Object value = in.readObject();
+      if (!type.isInstance(value)) {
+        String actualType = value == null ? "null" : value.getClass().getName();
+        throw new IllegalArgumentException("Unexpected key material type in " + path + ": " + actualType);
+      }
+      return type.cast(value);
     }
   }
 }

@@ -16,6 +16,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.weavechain.curve25519.Scalar;
 
 import pt.ulisboa.depchain.proto.AppendNodeCommand;
@@ -33,7 +36,6 @@ import pt.ulisboa.depchain.proto.ProposalMessage;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
@@ -83,7 +85,7 @@ public class Replica {
     this.completedRequestIds = ConcurrentHashMap.newKeySet();
 
     this.id = id;
-    this.logger = new Logger("Replica " + id);
+    this.logger = LoggerFactory.getLogger(Replica.class);
     this.n = config.system().n();
     this.f = config.system().f();
     this.quorum = n - f;
@@ -109,7 +111,7 @@ public class Replica {
   }
 
   public void run() {
-    logger.info("Starting at view " + viewNumber);
+    logger.info("Starting at view {}", viewNumber);
     sendToLeader(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
 
     while (true) {
@@ -239,7 +241,7 @@ public class Replica {
     ClientRequestKey requestKey = command.hasAppend() ? command.getAppend().getClientRequestKey() : null;
 
     if (!ConsensusUtil.isNoOp(command)) {
-      logger.info("Executing command: " + clientCommand);
+      logger.info("Executing command: {}", clientCommand);
     }
     blockTree.put(node.getNodeHash(), node);
     if (requestKey == null) {
@@ -255,7 +257,7 @@ public class Replica {
         byte[] response = ProtoValidationUtil.requireValid(clientResponse, "ClientResponse").toByteArray();
         clientTransport.send(key.connectionId(), response, key.endpoint());
       } catch (Exception e) {
-        logger.error("Error replying to client connection: " + e.getMessage());
+        logger.error("Error replying to client connection", e);
       }
     }
   }
@@ -269,7 +271,7 @@ public class Replica {
         InetSocketAddress addr = new InetSocketAddress(peerHost, peer.consensusPort());
         nodeTransport.send(0L, payload, addr);
       } catch (Exception e) {
-        logger.error("Error in broadcast to " + peer.id() + ": " + e.getMessage());
+        logger.error("Error in broadcast to {}", peer.id(), e);
       }
     }
   }
@@ -283,7 +285,7 @@ public class Replica {
       byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
       nodeTransport.send(0L, payload, addr);
     } catch (Exception e) {
-      logger.error("Error sending message to leader: " + e.getMessage());
+      logger.error("Error sending message to leader", e);
     }
   }
 

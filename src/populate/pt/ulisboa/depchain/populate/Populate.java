@@ -6,8 +6,10 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import pt.ulisboa.depchain.shared.config.ConfigParser;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.KeyUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
@@ -15,7 +17,7 @@ import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdConfig;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class Populate {
-  private static final Logger logger = new Logger("Populate");
+  private static final Logger logger = LoggerFactory.getLogger(Populate.class);
 
   private Populate() {
   }
@@ -51,7 +53,7 @@ public final class Populate {
 
     writeClientKeys(config.client());
 
-    logger.info("Generated individual keys for " + replicas.size() + " replicas, threshold material for " + replicas.size() + " replicas, and 1 client");
+    logger.info("Generated individual keys for {} replicas, threshold material for {} replicas, and 1 client", replicas.size(), replicas.size());
   }
 
   private static void writeReplicaKeys(ConfigParser.ReplicaSection replica) throws Exception {
@@ -67,7 +69,7 @@ public final class Populate {
     Files.writeString(publicKeyPath, KeyUtil.encodePem("PUBLIC KEY", keyPair.getPublic().getEncoded()));
     Files.writeString(privateKeyPath, KeyUtil.encodePem("PRIVATE KEY", keyPair.getPrivate().getEncoded()));
 
-    logger.info("Generated individual keys for " + replica.id() + " -> " + publicKeyPath);
+    logger.info("Generated individual keys for {} -> {}", replica.id(), publicKeyPath);
   }
 
   private static void writeReplicaThresholdMaterial(ConfigParser.ReplicaSection replica, ThresholdConfig thresholdConfig, int replicaIndex) throws Exception {
@@ -90,7 +92,7 @@ public final class Populate {
       out.writeObject(thresholdConfig.privateShare(replicaIndex));
     }
 
-    logger.info("Generated threshold material for " + replica.id() + " -> public: " + thresholdPublicKeyPath + ", share: " + thresholdPrivateSharePath);
+    logger.info("Generated threshold material for {} -> public: {}, share: {}", replica.id(), thresholdPublicKeyPath, thresholdPrivateSharePath);
   }
 
   private static void writeClientKeys(ConfigParser.ClientSection client) throws Exception {
@@ -106,7 +108,7 @@ public final class Populate {
     Files.writeString(publicKeyPath, KeyUtil.encodePem("PUBLIC KEY", keyPair.getPublic().getEncoded()));
     Files.writeString(privateKeyPath, KeyUtil.encodePem("PRIVATE KEY", keyPair.getPrivate().getEncoded()));
 
-    logger.info("Generated keys for " + client.id() + " -> " + publicKeyPath);
+    logger.info("Generated keys for {} -> {}", client.id(), publicKeyPath);
   }
 
   private static void createParentDirectories(Path path) throws Exception {

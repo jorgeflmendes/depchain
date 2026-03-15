@@ -9,6 +9,9 @@ import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.ThreadLocalRandom;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.protobuf.ByteString;
 
 import pt.ulisboa.depchain.proto.AppendRequest;
@@ -19,7 +22,6 @@ import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
@@ -28,7 +30,7 @@ import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public final class DpchClient {
-  private static final Logger logger = new Logger("DpchClient");
+  private static final Logger logger = LoggerFactory.getLogger(DpchClient.class);
 
   private final ConfigParser.ReplicaSection targetReplicaConfig;
   private final long localSenderId;
@@ -50,12 +52,12 @@ public final class DpchClient {
       runInputLoop(scanner);
     }
 
-    logger.print("Shutting down...");
+    logger.info("Shutting down...");
   }
 
   private void runInputLoop(Scanner scanner) {
     while (true) {
-      logger.print("Enter a value to append or 'EXIT' to quit:");
+      logger.info("Enter a value to append or 'EXIT' to quit:");
       String input = scanner.nextLine();
 
       if (input.equalsIgnoreCase("EXIT")) {
@@ -65,12 +67,12 @@ public final class DpchClient {
       try {
         String response = sendAppendRequest(input);
         if (response == null) {
-          logger.print("Request timed out.");
+          logger.info("Request timed out.");
           continue;
         }
-        logger.print("response = " + response);
+        logger.info("response = {}", response);
       } catch (Exception exception) {
-        logger.error("Error appending value through the server " + targetReplicaConfig.id() + ": " + exception.getMessage());
+        logger.error("Error appending value through the server {}", targetReplicaConfig.id(), exception);
       }
     }
   }
@@ -109,7 +111,7 @@ public final class DpchClient {
       try {
         transport.closeConnection(connectionId, targetAddress);
       } catch (RuntimeException exception) {
-        logger.debug("Ignoring client connection close failure: " + exception.getMessage());
+        logger.debug("Ignoring client connection close failure", exception);
       }
     }
   }

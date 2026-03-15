@@ -5,17 +5,19 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.protobuf.ByteString;
 
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectSender {
-  private static final Logger logger = new Logger("PerfectSender");
+  private static final Logger logger = LoggerFactory.getLogger(PerfectSender.class);
   private final PerfectContext context;
 
   PerfectSender(PerfectContext context) {
@@ -69,7 +71,7 @@ final class PerfectSender {
       if (!context.isRunning()) {
         return;
       }
-      logger.debug("Failed to send ACK for connection " + connectionId + " seq=" + sequenceNumber + ": " + exception.getMessage());
+      logger.debug("Failed to send ACK for connection {} seq={}", connectionId, sequenceNumber, exception);
     }
   }
 
