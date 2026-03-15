@@ -4,16 +4,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingDeque;
 
+import com.google.protobuf.ByteString;
 import com.weavechain.curve25519.Scalar;
 
-import pt.ulisboa.depchain.server.consensus.Message;
-import pt.ulisboa.depchain.server.consensus.Message.MessageType;
-import pt.ulisboa.depchain.server.consensus.Node;
-import pt.ulisboa.depchain.server.consensus.QuorumCertificate;
+import pt.ulisboa.depchain.proto.ConsensusMessageType;
+import pt.ulisboa.depchain.proto.Message;
+import pt.ulisboa.depchain.proto.Node;
+import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.proto.VoteMessage;
+import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
 import pt.ulisboa.depchain.server.consensus.ViewChangeTimeoutException;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdNonceShare;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdPartialSignContext;
@@ -22,23 +25,19 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 public final class ThresholdSignatureProtocol {
   private static final int GENESIS_VIEW_NUMBER = -1;
 
-  private final int localReplicaIndex; // Index is the position in the config file
+  private final int localReplicaIndex;
   private final int localSenderId;
-
-  // System parameters
   private final int totalReplicas;
   private final int threshold;
-
-  // Keys
   private final Scalar localThresholdShare;
   private final byte[] publicThresholdKey;
-
-  // Component responsible for the threshold message exchange
   private final ThresholdSignatureExchange messageExchange;
 
   public ThresholdSignatureProtocol(int localSenderId, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey) {
-    ValidationUtils.requireAllNonNull(ValidationUtils.named("config", config), ValidationUtils.named("localThresholdShare", localThresholdShare), ValidationUtils
-        .named("publicThresholdKey", publicThresholdKey));
+    ValidationUtils.requireAllNonNull(
+        ValidationUtils.named("config", config),
+        ValidationUtils.named("localThresholdShare", localThresholdShare),
+        ValidationUtils.named("publicThresholdKey", publicThresholdKey));
 
     this.localSenderId = localSenderId;
     this.totalReplicas = config.system().n();
@@ -54,28 +53,26 @@ public final class ThresholdSignatureProtocol {
   }
 
   public QuorumCertificate genesisQC() {
-    return new QuorumCertificate(MessageType.DECIDE, GENESIS_VIEW_NUMBER, Node.GENESIS_NODE);
+    return QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE).setViewNumber(GENESIS_VIEW_NUMBER)
+        .setCertifiedNode(ConsensusUtil.GENESIS_NODE).build();
   }
 
-  public Message createVoteMessage(int viewNumber, MessageType type, Node node, int leaderId, BlockingDeque<Message> messageQueue) {
+  public Message createVoteMessage(int viewNumber, ConsensusMessageType type, Node node, int leaderId, BlockingDeque<Message> messageQueue) {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireAllNonNull(ValidationUtils.named("type", type), ValidationUtils.named("node", node), ValidationUtils.named("messageQueue", messageQueue));
     ValidationUtils.requireNonNegativeInt(leaderId, "leaderId");
 
     try {
-      Message vote = new Message(viewNumber, localSenderId, type, node, null);
-
-      // Produce the local commitment and send it to the leader
       byte[] payload = buildVotePayload(type, viewNumber, node);
       ThresholdNonceShare nonceShare = ThresholdCryptoUtil.thresholdNonceShare(payload, localThresholdShare);
       messageExchange.sendCommitment(leaderId, viewNumber, localSenderId, type, node, nonceShare.commitment());
 
-      // Wait for the leader to send the context and produce the local partial sign
       ThresholdSignatureExchange.ThresholdContext context = messageExchange.waitForContext(type, viewNumber, leaderId, node, messageQueue);
       ThresholdPartialSignContext signContext = new ThresholdPartialSignContext(localReplicaIndex, totalReplicas, threshold, context.participantIndexes(), publicThresholdKey,
           context.aggregatedCommitment());
-      vote.setSignature(ThresholdCryptoUtil.thresholdPartialSign(payload, localThresholdShare, nonceShare, signContext));
-      return vote;
+      byte[] thresholdSignatureShare = ThresholdCryptoUtil.thresholdPartialSign(payload, localThresholdShare, nonceShare, signContext);
+      return Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(localSenderId).setMessageType(type)
+          .setVote(VoteMessage.newBuilder().setVotedNode(node).setThresholdSignatureShare(ByteString.copyFrom(thresholdSignatureShare))).build();
     } catch (ViewChangeTimeoutException exception) {
       throw exception;
     } catch (Exception exception) {
@@ -83,38 +80,32 @@ public final class ThresholdSignatureProtocol {
     }
   }
 
-  public QuorumCertificate buildQC(int viewNumber, MessageType type, Node node, BlockingDeque<Message> messageQueue) {
+  public QuorumCertificate buildQC(int viewNumber, ConsensusMessageType type, Node node, BlockingDeque<Message> messageQueue) {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireAllNonNull(ValidationUtils.named("type", type), ValidationUtils.named("node", node), ValidationUtils.named("messageQueue", messageQueue));
 
     try {
-      // Produce the local commitment and collect the commitments from the participants
       byte[] payload = buildVotePayload(type, viewNumber, node);
       ThresholdNonceShare localNonceShare = ThresholdCryptoUtil.thresholdNonceShare(payload, localThresholdShare);
-      ThresholdSignatureExchange.CommitmentBatch batch = messageExchange
-          .collectCommitments(localReplicaIndex, localNonceShare.commitment(), type, viewNumber, node, threshold - 1, messageQueue);
+      ThresholdSignatureExchange.CommitmentBatch batch = messageExchange.collectCommitments(localReplicaIndex, localNonceShare.commitment(), type, viewNumber, node, threshold - 1,
+          messageQueue);
 
-      // Aggregate the commitments and send the context to the participants
       byte[] aggregatedCommitment = ThresholdCryptoUtil.thresholdAggregateCommitments(totalReplicas, threshold, batch.commitments());
       messageExchange.sendContextMessages(batch.participantSenders(), viewNumber, localSenderId, type, node, aggregatedCommitment, batch.participantIndexes());
 
-      // Produce the local partial sign and collect the other shares from the participants
       ThresholdPartialSignContext localContext = new ThresholdPartialSignContext(localReplicaIndex, totalReplicas, threshold, batch.participantIndexesSet(), publicThresholdKey,
           aggregatedCommitment);
       List<byte[]> partialSignatures = new ArrayList<>(threshold);
       partialSignatures.add(ThresholdCryptoUtil.thresholdPartialSign(payload, localThresholdShare, localNonceShare, localContext));
       partialSignatures.addAll(messageExchange.collectSignatureShares(type, viewNumber, node, batch.participantSenders(), messageQueue));
 
-      // Combine the partial signs and verify the aggregated signature
       byte[] aggregatedSignature = ThresholdCryptoUtil.thresholdCombinePartialSignatures(totalReplicas, threshold, aggregatedCommitment, partialSignatures);
       if (!ThresholdCryptoUtil.verifyThresholdSignature(payload, aggregatedSignature, publicThresholdKey)) {
         throw new IllegalStateException("Combined threshold signature failed verification for " + type + " at view " + viewNumber);
       }
 
-      // Produce the QC and return it
-      QuorumCertificate qc = new QuorumCertificate(type, viewNumber, node);
-      qc.setAggregatedSignature(aggregatedSignature);
-      return qc;
+      return QuorumCertificate.newBuilder().setMessageType(type).setViewNumber(viewNumber).setCertifiedNode(node).setQuorumSignature(ByteString.copyFrom(aggregatedSignature))
+          .build();
     } catch (ViewChangeTimeoutException exception) {
       throw exception;
     } catch (Exception exception) {
@@ -125,16 +116,17 @@ public final class ThresholdSignatureProtocol {
   public boolean verifyQC(QuorumCertificate qc) {
     if (qc == null) {
       return false;
-    } else if (isSameNode(qc.getNode(), Node.GENESIS_NODE) && qc.getAggregatedSignature() == null && qc.getViewNumber() == GENESIS_VIEW_NUMBER) {
+    }
+    if (isSameNode(qc.getCertifiedNode(), ConsensusUtil.GENESIS_NODE) && !qc.hasQuorumSignature() && qc.getViewNumber() == GENESIS_VIEW_NUMBER) {
       return true;
-    } else if (qc.getNode() == null || qc.getAggregatedSignature() == null) {
+    }
+    if (!qc.hasCertifiedNode() || !qc.hasQuorumSignature()) {
       return false;
     }
 
-    // Neither genesis nor null, so we need to verify the signature
     try {
-      byte[] payload = buildVotePayload(qc.getType(), qc.getViewNumber(), qc.getNode());
-      return ThresholdCryptoUtil.verifyThresholdSignature(payload, qc.getAggregatedSignature(), publicThresholdKey);
+      byte[] payload = buildVotePayload(qc.getMessageType(), qc.getViewNumber(), qc.getCertifiedNode());
+      return ThresholdCryptoUtil.verifyThresholdSignature(payload, qc.getQuorumSignature().toByteArray(), publicThresholdKey);
     } catch (Exception exception) {
       return false;
     }
@@ -144,8 +136,8 @@ public final class ThresholdSignatureProtocol {
     return messageExchange.isAuxiliaryMessage(msg);
   }
 
-  private byte[] buildVotePayload(MessageType type, int viewNumber, Node node) {
-    return SerializationUtil.encodeVotePayload(type, viewNumber, node);
+  private byte[] buildVotePayload(ConsensusMessageType type, int viewNumber, Node node) {
+    return ConsensusPayloadUtil.votePayload(type, viewNumber, node);
   }
 
   private int findReplicaIndex(ConfigParser config, int senderId) {
@@ -153,10 +145,6 @@ public final class ThresholdSignatureProtocol {
   }
 
   static boolean isSameNode(Node left, Node right) {
-    if (left == null || right == null) {
-      return left == right;
-    }
-
-    return left.getThisHash().equals(right.getThisHash());
+    return ConsensusUtil.isSameNode(left, right);
   }
 }

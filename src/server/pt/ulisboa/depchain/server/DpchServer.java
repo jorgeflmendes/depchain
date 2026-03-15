@@ -9,19 +9,21 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import pt.ulisboa.depchain.server.consensus.Message;
+import com.google.protobuf.InvalidProtocolBufferException;
+
+import pt.ulisboa.depchain.proto.ClientRequest;
+import pt.ulisboa.depchain.proto.DpchPacket;
+import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.server.consensus.Replica;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.model.ClientRequest;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
 public final class DpchServer {
   private static final Logger logger = new Logger("DpchServer");
@@ -106,11 +108,10 @@ public final class DpchServer {
     logger.info("Client request from " + sender);
 
     try {
-      ClientRequest request = SerializationUtil.decodeClientRequestBytes(inbound.payload());
-      ConnectionKey key = new ConnectionKey(sender, inbound.connectionId());
+      ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.getPayload()), "ClientRequest");
+      ConnectionKey key = new ConnectionKey(sender, inbound.getConnectionId());
       this.replica.receiveClientCommand(request, key);
-
-    } catch (RuntimeException exception) {
+    } catch (InvalidProtocolBufferException | RuntimeException exception) {
       logger.error("Client request error from " + senderText + ": " + exception.getMessage());
     }
   }
@@ -118,9 +119,9 @@ public final class DpchServer {
   // Handles messages from other replicas
   private void handleNodeRequest(AuthenticatedLink transport, DpchPacket inbound, InetSocketAddress sender) {
     try {
-      Message msg = SerializationUtil.decodeReplicaMessage(inbound.payload());
+      Message msg = ProtoValidationUtil.requireValid(Message.parseFrom(inbound.getPayload()), "ReplicaMessage");
       this.replica.receiveMessage(msg);
-    } catch (Exception e) {
+    } catch (InvalidProtocolBufferException | RuntimeException e) {
       logger.error("Error handling node message from " + sender + ": " + e.getMessage());
     }
   }

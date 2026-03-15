@@ -1,14 +1,13 @@
 package pt.ulisboa.depchain.shared.utils;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.SignatureException;
 import java.security.spec.InvalidKeySpecException;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 
@@ -18,6 +17,8 @@ import com.weavechain.sig.ThresholdSigEd25519;
 import com.weavechain.sig.ThresholdSigEd25519Params;
 
 public final class ThresholdCryptoUtil {
+  private static final HexFormat HEX_FORMAT = HexFormat.of();
+
   private ThresholdCryptoUtil() {
   }
 
@@ -93,7 +94,7 @@ public final class ThresholdCryptoUtil {
     ThresholdSigEd25519 signatureScheme = new ThresholdSigEd25519(threshold, totalReplicas);
     List<EdwardsPoint> commitmentPoints = new ArrayList<>(commitments.size());
     for (byte[] commitment : commitments) {
-      commitmentPoints.add(SerializationUtil.decodeCommitment(commitment));
+      commitmentPoints.add(ThresholdEncodingUtil.decodeCommitment(commitment));
     }
 
     return signatureScheme.computeR(commitmentPoints).compress().toByteArray();
@@ -104,7 +105,7 @@ public final class ThresholdCryptoUtil {
         .named("nonceShare", nonceShare), ValidationUtils.named("context", context));
 
     ThresholdSigEd25519 signatureScheme = new ThresholdSigEd25519(context.threshold(), context.totalReplicas());
-    EdwardsPoint aggregatedCommitment = SerializationUtil.decodeCommitment(context.aggregatedCommitment());
+    EdwardsPoint aggregatedCommitment = ThresholdEncodingUtil.decodeCommitment(context.aggregatedCommitment());
     Scalar challenge = signatureScheme.computeK(context.thresholdPublicKey(), aggregatedCommitment, thresholdPayload(payload));
     Scalar partialSignature = signatureScheme.computeSignature(context.replicaIndex() + 1, privateShare, nonceShare.nonceShare(), challenge, context.participantIndexes());
 
@@ -119,10 +120,10 @@ public final class ThresholdCryptoUtil {
     ValidationUtils.requireExactInt(partialSignatures.size(), threshold, "partialSignatures.size");
 
     ThresholdSigEd25519 signatureScheme = new ThresholdSigEd25519(threshold, totalReplicas);
-    EdwardsPoint aggregatedPoint = SerializationUtil.decodeCommitment(aggregatedCommitment);
+    EdwardsPoint aggregatedPoint = ThresholdEncodingUtil.decodeCommitment(aggregatedCommitment);
     List<Scalar> signatureShares = new ArrayList<>(partialSignatures.size());
     for (byte[] partialSignature : partialSignatures) {
-      signatureShares.add(SerializationUtil.decodeScalar(partialSignature));
+      signatureShares.add(ThresholdEncodingUtil.decodeScalar(partialSignature));
     }
 
     return signatureScheme.computeSignature(aggregatedPoint, signatureShares);
@@ -132,17 +133,11 @@ public final class ThresholdCryptoUtil {
     ValidationUtils.requireAllNonNull(ValidationUtils.named("payload", payload), ValidationUtils.named("signature", signature), ValidationUtils
         .named("thresholdPublicKey", thresholdPublicKey));
 
-    return ThresholdSigEd25519.verify(thresholdPublicKey, signature, thresholdPayload(payload).getBytes(StandardCharsets.UTF_8));
+    return ThresholdSigEd25519.verify(thresholdPublicKey, signature, thresholdPayload(payload).getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   private static String thresholdPayload(byte[] payload) {
     ValidationUtils.requireNonNull(payload, "payload");
-
-    String value = new String(payload, StandardCharsets.UTF_8);
-    if (!Arrays.equals(payload, value.getBytes(StandardCharsets.UTF_8))) {
-      throw new IllegalArgumentException("Threshold signing only supports UTF-8 payloads");
-    }
-
-    return value;
+    return HEX_FORMAT.formatHex(payload);
   }
 }

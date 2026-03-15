@@ -6,9 +6,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
 
+import pt.ulisboa.depchain.proto.DpchPacket;
+import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
-import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
@@ -48,10 +49,10 @@ final class PerfectReceiver {
   private void receivePacket(InboundPacket inbound) {
     DpchPacket packet = inbound.packet();
     InetSocketAddress remote = inbound.sender();
-    ConnectionKey key = new ConnectionKey(remote, packet.connectionId());
+    ConnectionKey key = new ConnectionKey(remote, packet.getConnectionId());
 
-    DpchType reliableType = packet.reliableTypeOrNull();
-    if (packet.hasType(DpchType.ACK)) {
+    DpchPacketType reliableType = DpchPacketUtil.reliableTypeOrNull(packet);
+    if (DpchPacketUtil.hasType(packet, DpchPacketType.DPCH_PACKET_TYPE_ACK)) {
       handleAck(packet, reliableType, key, remote);
     }
     if (reliableType != null) {
@@ -59,9 +60,9 @@ final class PerfectReceiver {
     }
   }
 
-  private void handleAck(DpchPacket ackPacket, DpchType fallbackAcknowledgedType, ConnectionKey key, InetSocketAddress remote) {
-    DpchType acknowledgedType = PerfectContext.decodeAcknowledgedType(ackPacket.payload(), fallbackAcknowledgedType);
-    int acknowledgedSequence = ackPacket.sequenceNumber();
+  private void handleAck(DpchPacket ackPacket, DpchPacketType fallbackAcknowledgedType, ConnectionKey key, InetSocketAddress remote) {
+    DpchPacketType acknowledgedType = PerfectContext.decodeAcknowledgedType(ackPacket.getPayload().toByteArray(), fallbackAcknowledgedType);
+    int acknowledgedSequence = ackPacket.getSequenceNumber();
     if (acknowledgedType == null || acknowledgedSequence < 0) {
       return;
     }
@@ -69,32 +70,32 @@ final class PerfectReceiver {
     List<TrackedKey> cancellations = new java.util.ArrayList<>(1);
     // Resolve ACKs against the current sender state without racing with cleanup.
     context.connectionStates.computeIfPresent(key, (ignored, connectionState) -> {
-      cancellations.addAll(connectionState.senderState().acknowledge(ackPacket.connectionId(), acknowledgedSequence, acknowledgedType));
+      cancellations.addAll(connectionState.senderState().acknowledge(ackPacket.getConnectionId(), acknowledgedSequence, acknowledgedType));
       return connectionState;
     });
     context.cancelTrackedBatch(cancellations, remote);
   }
 
-  private void handleReliable(InboundPacket inbound, DpchPacket packet, DpchType reliableType, ConnectionKey key) {
+  private void handleReliable(InboundPacket inbound, DpchPacket packet, DpchPacketType reliableType, ConnectionKey key) {
     List<InboundPacket> readyToDeliver = new java.util.ArrayList<>(1);
     boolean shouldAckData = false;
     PerfectConnectionState connectionState = context.connectionStates.computeIfAbsent(key, ignored -> new PerfectConnectionState());
     ReceiverState receiverState = connectionState.receiverState();
 
     synchronized (receiverState) {
-      int sequenceNumber = packet.sequenceNumber();
+      int sequenceNumber = packet.getSequenceNumber();
       if (sequenceNumber < 0) {
         return;
       }
 
       if (receiverState.isAlreadyDelivered(sequenceNumber)) {
-        if (reliableType == DpchType.DATA) {
+        if (reliableType == DpchPacketType.DPCH_PACKET_TYPE_DATA) {
           shouldAckData = true;
         } else {
           readyToDeliver.add(inbound);
         }
       } else {
-        if (reliableType == DpchType.DATA) {
+        if (reliableType == DpchPacketType.DPCH_PACKET_TYPE_DATA) {
           shouldAckData = true;
         }
         if (receiverState.bufferIfNew(sequenceNumber, inbound)) {
@@ -110,7 +111,7 @@ final class PerfectReceiver {
     }
 
     if (shouldAckData) {
-      sender.sendAckBestEffort(packet.connectionId(), packet.sequenceNumber(), inbound.sender(), PerfectContext.ACK_DATA);
+      sender.sendAckBestEffort(packet.getConnectionId(), packet.getSequenceNumber(), inbound.sender(), PerfectContext.ACK_DATA);
     }
   }
 }

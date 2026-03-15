@@ -9,16 +9,22 @@ import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.ThreadLocalRandom;
 
+import com.google.protobuf.ByteString;
+
+import pt.ulisboa.depchain.proto.AppendRequest;
+import pt.ulisboa.depchain.proto.ClientRequest;
+import pt.ulisboa.depchain.proto.ClientRequestKey;
+import pt.ulisboa.depchain.proto.ClientResponse;
+import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.model.ClientRequest;
-import pt.ulisboa.depchain.shared.model.ClientResponse;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
+import pt.ulisboa.depchain.shared.utils.CryptoUtil;
+import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public final class DpchClient {
@@ -81,7 +87,7 @@ public final class DpchClient {
     long connectionId = ThreadLocalRandom.current().nextLong();
     try {
       ClientRequest request = createClientRequest(value);
-      byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+      byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
       transport.send(connectionId, payload, targetAddress);
     } catch (Exception exception) {
       throw new IOException("Could not sign client request", exception);
@@ -137,16 +143,25 @@ public final class DpchClient {
 
   private ClientRequest createClientRequest(String value) throws Exception {
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-
-    return ClientRequest.signed(localSenderId, requestId, value, localStaticSKey);
+    byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(localSenderId, requestId, value), localStaticSKey);
+    return ProtoValidationUtil.requireValid(ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder().setRequestKey(
+        ClientRequestKey.newBuilder().setClientSenderId(localSenderId).setRequestId(requestId)).setValue(value)
+        .setSignature(ByteString.copyFrom(signature))).build(), "ClientRequest");
   }
 
   private String handleReply(DpchPacket inbound, long connectionId) {
-    if (inbound.connectionId() != connectionId) {
+    if (inbound.getConnectionId() != connectionId) {
       return null;
     }
 
-    ClientResponse response = SerializationUtil.decodeClientResponseBytes(inbound.payload());
-    return response.message();
+    try {
+      ClientResponse response = ProtoValidationUtil.requireValid(ClientResponse.parseFrom(inbound.getPayload()), "ClientResponse");
+      if (!response.hasAppend()) {
+        throw new IllegalArgumentException("Unsupported client response type: " + response.getBodyCase());
+      }
+      return response.getAppend().getMessage();
+    } catch (com.google.protobuf.InvalidProtocolBufferException exception) {
+      throw new IllegalArgumentException("Invalid protobuf client response payload", exception);
+    }
   }
 }

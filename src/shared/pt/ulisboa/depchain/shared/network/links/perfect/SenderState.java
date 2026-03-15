@@ -8,26 +8,26 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
-import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.proto.DpchPacketType;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 final class SenderState {
   private int nextSequence;
-  private final NavigableMap<Integer, DpchType> inFlightBySeq = new TreeMap<>();
+  private final NavigableMap<Integer, DpchPacketType> inFlightBySeq = new TreeMap<>();
 
-  synchronized int nextOrPendingSequence(DpchType type, boolean reusePendingSameType) {
+  synchronized int nextOrPendingSequence(DpchPacketType type, boolean reusePendingSameType) {
     if (reusePendingSameType) {
-      for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
+      for (Map.Entry<Integer, DpchPacketType> entry : inFlightBySeq.entrySet()) {
         if (entry.getValue() == type) {
           return entry.getKey();
         }
       }
     }
 
-    if (nextSequence > DpchPacket.MAX_PACKET_NUMBER) {
+    if (nextSequence > DpchPacketUtil.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Sender sequence number exhausted for stream");
     }
 
@@ -37,15 +37,15 @@ final class SenderState {
     return sequence;
   }
 
-  synchronized List<TrackedKey> acknowledge(long connectionId, int sequenceNumber, DpchType acknowledgedType) {
+  synchronized List<TrackedKey> acknowledge(long connectionId, int sequenceNumber, DpchPacketType acknowledgedType) {
     List<TrackedKey> cancellations = new ArrayList<>();
 
-    if (acknowledgedType == DpchType.FIN) {
-      Iterator<Map.Entry<Integer, DpchType>> iterator = inFlightBySeq.headMap(sequenceNumber, true).entrySet().iterator();
+    if (acknowledgedType == DpchPacketType.DPCH_PACKET_TYPE_FIN) {
+      Iterator<Map.Entry<Integer, DpchPacketType>> iterator = inFlightBySeq.headMap(sequenceNumber, true).entrySet().iterator();
 
       while (iterator.hasNext()) {
-        Map.Entry<Integer, DpchType> entry = iterator.next();
-        cancellations.add(new TrackedKey(connectionId, entry.getKey(), Byte.toUnsignedInt(entry.getValue().code())));
+        Map.Entry<Integer, DpchPacketType> entry = iterator.next();
+        cancellations.add(new TrackedKey(connectionId, entry.getKey(), entry.getValue().getNumber()));
         iterator.remove();
       }
 
@@ -53,27 +53,27 @@ final class SenderState {
       return cancellations;
     }
 
-    DpchType trackedType = inFlightBySeq.get(sequenceNumber);
+    DpchPacketType trackedType = inFlightBySeq.get(sequenceNumber);
     if (trackedType == acknowledgedType) {
       inFlightBySeq.remove(sequenceNumber);
-      cancellations.add(new TrackedKey(connectionId, sequenceNumber, Byte.toUnsignedInt(acknowledgedType.code())));
+      cancellations.add(new TrackedKey(connectionId, sequenceNumber, acknowledgedType.getNumber()));
       notifyAll();
     }
 
     return cancellations;
   }
 
-  synchronized List<TrackedKey> cancelPendingType(long connectionId, DpchType packetType) {
+  synchronized List<TrackedKey> cancelPendingType(long connectionId, DpchPacketType packetType) {
     List<TrackedKey> cancellations = new ArrayList<>();
-    Iterator<Map.Entry<Integer, DpchType>> iterator = inFlightBySeq.entrySet().iterator();
+    Iterator<Map.Entry<Integer, DpchPacketType>> iterator = inFlightBySeq.entrySet().iterator();
 
     while (iterator.hasNext()) {
-      Map.Entry<Integer, DpchType> entry = iterator.next();
+      Map.Entry<Integer, DpchPacketType> entry = iterator.next();
       if (entry.getValue() != packetType) {
         continue;
       }
 
-      cancellations.add(new TrackedKey(connectionId, entry.getKey(), Byte.toUnsignedInt(packetType.code())));
+      cancellations.add(new TrackedKey(connectionId, entry.getKey(), packetType.getNumber()));
       iterator.remove();
     }
 
@@ -83,8 +83,8 @@ final class SenderState {
 
   synchronized List<TrackedKey> takeAllTracked(long connectionId) {
     List<TrackedKey> cancellations = new ArrayList<>(inFlightBySeq.size());
-    for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
-      cancellations.add(new TrackedKey(connectionId, entry.getKey(), Byte.toUnsignedInt(entry.getValue().code())));
+    for (Map.Entry<Integer, DpchPacketType> entry : inFlightBySeq.entrySet()) {
+      cancellations.add(new TrackedKey(connectionId, entry.getKey(), entry.getValue().getNumber()));
     }
 
     inFlightBySeq.clear();
@@ -92,7 +92,7 @@ final class SenderState {
     return cancellations;
   }
 
-  synchronized boolean waitUntilNoPending(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchType type, long deadlineMs) throws InterruptedException {
+  synchronized boolean waitUntilNoPending(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType type, long deadlineMs) throws InterruptedException {
     while (context.isRunning() && hasPending(type)) {
       LinkFailureException failure = pollTerminalFailureForType(context, connectionId, remoteEndpoint, type);
       if (failure != null) {
@@ -112,8 +112,8 @@ final class SenderState {
     notifyAll();
   }
 
-  private boolean hasPending(DpchType type) {
-    for (DpchType inFlightType : inFlightBySeq.values()) {
+  private boolean hasPending(DpchPacketType type) {
+    for (DpchPacketType inFlightType : inFlightBySeq.values()) {
       if (inFlightType == type) {
         return true;
       }
@@ -121,8 +121,8 @@ final class SenderState {
     return false;
   }
 
-  synchronized LinkFailureException pollTerminalFailureForType(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchType type) {
-    for (Map.Entry<Integer, DpchType> entry : inFlightBySeq.entrySet()) {
+  synchronized LinkFailureException pollTerminalFailureForType(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType type) {
+    for (Map.Entry<Integer, DpchPacketType> entry : inFlightBySeq.entrySet()) {
       if (entry.getValue() != type) {
         continue;
       }

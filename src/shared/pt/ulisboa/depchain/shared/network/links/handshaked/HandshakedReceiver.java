@@ -4,8 +4,9 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 
+import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
@@ -61,29 +62,29 @@ final class HandshakedReceiver {
       return null;
     }
 
-    DpchType packetType = inbound.packet().type();
+    DpchPacketType packetType = inbound.packet().getPacketType();
     if (!handlesInboundType(packetType)) {
       return null;
     }
 
-    long connectionId = inbound.packet().connectionId();
-    int sequenceNumber = inbound.packet().sequenceNumber();
+    long connectionId = inbound.packet().getConnectionId();
+    int sequenceNumber = inbound.packet().getSequenceNumber();
     InetSocketAddress remote = inbound.sender();
 
     ConnectionKey connectionKey = new ConnectionKey(remote, connectionId);
     ConnectionState connectionState = context.connectionStateRegistry.getOrCreate(connectionKey);
     ReceiveResult result;
     synchronized (connectionState) {
-      result = decidePacket(connectionState, packetType, inbound.packet().hasType(DpchType.ACK));
+      result = decidePacket(connectionState, packetType, DpchPacketUtil.hasType(inbound.packet(), DpchPacketType.DPCH_PACKET_TYPE_ACK));
     }
 
     sender.sendHandshakeReply(result.reply(), connectionId, sequenceNumber, packetType, remote);
-    if (packetType == DpchType.FIN) {
+    if (packetType == DpchPacketType.DPCH_PACKET_TYPE_FIN) {
       // Stop retrying old packets once the peer started closing this connection.
       context.perfectLink.cancelPendingData(connectionId, remote);
       context.perfectLink.cancelPendingControl(connectionId, remote);
     }
-    if (packetType == DpchType.FIN) {
+    if (packetType == DpchPacketType.DPCH_PACKET_TYPE_FIN) {
       synchronized (connectionState) {
         if (connectionState.isCloseConverged()) {
           context.perfectLink.releaseConnection(connectionId, remote);
@@ -96,11 +97,11 @@ final class HandshakedReceiver {
     return null;
   }
 
-  private static ReceiveResult decidePacket(ConnectionState state, DpchType type, boolean hasAck) {
-    if (type == DpchType.SYN) {
+  private static ReceiveResult decidePacket(ConnectionState state, DpchPacketType type, boolean hasAck) {
+    if (type == DpchPacketType.DPCH_PACKET_TYPE_SYN) {
       return decideSyn(state, hasAck);
     }
-    if (type == DpchType.FIN) {
+    if (type == DpchPacketType.DPCH_PACKET_TYPE_FIN) {
       return decideFin(state);
     }
     return decideData(state);
@@ -146,8 +147,8 @@ final class HandshakedReceiver {
     return new ReceiveResult(state.canExchangeData(), HandshakeReply.NONE);
   }
 
-  private static boolean handlesInboundType(DpchType type) {
-    return type == DpchType.SYN || type == DpchType.FIN || type == DpchType.DATA;
+  private static boolean handlesInboundType(DpchPacketType type) {
+    return type == DpchPacketType.DPCH_PACKET_TYPE_SYN || type == DpchPacketType.DPCH_PACKET_TYPE_FIN || type == DpchPacketType.DPCH_PACKET_TYPE_DATA;
   }
 }
 

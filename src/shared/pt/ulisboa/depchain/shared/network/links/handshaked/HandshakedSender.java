@@ -5,7 +5,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.net.InetSocketAddress;
 
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
@@ -25,7 +25,7 @@ final class HandshakedSender {
     startHandshakeAndSend(connectionState, connectionId, payload, remote);
   }
 
-  void sendHandshakeReply(HandshakeReply reply, long connectionId, int sequenceNumber, DpchType packetType, InetSocketAddress remote) {
+  void sendHandshakeReply(HandshakeReply reply, long connectionId, int sequenceNumber, DpchPacketType packetType, InetSocketAddress remote) {
     if (!context.isRunning()) {
       return;
     }

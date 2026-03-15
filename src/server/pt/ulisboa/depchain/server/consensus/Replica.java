@@ -18,16 +18,28 @@ import java.util.concurrent.TimeUnit;
 
 import com.weavechain.curve25519.Scalar;
 
-import pt.ulisboa.depchain.server.consensus.Message.MessageType;
+import pt.ulisboa.depchain.proto.AppendNodeCommand;
+import pt.ulisboa.depchain.proto.AppendResponse;
+import pt.ulisboa.depchain.proto.ClientRequest;
+import pt.ulisboa.depchain.proto.ClientRequestKey;
+import pt.ulisboa.depchain.proto.ClientResponse;
+import pt.ulisboa.depchain.proto.ConsensusMessageType;
+import pt.ulisboa.depchain.proto.ForwardedRequestMessage;
+import pt.ulisboa.depchain.proto.Message;
+import pt.ulisboa.depchain.proto.Node;
+import pt.ulisboa.depchain.proto.NodeCommand;
+import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
+import pt.ulisboa.depchain.proto.ProposalMessage;
+import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.model.ClientRequest;
-import pt.ulisboa.depchain.shared.model.ClientResponse;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
+import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
+import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class Replica {
@@ -36,37 +48,29 @@ public class Replica {
   private ConfigParser config;
   private PublicKey clientPublicKey;
 
-  // Transports for node-to-node and client communication.
   private AuthenticatedLink nodeTransport;
   private AuthenticatedLink clientTransport;
 
-  // Clients waiting for responses to close connections after the real command execution.
-  private final Map<ClientRequestId, ConnectionKey> clientContexts;
-  private final Map<ClientRequestId, ClientRequest> pendingForwardedRequests;
-  private final Set<ClientRequestId> acceptedRequestIds;
-  private final Set<ClientRequestId> completedRequestIds;
+  private final Map<ClientRequestKey, ConnectionKey> clientContexts;
+  private final Map<ClientRequestKey, ClientRequest> pendingForwardedRequests;
+  private final Set<ClientRequestKey> acceptedRequestIds;
+  private final Set<ClientRequestKey> completedRequestIds;
 
-  // Replica config.
   private int id;
   private int n;
   private int f;
   private int quorum;
   private long viewChangeTimeoutMs;
 
-  // Replica state.
   private int viewNumber;
   private QuorumCertificate lockedQC;
   private QuorumCertificate prepareQC;
   private Node currentProposal;
   private Map<String, Node> blockTree;
 
-  // Message queue for incoming consensus or signature messages.
   private BlockingDeque<Message> messageQueue;
-
-  // Pending client commands.
   private Queue<ClientRequest> pendingCommands;
 
-  // Threshold signature protocol instance.
   private ThresholdSignatureProtocol thresholdProtocol;
   private final Logger logger;
 
@@ -88,14 +92,14 @@ public class Replica {
     this.thresholdProtocol = new ThresholdSignatureProtocol(id, config, localThresholdShare, publicThresholdKey);
     this.lockedQC = thresholdProtocol.genesisQC();
     this.prepareQC = thresholdProtocol.genesisQC();
-    this.currentProposal = Node.GENESIS_NODE;
+    this.currentProposal = ConsensusUtil.GENESIS_NODE;
     this.viewNumber = 0;
     this.blockTree = new HashMap<>();
 
     this.messageQueue = new LinkedBlockingDeque<>();
     this.pendingCommands = new LinkedList<>();
 
-    blockTree.put(Node.GENESIS_NODE.getThisHash(), Node.GENESIS_NODE);
+    blockTree.put(ConsensusUtil.GENESIS_NODE.getNodeHash(), ConsensusUtil.GENESIS_NODE);
   }
 
   public void initNetwork(AuthenticatedLink nodeTransport, AuthenticatedLink clientTransport) {
@@ -106,9 +110,7 @@ public class Replica {
 
   public void run() {
     logger.info("Starting at view " + viewNumber);
-
-    // Initial view change to start the protocol.
-    sendToLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, Node.GENESIS_NODE, prepareQC));
+    sendToLeader(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
 
     while (true) {
       try {
@@ -124,8 +126,8 @@ public class Replica {
   }
 
   public void receiveMessage(Message msg) {
-    if (msg.getType() == MessageType.FORWARDED_REQUEST) {
-      receiveForwardedRequest(msg.getForwardedRequest());
+    if (msg.getMessageType() == ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FORWARDED_REQUEST) {
+      receiveForwardedRequest(msg.hasForwardedRequest() ? msg.getForwardedRequest().getClientRequest() : null);
       return;
     }
 
@@ -137,146 +139,135 @@ public class Replica {
       return;
     }
 
-    ClientRequestId requestId = ClientRequestId.from(request);
-    if (completedRequestIds.contains(requestId)) {
+    ClientRequestKey requestKey = request.getAppend().getRequestKey();
+    if (completedRequestIds.contains(requestKey)) {
       return;
     }
 
-    clientContexts.putIfAbsent(requestId, key);
-    pendingForwardedRequests.putIfAbsent(requestId, request);
+    clientContexts.putIfAbsent(requestKey, key);
+    pendingForwardedRequests.putIfAbsent(requestKey, request);
     submitClientRequest(request);
   }
 
   private void onPrepare() {
     if (isLeader()) {
-      // As leader, gather new_view messages and select the highest QC.
-      List<Message> msgs = waitForQuorumMessages(MessageType.NEW_VIEW, viewNumber, quorum - 1);
+      List<Message> msgs = waitForQuorumMessages(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, viewNumber, quorum - 1);
       QuorumCertificate highQC = prepareQC;
       for (Message m : msgs) {
-        if (m.getJustify().getViewNumber() > highQC.getViewNumber()) {
-          highQC = m.getJustify();
+        QuorumCertificate justifyQc = m.hasPhaseCertificate() ? m.getPhaseCertificate().getJustifyQc() : null;
+        if (justifyQc != null && justifyQc.getViewNumber() > highQC.getViewNumber()) {
+          highQC = justifyQc;
         }
       }
 
-      // Propose extending the highest QC node with a new command (if any commands).
       ClientRequest request = pollNextCommand();
       if (request == null) {
         waitBeforeNoOpProposal();
-        currentProposal = createLeaf(highQC.getNode().getThisHash(), NodeCommand.NO_OP);
+        currentProposal = createLeaf(highQC.getCertifiedNode().getNodeHash(), ConsensusUtil.NO_OP_COMMAND);
       } else {
-        currentProposal = createLeaf(highQC.getNode().getThisHash(), NodeCommand.clientRequest(request.command(), ClientRequestId.from(request)));
+        NodeCommand command = NodeCommand.newBuilder()
+            .setAppend(AppendNodeCommand.newBuilder().setClientRequestKey(request.getAppend().getRequestKey()).setValue(request.getAppend().getValue()))
+            .build();
+        currentProposal = createLeaf(highQC.getCertifiedNode().getNodeHash(), command);
       }
 
-      // Broadcast the prepare proposal carrying the chosen high QC.
-      broadcast(new Message(viewNumber, id, MessageType.PREPARE, currentProposal, highQC));
+      Message proposal = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE)
+          .setProposal(ProposalMessage.newBuilder().setProposedNode(currentProposal).setJustifyQc(highQC)).build();
+      broadcast(proposal);
     } else {
-      // Wait for the prepare message from the leader.
-      Message prepareMsg = waitForMessageFromSender(MessageType.PREPARE, viewNumber, getLeader(viewNumber));
+      Message prepareMsg = waitForMessageFromSender(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber));
       if (prepareMsg == null) {
         return;
       }
 
-      QuorumCertificate justify = prepareMsg.getJustify();
-      Node proposedNode = prepareMsg.getNode();
+      QuorumCertificate justify = prepareMsg.hasProposal() ? prepareMsg.getProposal().getJustifyQc() : null;
+      Node proposedNode = prepareMsg.hasProposal() ? prepareMsg.getProposal().getProposedNode() : null;
 
-      // Vote if it's justified by a valid QC that safely extends the locked branch.
       boolean hasValidJustify = justify != null && verifyQC(justify);
-      boolean extendsJustifiedNode = justify != null && proposedNode != null && proposedNode.extendsNode(justify.getNode());
+      boolean extendsJustifiedNode = justify != null && proposedNode != null && ConsensusUtil.extendsNode(proposedNode, justify.getCertifiedNode());
       boolean isSafeProposal = proposedNode != null && safeNode(proposedNode, justify);
       if (hasValidJustify && extendsJustifiedNode && isSafeProposal) {
         currentProposal = proposedNode;
-        sendToLeader(voteMessage(MessageType.PREPARE, currentProposal));
+        sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, currentProposal));
       }
     }
   }
 
   private void onPreCommit() {
     if (isLeader()) {
-      // Aggregate prepare votes into a QC.
-      prepareQC = buildQC(MessageType.PREPARE, currentProposal);
-
-      // Pre-commit.
-      broadcast(new Message(viewNumber, id, MessageType.PRE_COMMIT, null, prepareQC));
+      prepareQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, currentProposal);
+      broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC));
     } else {
-      // Wait for the prepare QC and vote.
-      Message msg = waitForQCMessage(MessageType.PREPARE, viewNumber, getLeader(viewNumber));
-      prepareQC = msg.getJustify();
-      sendToLeader(voteMessage(MessageType.PRE_COMMIT, msg.getJustify().getNode()));
+      Message msg = waitForQCMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber));
+      prepareQC = msg.getPhaseCertificate().getJustifyQc();
+      sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC.getCertifiedNode()));
     }
   }
 
   private void onCommit() {
     if (isLeader()) {
-      // Aggregate pre commit votes into a QC, lock it, and broadcast commit.
-      QuorumCertificate preCommitQC = buildQC(MessageType.PRE_COMMIT, currentProposal);
+      QuorumCertificate preCommitQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, currentProposal);
       lockedQC = preCommitQC;
-      broadcast(new Message(viewNumber, id, MessageType.COMMIT, null, preCommitQC));
+      broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, preCommitQC));
     } else {
-      // Wait for the pre commit QC, update the lock, and vote.
-      Message msg = waitForQCMessage(MessageType.PRE_COMMIT, viewNumber, getLeader(viewNumber));
-      lockedQC = msg.getJustify();
-      sendToLeader(voteMessage(MessageType.COMMIT, msg.getJustify().getNode()));
+      Message msg = waitForQCMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, viewNumber, getLeader(viewNumber));
+      lockedQC = msg.getPhaseCertificate().getJustifyQc();
+      sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, lockedQC.getCertifiedNode()));
     }
   }
 
   private void onDecide() {
     if (isLeader()) {
-      // Aggregate commit votes into a QC, broadcast decide and execute.
-      QuorumCertificate commitQC = buildQC(MessageType.COMMIT, currentProposal);
-      broadcast(new Message(viewNumber, id, MessageType.DECIDE, null, commitQC));
+      QuorumCertificate commitQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, currentProposal);
+      broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE, commitQC));
       executeCommand(currentProposal);
     } else {
-      // Wait for the commit QC and execute.
-      Message msg = waitForQCMessage(MessageType.COMMIT, viewNumber, getLeader(viewNumber));
-      executeCommand(msg.getJustify().getNode());
+      Message msg = waitForQCMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, viewNumber, getLeader(viewNumber));
+      executeCommand(msg.getPhaseCertificate().getJustifyQc().getCertifiedNode());
     }
   }
 
   private void onNewView() {
-    // Start a new view locally and notify the new leader.
     viewNumber++;
     resubmitClientCommands();
-    sendToLeader(new Message(viewNumber, id, MessageType.NEW_VIEW, null, prepareQC));
+    sendToLeader(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
   }
 
   private void executeCommand(Node node) {
     NodeCommand command = node.getCommand();
-    String clientCommand = command.value();
-    ClientRequestId requestId = command.clientRequestId();
+    String clientCommand = ConsensusUtil.commandValue(command);
+    ClientRequestKey requestKey = command.hasAppend() ? command.getAppend().getClientRequestKey() : null;
 
-    if (!command.isNoOp()) {
+    if (!ConsensusUtil.isNoOp(command)) {
       logger.info("Executing command: " + clientCommand);
     }
-    blockTree.put(node.getThisHash(), node);
-    if (requestId == null) {
+    blockTree.put(node.getNodeHash(), node);
+    if (requestKey == null) {
       return;
     }
 
-    completedRequestIds.add(requestId);
-    pendingForwardedRequests.remove(requestId);
-    ConnectionKey key = clientContexts.remove(requestId);
+    completedRequestIds.add(requestKey);
+    pendingForwardedRequests.remove(requestKey);
+    ConnectionKey key = clientContexts.remove(requestKey);
     if (key != null && clientTransport != null) {
       try {
-        // Send a response to the client and close the connection.
-        ClientResponse clientResponse = new ClientResponse(true, "Success: " + clientCommand);
-        byte[] response = SerializationUtil.encodeClientResponseBytes(clientResponse);
+        ClientResponse clientResponse = ClientResponse.newBuilder().setAppend(AppendResponse.newBuilder().setSuccess(true).setMessage("Success: " + clientCommand)).build();
+        byte[] response = ProtoValidationUtil.requireValid(clientResponse, "ClientResponse").toByteArray();
         clientTransport.send(key.connectionId(), response, key.endpoint());
-        clientTransport.closeConnection(key.connectionId(), key.endpoint());
-        logger.info("Connection " + key.connectionId() + " closed for client " + key.endpoint());
       } catch (Exception e) {
-        logger.error("Error closing client connection: " + e.getMessage());
+        logger.error("Error replying to client connection: " + e.getMessage());
       }
     }
   }
 
   private void broadcast(Message msg) {
-    byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
+    byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
 
     for (ConfigParser.ReplicaSection peer : config.replicas()) {
       try {
         InetAddress peerHost = InetAddress.getByName(peer.host());
         InetSocketAddress addr = new InetSocketAddress(peerHost, peer.consensusPort());
-        nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
+        nodeTransport.send(0L, payload, addr);
       } catch (Exception e) {
         logger.error("Error in broadcast to " + peer.id() + ": " + e.getMessage());
       }
@@ -285,23 +276,22 @@ public class Replica {
 
   private void sendToLeader(Message msg) {
     try {
-      // Discover the leader's address from the config.
       int leaderId = getLeader(viewNumber);
       ConfigParser.ReplicaSection leader = config.requireReplicaBySenderId(leaderId);
       InetAddress leaderHost = InetAddress.getByName(leader.host());
       InetSocketAddress addr = new InetSocketAddress(leaderHost, leader.consensusPort());
-      byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
-      nodeTransport.send(0L, payload, addr); // 0 can be used for inter replica msgs
+      byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
+      nodeTransport.send(0L, payload, addr);
     } catch (Exception e) {
       logger.error("Error sending message to leader: " + e.getMessage());
     }
   }
 
-  private Message voteMessage(MessageType type, Node node) {
+  private Message voteMessage(ConsensusMessageType type, Node node) {
     return thresholdProtocol.createVoteMessage(viewNumber, type, node, getLeader(viewNumber), messageQueue);
   }
 
-  private QuorumCertificate buildQC(MessageType type, Node node) {
+  private QuorumCertificate buildQC(ConsensusMessageType type, Node node) {
     return thresholdProtocol.buildQC(viewNumber, type, node, messageQueue);
   }
 
@@ -309,16 +299,15 @@ public class Replica {
     return thresholdProtocol.verifyQC(qc);
   }
 
-  private List<Message> waitForQuorumMessages(MessageType type, int view, int requiredCount) {
-    // Collect messages from distinct senders until we have a quorum.
+  private List<Message> waitForQuorumMessages(ConsensusMessageType type, int view, int requiredCount) {
     LinkedHashMap<Integer, Message> msgsBySender = new LinkedHashMap<>();
     long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
     while (msgsBySender.size() < requiredCount) {
       Message msg = pollMessageUntil(deadlineMs, "waiting for " + type + " messages");
 
       if (msg != null && matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {
-        msgsBySender.putIfAbsent(msg.getSenderId(), msg);
-      } else {
+        msgsBySender.putIfAbsent(msg.getReplicaSenderId(), msg);
+      } else if (msg != null) {
         messageQueue.addLast(msg);
       }
     }
@@ -326,26 +315,29 @@ public class Replica {
     return new ArrayList<>(msgsBySender.values());
   }
 
-  private Message waitForMessageFromSender(MessageType type, int view, int sender) {
+  private Message waitForMessageFromSender(ConsensusMessageType type, int view, int sender) {
     long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
     while (true) {
       Message msg = pollMessageUntil(deadlineMs, "waiting for " + type + " from " + sender);
-      if (msg != null && msg.getSenderId() == sender && matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {
+      if (msg != null && msg.getReplicaSenderId() == sender && matchingMSG(msg, type, view) && !thresholdProtocol.isAuxiliaryMessage(msg)) {
         return msg;
-      } else {
+      } else if (msg != null) {
         messageQueue.addLast(msg);
       }
     }
   }
 
-  private Message waitForQCMessage(MessageType type, int view, int sender) {
+  private Message waitForQCMessage(ConsensusMessageType type, int view, int sender) {
     long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
     while (true) {
       Message msg = pollMessageUntil(deadlineMs, "waiting for QC " + type);
-      if (msg != null && matchingQC(msg.getJustify(), type, view) && msg.getSenderId() == sender && !thresholdProtocol.isAuxiliaryMessage(msg) && verifyQC(msg.getJustify())) {
+      QuorumCertificate justifyQc = msg != null && msg.hasPhaseCertificate() ? msg.getPhaseCertificate().getJustifyQc() : null;
+      if (msg != null && matchingQC(justifyQc, type, view) && msg.getReplicaSenderId() == sender && !thresholdProtocol.isAuxiliaryMessage(msg) && verifyQC(justifyQc)) {
         return msg;
       }
-      messageQueue.addLast(msg);
+      if (msg != null) {
+        messageQueue.addLast(msg);
+      }
     }
   }
 
@@ -355,7 +347,6 @@ public class Replica {
     }
 
     try {
-      // Poll messages until we get one that matches the criteria or we time out.
       long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
       Message msg = messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
       if (msg == null) {
@@ -369,16 +360,16 @@ public class Replica {
   }
 
   private Node createLeaf(String parentHash, NodeCommand command) {
-    byte[] hashPayload = SerializationUtil.encodeNodeHashPayload(parentHash, viewNumber, command);
+    byte[] hashPayload = ConsensusPayloadUtil.nodeHashPayload(parentHash, viewNumber, command);
     String thisHash = CryptoUtil.sha256Hex(hashPayload);
-    return new Node(parentHash, thisHash, viewNumber, command);
+    return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(thisHash).setViewNumber(viewNumber).setCommand(command).build();
   }
 
   private boolean safeNode(Node node, QuorumCertificate qc) {
     if (node == null || qc == null) {
       return false;
     }
-    return node.extendsNode(lockedQC.getNode()) || qc.getViewNumber() > lockedQC.getViewNumber();
+    return ConsensusUtil.extendsNode(node, lockedQC.getCertifiedNode()) || qc.getViewNumber() > lockedQC.getViewNumber();
   }
 
   private int getLeader(int view) {
@@ -415,12 +406,12 @@ public class Replica {
   }
 
   private void enqueueCommandIfNew(ClientRequest request) {
-    ClientRequestId requestId = ClientRequestId.from(request);
-    if (completedRequestIds.contains(requestId)) {
+    ClientRequestKey requestKey = request.getAppend().getRequestKey();
+    if (completedRequestIds.contains(requestKey)) {
       return;
     }
 
-    if (acceptedRequestIds.add(requestId)) {
+    if (acceptedRequestIds.add(requestKey)) {
       pendingCommands.add(request);
     }
   }
@@ -428,7 +419,7 @@ public class Replica {
   private ClientRequest pollNextCommand() {
     while (!pendingCommands.isEmpty()) {
       ClientRequest nextRequest = pendingCommands.poll();
-      if (nextRequest != null && !completedRequestIds.contains(ClientRequestId.from(nextRequest))) {
+      if (nextRequest != null && !completedRequestIds.contains(nextRequest.getAppend().getRequestKey())) {
         return nextRequest;
       }
     }
@@ -438,7 +429,6 @@ public class Replica {
 
   private void waitBeforeNoOpProposal() {
     try {
-      // Cpu saver, slow down empty rounds so leaders do not rotate at full speed while idle.
       TimeUnit.MILLISECONDS.sleep(NO_OP_DELAY_MS);
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
@@ -446,16 +436,25 @@ public class Replica {
   }
 
   private void forwardClientRequestToLeader(ClientRequest request) {
-    sendToLeader(new Message(viewNumber, id, MessageType.FORWARDED_REQUEST, request));
+    Message forwardedRequest = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id)
+        .setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FORWARDED_REQUEST)
+        .setForwardedRequest(ForwardedRequestMessage.newBuilder().setClientRequest(request)).build();
+    sendToLeader(forwardedRequest);
   }
 
   private boolean hasValidClientRequest(ClientRequest request) {
-    if (request == null || request.clientSenderId() != config.client().senderId()) {
+    if (request == null || !request.hasAppend()) {
+      return false;
+    }
+
+    ClientRequestKey requestKey = request.getAppend().getRequestKey();
+    if (requestKey.getClientSenderId() != config.client().senderId()) {
       return false;
     }
 
     try {
-      return request.hasValidSignature(clientPublicKey);
+      byte[] payload = ClientRequestPayloadUtil.signedAppendRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), request.getAppend().getValue());
+      return CryptoUtil.verifyEcdsa(payload, request.getAppend().getSignature().toByteArray(), clientPublicKey);
     } catch (Exception exception) {
       return false;
     }
@@ -465,11 +464,16 @@ public class Replica {
     return getLeader(viewNumber) == id;
   }
 
-  private boolean matchingMSG(Message m, MessageType t, int v) {
-    return m.getType() == t && m.getCurrView() == v;
+  private Message newPhaseCertificateMessage(ConsensusMessageType type, QuorumCertificate justifyQc) {
+    return Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(type)
+        .setPhaseCertificate(PhaseCertificateMessage.newBuilder().setJustifyQc(justifyQc)).build();
   }
 
-  private boolean matchingQC(QuorumCertificate qc, MessageType t, int v) {
-    return qc != null && qc.getType() == t && qc.getViewNumber() == v;
+  private boolean matchingMSG(Message m, ConsensusMessageType t, int v) {
+    return m.getMessageType() == t && m.getViewNumber() == v;
+  }
+
+  private boolean matchingQC(QuorumCertificate qc, ConsensusMessageType t, int v) {
+    return qc != null && qc.getMessageType() == t && qc.getViewNumber() == v;
   }
 }

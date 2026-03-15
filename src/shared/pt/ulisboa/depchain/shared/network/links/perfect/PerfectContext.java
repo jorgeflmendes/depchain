@@ -7,9 +7,11 @@ import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
-import pt.ulisboa.depchain.shared.network.packet.DpchSerialization;
-import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import com.google.protobuf.InvalidProtocolBufferException;
+
+import pt.ulisboa.depchain.proto.DpchPacket;
+import pt.ulisboa.depchain.proto.DpchPacketType;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.AsyncLinkContext;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
@@ -17,13 +19,14 @@ import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectContext extends AsyncLinkContext<InboundPacket> {
-  static final byte[] ACK_DATA = new byte[]{DpchType.DATA.code()};
-  static final byte[] ACK_SYN = new byte[]{DpchType.SYN.code()};
-  static final byte[] ACK_FIN = new byte[]{DpchType.FIN.code()};
+  static final byte[] ACK_DATA = new byte[]{DpchPacketUtil.encodeReliableType(DpchPacketType.DPCH_PACKET_TYPE_DATA)};
+  static final byte[] ACK_SYN = new byte[]{DpchPacketUtil.encodeReliableType(DpchPacketType.DPCH_PACKET_TYPE_SYN)};
+  static final byte[] ACK_FIN = new byte[]{DpchPacketUtil.encodeReliableType(DpchPacketType.DPCH_PACKET_TYPE_FIN)};
 
   final StubbornLink stubbornLink;
 
@@ -49,9 +52,9 @@ final class PerfectContext extends AsyncLinkContext<InboundPacket> {
     }
   }
 
-  boolean awaitNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchType packetType, long timeoutMs) throws InterruptedException {
+  boolean awaitNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType packetType, long timeoutMs) throws InterruptedException {
     ValidationUtils.requireAllNonNull(named("remoteEndpoint", remoteEndpoint), named("packetType", packetType));
-    if (packetType == DpchType.ACK) {
+    if (packetType == DpchPacketType.DPCH_PACKET_TYPE_ACK) {
       throw new IllegalArgumentException("ACK packets are not tracked");
     }
 
@@ -69,9 +72,9 @@ final class PerfectContext extends AsyncLinkContext<InboundPacket> {
     return connectionState == null || connectionState.senderState().waitUntilNoPending(this, connectionId, remoteEndpoint, packetType, deadlineMs);
   }
 
-  LinkFailureException pollTerminalFailure(long connectionId, InetSocketAddress remoteEndpoint, int sequenceNumber, DpchType packetType) {
+  LinkFailureException pollTerminalFailure(long connectionId, InetSocketAddress remoteEndpoint, int sequenceNumber, DpchPacketType packetType) {
     ValidationUtils.requireAllNonNull(named("remoteEndpoint", remoteEndpoint), named("packetType", packetType));
-    TrackedKey trackedKey = new TrackedKey(connectionId, sequenceNumber, Byte.toUnsignedInt(packetType.code()));
+    TrackedKey trackedKey = new TrackedKey(connectionId, sequenceNumber, packetType.getNumber());
     return stubbornLink.pollTerminalFailure(trackedKey, remoteEndpoint);
   }
 
@@ -82,16 +85,16 @@ final class PerfectContext extends AsyncLinkContext<InboundPacket> {
     }
   }
 
-  static byte[] ackPayloadFor(DpchType type) {
+  static byte[] ackPayloadFor(DpchPacketType type) {
     return switch (type) {
-      case DATA -> ACK_DATA;
-      case SYN -> ACK_SYN;
-      case FIN -> ACK_FIN;
-      case ACK -> throw new IllegalArgumentException("ACK cannot acknowledge ACK");
+      case DPCH_PACKET_TYPE_DATA -> ACK_DATA;
+      case DPCH_PACKET_TYPE_SYN -> ACK_SYN;
+      case DPCH_PACKET_TYPE_FIN -> ACK_FIN;
+      case DPCH_PACKET_TYPE_ACK, DPCH_PACKET_TYPE_UNSPECIFIED, UNRECOGNIZED -> throw new IllegalArgumentException("ACK cannot acknowledge " + type);
     };
   }
 
-  static DpchType decodeAcknowledgedType(byte[] ackPayload, DpchType fallback) {
+  static DpchPacketType decodeAcknowledgedType(byte[] ackPayload, DpchPacketType fallback) {
     if (ackPayload.length == 0) {
       return fallback;
     }
@@ -100,33 +103,26 @@ final class PerfectContext extends AsyncLinkContext<InboundPacket> {
     }
 
     try {
-      DpchType decoded = DpchType.fromCode(ackPayload[0]);
-
-      if (decoded == DpchType.DATA || decoded == DpchType.SYN || decoded == DpchType.FIN) {
-        return decoded;
-      }
-
-      return null;
+      return DpchPacketUtil.decodeReliableType(ackPayload[0]);
     } catch (IllegalArgumentException ignored) {
       return null;
     }
   }
 
   static byte[] serializePacket(DpchPacket packet) {
-    try {
-      return DpchSerialization.toBytes(packet);
-    } catch (IOException exception) {
-      throw new IllegalStateException("Failed to serialize DPCH packet", exception);
-    }
+    return ProtoValidationUtil.requireValid(packet, "DpchPacket").toByteArray();
   }
 
   static InboundPacket decodeInboundPacket(InboundBytes datagram) throws IOException {
     if (datagram == null) {
       return null;
     }
-    byte[] payload = datagram.payload();
-    DpchPacket packet = DpchSerialization.fromBytes(payload, 0, payload.length);
-    return new InboundPacket(datagram.sender(), packet);
+    try {
+      DpchPacket packet = ProtoValidationUtil.requireValid(DpchPacket.parseFrom(datagram.payload()), "DpchPacket");
+      return new InboundPacket(datagram.sender(), packet);
+    } catch (InvalidProtocolBufferException | IllegalArgumentException exception) {
+      throw new IOException("Invalid protobuf DPCH packet", exception);
+    }
   }
 }
 

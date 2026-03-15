@@ -8,13 +8,14 @@ import java.security.PublicKey;
 
 import javax.crypto.SecretKey;
 
+import pt.ulisboa.depchain.proto.AuthOpcode;
+import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
+import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
+import pt.ulisboa.depchain.proto.DpchPacket;
+import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.logging.Logger;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
-import pt.ulisboa.depchain.shared.network.packet.DpchType;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
-import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedEcdsaPayload;
-import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedPayload.DecodedHmacPayload;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
@@ -61,7 +62,7 @@ final class AuthenticatedReceiver {
       return null;
     }
 
-    ConnectionKey connectionKey = new ConnectionKey(inbound.sender(), inbound.packet().connectionId());
+    ConnectionKey connectionKey = new ConnectionKey(inbound.sender(), inbound.packet().getConnectionId());
     AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
     if (connectionState != null && connectionState.receiveMode() == AuthenticatedConnectionState.ReceiveMode.DATA) {
       return handleData(connectionState, inbound);
@@ -74,12 +75,12 @@ final class AuthenticatedReceiver {
 
   // If both sides sent INIT, the higher senderId keeps the initiator role.
   private InboundPacket handleHandshake(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InboundPacket inbound) {
-    DecodedEcdsaPayload decodedPayload = decodeHandshakePayload(inbound);
+    AuthenticatedHandshakeEnvelope decodedPayload = decodeHandshakePayload(inbound);
     if (decodedPayload == null) {
       return null;
     }
 
-    return switch (connectionState.decideHandshake(decodedPayload.opcode(), decodedPayload.senderId(), context.localSenderId)) {
+    return switch (connectionState.decideHandshake(decodedPayload.getAuthOpcode(), decodedPayload.getSenderId(), context.localSenderId)) {
       case USE_REPLY -> handleReply(connectionKey, inbound);
       case RESTART -> handleInit(connectionKey, inbound);
       case IGNORE -> null;
@@ -90,13 +91,13 @@ final class AuthenticatedReceiver {
     return handleInit(connectionKey, inbound, decodeHandshakePayload(inbound));
   }
 
-  private InboundPacket handleInit(ConnectionKey connectionKey, InboundPacket inbound, DecodedEcdsaPayload decodedPayload) {
-    if (decodedPayload == null || decodedPayload.opcode() != AuthOpcode.INIT) {
+  private InboundPacket handleInit(ConnectionKey connectionKey, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {
+    if (decodedPayload == null || decodedPayload.getAuthOpcode() != AuthOpcode.AUTH_OPCODE_INIT) {
       return null;
     }
 
     // Get the sender's static public key using the sender ID from the decoded payload.
-    long senderId = decodedPayload.senderId();
+    long senderId = decodedPayload.getSenderId();
     PublicKey senderStaticPKey = context.getStaticPublicKey(senderId);
     if (senderStaticPKey == null) {
       return null;
@@ -108,7 +109,7 @@ final class AuthenticatedReceiver {
     }
 
     // Decode the sender's ephemeral public key.
-    PublicKey peerEphemeralPKey = decodePublicKey(decodedPayload.publicKeyBytes());
+    PublicKey peerEphemeralPKey = decodePublicKey(decodedPayload.getEphemeralPublicKeyBytes().toByteArray());
     if (peerEphemeralPKey == null) {
       return null;
     }
@@ -132,13 +133,13 @@ final class AuthenticatedReceiver {
   }
 
   private InboundPacket handleReply(ConnectionKey connectionKey, InboundPacket inbound) {
-    DecodedEcdsaPayload decodedPayload = decodeHandshakePayload(inbound);
-    if (decodedPayload == null || decodedPayload.opcode() != AuthOpcode.REPLY) {
+    AuthenticatedHandshakeEnvelope decodedPayload = decodeHandshakePayload(inbound);
+    if (decodedPayload == null || decodedPayload.getAuthOpcode() != AuthOpcode.AUTH_OPCODE_REPLY) {
       return null;
     }
 
     // Retrieve the responder's static public key using the sender ID from the decoded payload.
-    long responderId = decodedPayload.senderId();
+    long responderId = decodedPayload.getSenderId();
     PublicKey responderStaticPKey = context.getStaticPublicKey(responderId);
     if (responderStaticPKey == null) {
       return null;
@@ -150,7 +151,7 @@ final class AuthenticatedReceiver {
     }
 
     // Decode the responder's ephemeral public key.
-    PublicKey peerEphemeralPKey = decodePublicKey(decodedPayload.publicKeyBytes());
+    PublicKey peerEphemeralPKey = decodePublicKey(decodedPayload.getEphemeralPublicKeyBytes().toByteArray());
     if (peerEphemeralPKey == null) {
       return null;
     }
@@ -176,26 +177,26 @@ final class AuthenticatedReceiver {
   }
 
   private InboundPacket handleData(AuthenticatedConnectionState connectionState, InboundPacket inbound) {
-    if (inbound.packet().type() != DpchType.DATA) {
+    if (inbound.packet().getPacketType() != DpchPacketType.DPCH_PACKET_TYPE_DATA) {
       return null;
     }
 
     // Secure data must contain an HMAC-protected payload.
-    DecodedHmacPayload decodedPayload;
+    AuthenticatedDataEnvelope decodedPayload;
     try {
-      decodedPayload = AuthenticatedPayload.decodeHmac(inbound.packet().payload());
+      decodedPayload = AuthenticatedPayloadUtil.decodeHmac(inbound.packet().getPayload().toByteArray());
     } catch (IllegalArgumentException ignored) {
       return null;
     }
 
-    if (decodedPayload.opcode() != AuthOpcode.DATA) {
+    if (decodedPayload.getAuthOpcode() != AuthOpcode.AUTH_OPCODE_DATA) {
       return null;
     }
 
     // Verify the HMAC using the shared secret K for this connection.
     boolean isValidHmac;
     try {
-      isValidHmac = AuthenticatedPayload.verifyHmac(decodedPayload, connectionState.sharedSecret());
+      isValidHmac = AuthenticatedPayloadUtil.verifyHmac(decodedPayload, connectionState.sharedSecret());
     } catch (Exception ignored) {
       isValidHmac = false;
     }
@@ -204,28 +205,29 @@ final class AuthenticatedReceiver {
     }
 
     // Validate the nonce to protect against replay attacks.
-    if (!connectionState.validateAndIncrementReceivedNonce(decodedPayload.nonce())) {
+    if (!connectionState.validateAndIncrementReceivedNonce(decodedPayload.getNonce())) {
       return null;
     }
-    DpchPacket decodedPacket = DpchPacket.from(inbound.packet().connectionId(), inbound.packet().type(), inbound.packet().sequenceNumber(), decodedPayload.payload());
+    DpchPacket decodedPacket = DpchPacket.newBuilder().setConnectionId(inbound.packet().getConnectionId()).setPacketType(DpchPacketType.DPCH_PACKET_TYPE_DATA).setHasAck(false)
+        .setSequenceNumber(inbound.packet().getSequenceNumber()).setPayload(decodedPayload.getApplicationPayload()).build();
     return new InboundPacket(inbound.sender(), decodedPacket);
   }
 
-  private DecodedEcdsaPayload decodeHandshakePayload(InboundPacket inbound) {
-    if (inbound.packet().type() != DpchType.DATA) {
+  private AuthenticatedHandshakeEnvelope decodeHandshakePayload(InboundPacket inbound) {
+    if (inbound.packet().getPacketType() != DpchPacketType.DPCH_PACKET_TYPE_DATA) {
       return null;
     }
 
     try {
-      return AuthenticatedPayload.decodeEcdsa(inbound.packet().payload());
+      return AuthenticatedPayloadUtil.decodeEcdsa(inbound.packet().getPayload().toByteArray());
     } catch (IllegalArgumentException ignored) {
       return null;
     }
   }
 
-  private boolean verifyHandshakePayload(DecodedEcdsaPayload payload, PublicKey staticPublicKey) {
+  private boolean verifyHandshakePayload(AuthenticatedHandshakeEnvelope payload, PublicKey staticPublicKey) {
     try {
-      return AuthenticatedPayload.verifyEcdsa(payload, staticPublicKey);
+      return AuthenticatedPayloadUtil.verifyEcdsa(payload, staticPublicKey);
     } catch (Exception ignored) {
       return false;
     }

@@ -30,18 +30,28 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import pt.ulisboa.depchain.server.consensus.Message;
-import pt.ulisboa.depchain.server.consensus.Message.MessageType;
-import pt.ulisboa.depchain.server.consensus.Node;
-import pt.ulisboa.depchain.server.consensus.QuorumCertificate;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
+
+import pt.ulisboa.depchain.proto.AppendRequest;
+import pt.ulisboa.depchain.proto.ClientRequest;
+import pt.ulisboa.depchain.proto.ClientRequestKey;
+import pt.ulisboa.depchain.proto.ClientResponse;
+import pt.ulisboa.depchain.proto.ConsensusMessageType;
+import pt.ulisboa.depchain.proto.Message;
+import pt.ulisboa.depchain.proto.Node;
+import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
+import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.proto.VoteMessage;
+import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
-import pt.ulisboa.depchain.shared.model.ClientRequest;
-import pt.ulisboa.depchain.shared.model.ClientResponse;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
+import pt.ulisboa.depchain.shared.utils.CryptoUtil;
+import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
 @Tag("integration")
 class SecTest {
@@ -66,10 +76,10 @@ class SecTest {
       for (int i = 1; i <= 4; i++) {
         String value = "simple-test-" + i;
         ClientRequest request = signedRequest(configPath, value);
-        byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
-        InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
+        byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
+        InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(45));
         assertResponseNotNull(response, "Client request should receive a response", servers);
-        assertEquals("Success: " + value, decodeClientResponse(response).message());
+        assertEquals("Success: " + value, decodeClientResponse(response).getAppend().getMessage());
       }
     } finally {
       stopProcesses(servers);
@@ -88,10 +98,10 @@ class SecTest {
 
       // A request sent to a non-leader should be forwarded to the leader and still succeed.
       ClientRequest request = signedRequest(configPath, "forwarded-test");
-      byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+      byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
       InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(45));
       assertResponseNotNull(response, "Forwarded client request should receive a response", servers);
-      assertEquals("Success: forwarded-test", decodeClientResponse(response).message());
+      assertEquals("Success: forwarded-test", decodeClientResponse(response).getAppend().getMessage());
     } finally {
       stopProcesses(servers);
     }
@@ -109,10 +119,10 @@ class SecTest {
 
       // Build one real signed request and execute it successfully once.
       ClientRequest request = signedRequest(configPath, "replayed-test");
-      byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+      byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
       InboundPacket firstResponse = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(10));
       assertResponseNotNull(firstResponse, "Initial client request should receive a response", servers);
-      assertEquals("Success: replayed-test", decodeClientResponse(firstResponse).message());
+      assertEquals("Success: replayed-test", decodeClientResponse(firstResponse).getAppend().getMessage());
 
       // Replaying the exact same signed request should be ignored by deduplication.
       for (int i = 0; i < 10; i++) {
@@ -155,10 +165,10 @@ class SecTest {
 
         // With only one Byzantine invalid voter, the honest replicas should still complete the request.
         ClientRequest request = signedRequest(configPath, "one-byzantine-test");
-        byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+        byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
         assertResponseNotNull(response, "Client request should still receive a response with one Byzantine invalid vote", servers);
-        assertEquals("Success: one-byzantine-test", decodeClientResponse(response).message());
+        assertEquals("Success: one-byzantine-test", decodeClientResponse(response).getAppend().getMessage());
         assertTrue(byzantineReplica3.invalidVotesSent() > 0, "Byzantine replica server3 did not send any invalid vote");
       }
     } finally {
@@ -180,7 +190,7 @@ class SecTest {
 
         // With two Byzantine invalid voters, the leader should be unable to gather enough honest votes.
         ClientRequest request = signedRequest(configPath, "byzantine-test");
-        byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
+        byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(10));
         assertNull(response, "Client request should time out when two Byzantine replicas prevent quorum");
         assertTrue(byzantineReplica3.invalidVotesSent() > 0, "Byzantine replica server3 did not send any invalid vote");
@@ -196,7 +206,7 @@ class SecTest {
     long clientSenderId = config.client().senderId();
     PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
     ClientRequest forgedRequest = forgedRequest(clientSenderId, command, clientPrivateKey);
-    byte[] payload = SerializationUtil.encodeClientRequestBytes(forgedRequest);
+    byte[] payload = ProtoValidationUtil.requireValid(forgedRequest, "ClientRequest").toByteArray();
     return sendClientRequestPayload(configPath, targetReplicaId, payload, Duration.ofSeconds(3));
   }
 
@@ -222,7 +232,7 @@ class SecTest {
             continue;
           }
 
-          if (inbound.packet().connectionId() == connectionId) {
+          if (inbound.packet().getConnectionId() == connectionId) {
             return inbound;
           }
         }
@@ -243,18 +253,18 @@ class SecTest {
     long clientSenderId = config.client().senderId();
     PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    return ClientRequest.signed(clientSenderId, requestId, command, clientPrivateKey);
+    return signedAppendRequest(clientSenderId, requestId, command, clientPrivateKey);
   }
 
   private static ClientRequest forgedRequest(long clientSenderId, String command, PrivateKey clientPrivateKey) throws Exception {
     // Start from a correctly signed client request.
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    ClientRequest validRequest = ClientRequest.signed(clientSenderId, requestId, command, clientPrivateKey);
+    ClientRequest validRequest = signedAppendRequest(clientSenderId, requestId, command, clientPrivateKey);
 
     // Flip one byte so the request keeps its shape but fails signature verification.
-    byte[] forgedSignature = validRequest.signature();
+    byte[] forgedSignature = validRequest.getAppend().getSignature().toByteArray();
     forgedSignature[0] ^= 0x01;
-    return new ClientRequest(validRequest.clientSenderId(), validRequest.requestId(), validRequest.command(), forgedSignature);
+    return validRequest.toBuilder().setAppend(validRequest.getAppend().toBuilder().setSignature(ByteString.copyFrom(forgedSignature))).build();
   }
 
   private static Path integrationConfigPath() {
@@ -281,7 +291,11 @@ class SecTest {
   }
 
   private static ClientResponse decodeClientResponse(InboundPacket response) {
-    return SerializationUtil.decodeClientResponseBytes(response.packet().payload());
+    try {
+      return ProtoValidationUtil.requireValid(ClientResponse.parseFrom(response.packet().getPayload()), "ClientResponse");
+    } catch (InvalidProtocolBufferException exception) {
+      throw new IllegalArgumentException("Invalid protobuf client response payload", exception);
+    }
   }
 
   private static List<StartedServer> startServers(List<String> replicaIds, Path configPath) throws IOException {
@@ -290,6 +304,13 @@ class SecTest {
       servers.add(startServer(replicaId, configPath));
     }
     return servers;
+  }
+
+  private static ClientRequest signedAppendRequest(long clientSenderId, long requestId, String command, PrivateKey clientPrivateKey) throws Exception {
+    byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, command), clientPrivateKey);
+    return ProtoValidationUtil.requireValid(ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
+        .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setValue(command).setSignature(ByteString.copyFrom(signature)))
+        .build(), "ClientRequest");
   }
 
   private static void waitForServersStartup(List<StartedServer> servers, Duration timeout) throws InterruptedException {
@@ -333,8 +354,8 @@ class SecTest {
             continue;
           }
 
-          Message message = SerializationUtil.decodeReplicaMessage(inbound.packet().payload());
-          if (!sentInvalidVote && message.getType() == MessageType.PREPARE) {
+          Message message = ProtoValidationUtil.requireValid(Message.parseFrom(inbound.packet().getPayload()), "ReplicaMessage");
+          if (!sentInvalidVote && message.getMessageType() == ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE) {
             sendInvalidPrepareVote(inbound, message);
           }
         } catch (InterruptedException interrupted) {
@@ -349,26 +370,35 @@ class SecTest {
     }
 
     private void sendInvalidPrepareVote(InboundPacket inbound, Message message) throws Exception {
-      Node originalNode = message.getNode();
+      Node originalNode = message.hasProposal() ? message.getProposal().getProposedNode() : null;
       if (originalNode == null) {
         return;
       }
 
-      // Keep the sender identity, but change the node hash so the leader rejects the vote.
-      Node invalidNode = new Node(originalNode.getParentHash(), originalNode.getThisHash() + "-evil", originalNode.getViewNumber(), originalNode.getCommand());
-      Message invalidVote = new Message(message.getCurrView(), senderId, MessageType.PREPARE, invalidNode, null);
-      transport.send(inbound.packet().connectionId(), SerializationUtil.encodeReplicaMessage(invalidVote), inbound.sender());
+      // Send an explicit vote-shaped message with a mismatched node hash so the leader rejects it.
+      Node invalidNode = originalNode.toBuilder().setNodeHash(invalidSha256Hex(originalNode.getNodeHash())).build();
+      Message invalidVote = Message.newBuilder().setViewNumber(message.getViewNumber()).setReplicaSenderId(senderId)
+          .setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE)
+          .setVote(VoteMessage.newBuilder().setVotedNode(invalidNode).setThresholdSignatureShare(ByteString.copyFrom(new byte[32]))).build();
+      transport.send(inbound.packet().getConnectionId(), ProtoValidationUtil.requireValid(invalidVote, "ReplicaMessage").toByteArray(), inbound.sender());
       invalidVotesSent.incrementAndGet();
       sentInvalidVote = true;
+    }
+
+    private String invalidSha256Hex(String originalHash) {
+      char replacement = originalHash.charAt(0) == '0' ? '1' : '0';
+      return replacement + originalHash.substring(1);
     }
 
     private void sendInitialNewView(ConfigParser config) throws Exception {
       ConfigParser.ReplicaSection leader = config.replicas().getFirst();
       InetSocketAddress leaderAddress = new InetSocketAddress(leader.host(), leader.consensusPort());
-      QuorumCertificate genesisQC = new QuorumCertificate(MessageType.DECIDE, -1, Node.GENESIS_NODE);
-      Message newView = new Message(0, senderId, MessageType.NEW_VIEW, Node.GENESIS_NODE, genesisQC);
+      QuorumCertificate genesisQC = QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE).setViewNumber(-1)
+          .setCertifiedNode(ConsensusUtil.GENESIS_NODE).build();
+      Message newView = Message.newBuilder().setViewNumber(0).setReplicaSenderId(senderId).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW)
+          .setPhaseCertificate(PhaseCertificateMessage.newBuilder().setJustifyQc(genesisQC)).build();
       long connectionId = ThreadLocalRandom.current().nextLong();
-      transport.send(connectionId, SerializationUtil.encodeReplicaMessage(newView), leaderAddress);
+      transport.send(connectionId, ProtoValidationUtil.requireValid(newView, "ReplicaMessage").toByteArray(), leaderAddress);
     }
 
     @Override

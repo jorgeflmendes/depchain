@@ -1,7 +1,9 @@
 package pt.ulisboa.depchain.client;
 
+import pt.ulisboa.depchain.shared.logging.Logger;
+
 public final class Main {
-  private static final pt.ulisboa.depchain.shared.logging.Logger logger = new pt.ulisboa.depchain.shared.logging.Logger("ClientMain");
+  private static final Logger logger = new Logger("ClientMain");
 
   public static void main(String[] args) throws Exception {
     if (args.length < 2) {

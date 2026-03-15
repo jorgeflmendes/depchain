@@ -68,6 +68,15 @@ message Node {
   NodeCommand command = 4 [(buf.validate.field).required = true];
 }
 
+message NodeHashPayload {
+  string parent_node_hash = 1 [(buf.validate.field).string.min_len = 1];
+  optional int32 view_number = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  NodeCommand command = 3 [(buf.validate.field).required = true];
+}
+
 message QuorumCertificate {
   option (buf.validate.message).cel = {
     id: "qc.type.specified"
@@ -112,6 +121,34 @@ message ThresholdSignatureContext {
   }];
 }
 
+message ForwardedRequestMessage {
+  depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
+}
+
+message ProposalMessage {
+  Node proposed_node = 1 [(buf.validate.field).required = true];
+  QuorumCertificate justify_qc = 2 [(buf.validate.field).required = true];
+}
+
+message PhaseCertificateMessage {
+  QuorumCertificate justify_qc = 1 [(buf.validate.field).required = true];
+}
+
+message VoteMessage {
+  Node voted_node = 1 [(buf.validate.field).required = true];
+  bytes threshold_signature_share = 2 [(buf.validate.field).bytes.len = 32];
+}
+
+message CommitmentMessage {
+  Node voted_node = 1 [(buf.validate.field).required = true];
+  bytes threshold_signature_commitment = 2 [(buf.validate.field).bytes.len = 32];
+}
+
+message ThresholdContextMessage {
+  Node voted_node = 1 [(buf.validate.field).required = true];
+  ThresholdSignatureContext threshold_signature_context = 2 [(buf.validate.field).required = true];
+}
+
 message Message {
   option (buf.validate.message).cel = {
     id: "replica.message.type.specified"
@@ -119,24 +156,34 @@ message Message {
     expression: "this.message_type != 0"
   };
   option (buf.validate.message).cel = {
-    id: "replica.message.forwarded-shape"
-    message: "FORWARDED_REQUEST messages must carry only a forwarded client request"
-    expression: "this.message_type == 6 ? (has(this.forwarded_request) && !has(this.message_node) && !has(this.justify_qc) && !has(this.threshold_signature_share) && !has(this.threshold_signature_commitment) && !has(this.threshold_signature_context)) : true"
+    id: "replica.message.body.forwarded-request"
+    message: "FORWARDED_REQUEST messages must use the forwarded_request body"
+    expression: "has(this.forwarded_request) ? this.message_type == 6 : true"
   };
   option (buf.validate.message).cel = {
-    id: "replica.message.threshold-shape"
-    message: "threshold auxiliary messages must carry a node and no QC or forwarded request"
-    expression: "(has(this.threshold_signature_share) || has(this.threshold_signature_commitment) || has(this.threshold_signature_context)) ? (this.message_type in [2, 3, 4] && has(this.message_node) && !has(this.justify_qc) && !has(this.forwarded_request)) : true"
+    id: "replica.message.body.proposal"
+    message: "proposal bodies must use PREPARE"
+    expression: "has(this.proposal) ? this.message_type == 2 : true"
   };
   option (buf.validate.message).cel = {
-    id: "replica.message.prepare-shape"
-    message: "non-threshold PREPARE messages must carry a proposal node and justify QC"
-    expression: "(this.message_type == 2 && !has(this.threshold_signature_share) && !has(this.threshold_signature_commitment) && !has(this.threshold_signature_context)) ? (has(this.message_node) && has(this.justify_qc) && !has(this.forwarded_request)) : true"
+    id: "replica.message.body.phase-certificate"
+    message: "phase certificate bodies must use NEW_VIEW, PRE_COMMIT, COMMIT, or DECIDE"
+    expression: "has(this.phase_certificate) ? this.message_type in [1, 3, 4, 5] : true"
   };
   option (buf.validate.message).cel = {
-    id: "replica.message-phase-qc-shape"
-    message: "NEW_VIEW, PRE_COMMIT, COMMIT, and DECIDE messages must carry a justify QC when not carrying threshold payloads"
-    expression: "(this.message_type in [1, 3, 4, 5] && !has(this.threshold_signature_share) && !has(this.threshold_signature_commitment) && !has(this.threshold_signature_context)) ? (has(this.justify_qc) && !has(this.forwarded_request)) : true"
+    id: "replica.message.body.vote"
+    message: "vote bodies must use PREPARE, PRE_COMMIT, or COMMIT"
+    expression: "has(this.vote) ? this.message_type in [2, 3, 4] : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.commitment"
+    message: "commitment bodies must use PREPARE, PRE_COMMIT, or COMMIT"
+    expression: "has(this.commitment) ? this.message_type in [2, 3, 4] : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.threshold-context"
+    message: "threshold context bodies must use PREPARE, PRE_COMMIT, or COMMIT"
+    expression: "has(this.threshold_context) ? this.message_type in [2, 3, 4] : true"
   };
 
   optional int32 view_number = 1 [
@@ -146,13 +193,13 @@ message Message {
   optional uint32 replica_sender_id = 2 [(buf.validate.field).required = true];
   optional ConsensusMessageType message_type = 3 [(buf.validate.field).required = true];
 
-  Node message_node = 4;
-  QuorumCertificate justify_qc = 5;
-  depchain.ClientRequest forwarded_request = 6;
-
-  oneof threshold_payload {
-    bytes threshold_signature_share = 7 [(buf.validate.field).bytes.len = 32];
-    bytes threshold_signature_commitment = 8 [(buf.validate.field).bytes.len = 32];
-    ThresholdSignatureContext threshold_signature_context = 9;
+  oneof body {
+    option (buf.validate.oneof).required = true;
+    ForwardedRequestMessage forwarded_request = 4;
+    ProposalMessage proposal = 5;
+    PhaseCertificateMessage phase_certificate = 6;
+    VoteMessage vote = 7;
+    CommitmentMessage commitment = 8;
+    ThresholdContextMessage threshold_context = 9;
   }
 }

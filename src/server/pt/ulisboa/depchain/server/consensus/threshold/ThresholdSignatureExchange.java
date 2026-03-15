@@ -13,13 +13,19 @@ import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
-import pt.ulisboa.depchain.server.consensus.Message;
-import pt.ulisboa.depchain.server.consensus.Message.MessageType;
-import pt.ulisboa.depchain.server.consensus.Node;
+import com.google.protobuf.ByteString;
+
+import pt.ulisboa.depchain.proto.CommitmentMessage;
+import pt.ulisboa.depchain.proto.ConsensusMessageType;
+import pt.ulisboa.depchain.proto.Message;
+import pt.ulisboa.depchain.proto.Node;
+import pt.ulisboa.depchain.proto.ThresholdContextMessage;
+import pt.ulisboa.depchain.proto.ThresholdSignatureContext;
+import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
 import pt.ulisboa.depchain.server.consensus.ViewChangeTimeoutException;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.utils.SerializationUtil;
+import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
@@ -48,41 +54,41 @@ final class ThresholdSignatureExchange {
   }
 
   boolean isAuxiliaryMessage(Message msg) {
-    return msg != null && msg.getThresholdPayloadType() != Message.ThresholdPayloadType.HOTSTUFF;
+    return msg != null && ConsensusUtil.isAuxiliaryMessage(msg);
   }
 
-  void sendCommitment(int leaderId, int viewNumber, int senderId, MessageType type, Node node, byte[] commitment) throws Exception {
+  void sendCommitment(int leaderId, int viewNumber, int senderId, ConsensusMessageType type, Node node, byte[] commitment) throws Exception {
     ValidationUtils.requireNonNegativeInt(leaderId, "leaderId");
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireNonNegativeInt(senderId, "senderId");
     ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("commitment", commitment));
 
-    Message message = new Message(viewNumber, senderId, type, node, null);
-    message.setPartialCommitment(commitment);
+    Message message = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(senderId).setMessageType(type)
+        .setCommitment(CommitmentMessage.newBuilder().setVotedNode(node).setThresholdSignatureCommitment(ByteString.copyFrom(commitment))).build();
     sendMessage(leaderId, message);
   }
 
-  ThresholdContext waitForContext(MessageType type, int viewNumber, int leaderId, Node node, BlockingDeque<Message> messageQueue) {
+  ThresholdContext waitForContext(ConsensusMessageType type, int viewNumber, int leaderId, Node node, BlockingDeque<Message> messageQueue) {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireNonNegativeInt(leaderId, "leaderId");
     ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("messageQueue", messageQueue));
 
-    Message contextMessage = waitForMatchingMessage(messageQueue, msg -> msg.getSenderId() == leaderId
-        && isMatchingThresholdMessage(msg, type, viewNumber, node, Message.ThresholdPayloadType.SIGNATURE_CONTEXT));
-    Set<Integer> participantIndexes = new LinkedHashSet<>();
-    for (int participantIndex : contextMessage.getParticipantIndexes()) {
-      participantIndexes.add(participantIndex);
-    }
-    return new ThresholdContext(contextMessage.getAggregatedCommitment(), participantIndexes);
+    Message contextMessage = waitForMatchingMessage(messageQueue,
+        msg -> msg.getReplicaSenderId() == leaderId && isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.THRESHOLD_CONTEXT));
+    ThresholdSignatureContext context = contextMessage.getThresholdContext().getThresholdSignatureContext();
+    Set<Integer> participantIndexes = new LinkedHashSet<>(context.getParticipantReplicaIndexesList());
+    return new ThresholdContext(context.getAggregatedCommitment().toByteArray(), participantIndexes);
   }
 
-  CommitmentBatch collectCommitments(int localReplicaIndex, byte[] localCommitment, MessageType type, int viewNumber, Node node, int expectedRemoteCount, BlockingDeque<Message> messageQueue) {
+  CommitmentBatch collectCommitments(int localReplicaIndex, byte[] localCommitment, ConsensusMessageType type, int viewNumber, Node node, int expectedRemoteCount,
+      BlockingDeque<Message> messageQueue) {
     ValidationUtils.requireNonNegativeInt(localReplicaIndex, "localReplicaIndex");
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireNonNegativeInt(expectedRemoteCount, "expectedRemoteCount");
     ValidationUtils.requireAllNonNull(named("localCommitment", localCommitment), named("type", type), named("node", node), named("messageQueue", messageQueue));
 
-    List<Message> commitmentMessages = collectMatchingMessages(expectedRemoteCount, messageQueue, msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.ThresholdPayloadType.SIGNATURE_COMMITMENT));
+    List<Message> commitmentMessages = collectMatchingMessages(expectedRemoteCount, messageQueue,
+        msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.COMMITMENT));
 
     int[] participantIndexes = new int[commitmentMessages.size() + 1];
     List<byte[]> commitments = new ArrayList<>(commitmentMessages.size() + 1);
@@ -95,31 +101,37 @@ final class ThresholdSignatureExchange {
 
     for (int i = 0; i < commitmentMessages.size(); i++) {
       Message commitmentMessage = commitmentMessages.get(i);
-      int participantIndex = replicaIndexForSender(commitmentMessage.getSenderId());
+      int participantIndex = replicaIndexForSender(commitmentMessage.getReplicaSenderId());
       participantIndexes[i + 1] = participantIndex;
-      commitments.add(commitmentMessage.getPartialCommitment());
+      commitments.add(commitmentMessage.getCommitment().getThresholdSignatureCommitment().toByteArray());
       participantIndexesSet.add(participantIndex);
-      participantSenders.add(commitmentMessage.getSenderId());
+      participantSenders.add(commitmentMessage.getReplicaSenderId());
     }
 
     return new CommitmentBatch(commitments, participantIndexes, participantIndexesSet, participantSenders);
   }
 
-  void sendContextMessages(Set<Integer> participantSenders, int viewNumber, int senderId, MessageType type, Node node, byte[] aggregatedCommitment, int[] participantIndexes)
-      throws Exception {
+  void sendContextMessages(Set<Integer> participantSenders, int viewNumber, int senderId, ConsensusMessageType type, Node node, byte[] aggregatedCommitment,
+      int[] participantIndexes) throws Exception {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireNonNegativeInt(senderId, "senderId");
-    ValidationUtils
-        .requireAllNonNull(named("participantSenders", participantSenders), named("type", type), named("node", node), named("aggregatedCommitment", aggregatedCommitment), named("participantIndexes", participantIndexes));
+    ValidationUtils.requireAllNonNull(
+        named("participantSenders", participantSenders),
+        named("type", type),
+        named("node", node),
+        named("aggregatedCommitment", aggregatedCommitment),
+        named("participantIndexes", participantIndexes));
 
     for (Integer participantSenderId : participantSenders) {
-      Message contextMessage = new Message(viewNumber, senderId, type, node, null);
-      contextMessage.setThresholdContext(aggregatedCommitment, participantIndexes);
-      sendMessage(participantSenderId, contextMessage);
+      ThresholdSignatureContext context = ThresholdSignatureContext.newBuilder().setAggregatedCommitment(ByteString.copyFrom(aggregatedCommitment))
+          .addAllParticipantReplicaIndexes(java.util.Arrays.stream(participantIndexes).boxed().toList()).build();
+      Message message = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(senderId).setMessageType(type)
+          .setThresholdContext(ThresholdContextMessage.newBuilder().setVotedNode(node).setThresholdSignatureContext(context)).build();
+      sendMessage(participantSenderId, message);
     }
   }
 
-  List<byte[]> collectSignatureShares(MessageType type, int viewNumber, Node node, Set<Integer> expectedSenders, BlockingDeque<Message> messageQueue) {
+  List<byte[]> collectSignatureShares(ConsensusMessageType type, int viewNumber, Node node, Set<Integer> expectedSenders, BlockingDeque<Message> messageQueue) {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("expectedSenders", expectedSenders), named("messageQueue", messageQueue));
 
@@ -127,15 +139,12 @@ final class ThresholdSignatureExchange {
       return List.of();
     }
 
-    // Collects signature share messages from the expected senders.
-    List<Message> signatureMessages = collectMatchingMessages(expectedSenders
-        .size(), messageQueue, msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.ThresholdPayloadType.SIGNATURE_SHARE)
-            && expectedSenders.contains(msg.getSenderId()));
+    List<Message> signatureMessages = collectMatchingMessages(expectedSenders.size(), messageQueue,
+        msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.VOTE) && expectedSenders.contains(msg.getReplicaSenderId()));
 
-    // Extracts the signature shares from the messages.
     List<byte[]> signatures = new ArrayList<>(signatureMessages.size());
     for (Message signatureMessage : signatureMessages) {
-      signatures.add(signatureMessage.getSignature());
+      signatures.add(signatureMessage.getVote().getThresholdSignatureShare().toByteArray());
     }
 
     return signatures;
@@ -146,11 +155,10 @@ final class ThresholdSignatureExchange {
     ValidationUtils.requireAllNonNull(named("msg", msg), named("nodeTransport", nodeTransport));
 
     ConfigParser.ReplicaSection replica = config.requireReplicaBySenderId(senderId);
-
-    byte[] payload = SerializationUtil.encodeReplicaMessage(msg);
+    byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
     InetAddress host = InetAddress.getByName(replica.host());
     InetSocketAddress address = new InetSocketAddress(host, replica.consensusPort());
-    nodeTransport.send(0L, payload, address); // Inter replica messages can use 0.
+    nodeTransport.send(0L, payload, address);
   }
 
   private List<Message> collectMatchingMessages(int expectedCount, BlockingDeque<Message> messageQueue, Predicate<Message> matcher) {
@@ -162,7 +170,7 @@ final class ThresholdSignatureExchange {
     while (messagesBySender.size() < expectedCount) {
       Message msg = takeMessageUntilDeadline(messageQueue, deadlineMs);
       if (matcher.test(msg)) {
-        messagesBySender.putIfAbsent(msg.getSenderId(), msg);
+        messagesBySender.putIfAbsent(msg.getReplicaSenderId(), msg);
       } else {
         messageQueue.addLast(msg);
       }
@@ -177,7 +185,6 @@ final class ThresholdSignatureExchange {
     long deadlineMs = TimeUtil.deadlineAfterNow(viewChangeTimeoutMs);
     while (true) {
       Message msg = takeMessageUntilDeadline(messageQueue, deadlineMs);
-      // Checks if the message matches the given predicate (condition).
       if (matcher.test(msg)) {
         return msg;
       }
@@ -204,12 +211,17 @@ final class ThresholdSignatureExchange {
     }
   }
 
-  private boolean isMatchingThresholdMessage(Message msg, MessageType type, int viewNumber, Node node, Message.ThresholdPayloadType payloadType) {
-    return msg.getType() == type && msg.getCurrView() == viewNumber && ThresholdSignatureProtocol.isSameNode(msg.getNode(), node) && msg.getThresholdPayloadType() == payloadType;
+  private boolean isMatchingThresholdMessage(Message msg, ConsensusMessageType type, int viewNumber, Node node, Message.BodyCase bodyCase) {
+    Node messageNode = switch (msg.getBodyCase()) {
+      case VOTE -> msg.getVote().getVotedNode();
+      case COMMITMENT -> msg.getCommitment().getVotedNode();
+      case THRESHOLD_CONTEXT -> msg.getThresholdContext().getVotedNode();
+      default -> null;
+    };
+    return msg.getMessageType() == type && msg.getViewNumber() == viewNumber && ThresholdSignatureProtocol.isSameNode(messageNode, node) && msg.getBodyCase() == bodyCase;
   }
 
   private int replicaIndexForSender(int senderId) {
     return config.requireReplicaIndexForSenderId(senderId);
   }
-
 }

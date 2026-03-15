@@ -5,6 +5,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.net.InetSocketAddress;
 import java.security.KeyPair;
 
+import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
@@ -61,7 +62,7 @@ final class AuthenticatedSender {
     }
 
     try {
-      byte[] initPayload = AuthenticatedPayload.encodeEcdsa(AuthOpcode.INIT, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
+      byte[] initPayload = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_INIT, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
       context.handshakedLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
     } catch (Exception exception) {
       connectionState.rollbackHandshake(localEKeys.getPrivate());
@@ -73,7 +74,7 @@ final class AuthenticatedSender {
     ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("localEKeys", localEKeys), named("remoteEndpoint", remoteEndpoint));
 
     try {
-      byte[] replyPayload = AuthenticatedPayload.encodeEcdsa(AuthOpcode.REPLY, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
+      byte[] replyPayload = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_REPLY, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
       context.handshakedLink.send(connectionKey.connectionId(), replyPayload, remoteEndpoint);
     } catch (Exception exception) {
       throw new IllegalStateException("Failed to send authenticated reply", exception);
@@ -96,7 +97,7 @@ final class AuthenticatedSender {
     AuthenticatedConnectionState.SecureSendContext secureSend = connectionState.reserveSecureSend();
 
     try {
-      byte[] securePayload = AuthenticatedPayload.encodeHmac(AuthOpcode.DATA, payload, secureSend.sharedSecret(), secureSend.nonce());
+      byte[] securePayload = AuthenticatedPayloadUtil.encodeHmac(AuthOpcode.AUTH_OPCODE_DATA, payload, secureSend.sharedSecret(), secureSend.nonce());
       context.handshakedLink.send(connectionKey.connectionId(), securePayload, remoteEndpoint);
     } catch (Exception exception) {
       throw new IllegalStateException("Failed to send authenticated data", exception);

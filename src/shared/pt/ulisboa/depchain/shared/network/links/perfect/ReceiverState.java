@@ -3,7 +3,7 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
 final class ReceiverState {
@@ -34,7 +34,7 @@ final class ReceiverState {
     }
 
     InboundPacket delivered = nextEntry.getValue();
-    if (nextExpectedSeq > DpchPacket.MAX_PACKET_NUMBER) {
+    if (nextExpectedSeq > DpchPacketUtil.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Receiver sequence number exhausted for stream");
     }
 

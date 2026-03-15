@@ -9,6 +9,7 @@ import java.util.List;
 
 import javax.crypto.SecretKey;
 
+import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.shared.network.links.RunOnce;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
@@ -164,11 +165,11 @@ final class AuthenticatedConnectionState {
       return HandshakeAction.IGNORE;
     }
 
-    if (opcode == AuthOpcode.REPLY) {
+    if (opcode == AuthOpcode.AUTH_OPCODE_REPLY) {
       return HandshakeAction.USE_REPLY;
     }
 
-    if (opcode != AuthOpcode.INIT || remoteSenderId <= localSenderId) {
+    if (opcode != AuthOpcode.AUTH_OPCODE_INIT || remoteSenderId <= localSenderId) {
       return HandshakeAction.IGNORE;
     }
 

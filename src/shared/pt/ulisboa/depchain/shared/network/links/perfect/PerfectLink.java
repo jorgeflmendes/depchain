@@ -3,7 +3,7 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 
-import pt.ulisboa.depchain.shared.network.packet.DpchType;
+import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
@@ -37,26 +37,26 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
   }
 
   public void sendData(long connectionId, byte[] payload, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchType.DATA, false, payload, remoteEndpoint);
+    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_DATA, false, payload, remoteEndpoint);
   }
 
   public void sendSyn(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchType.SYN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
+    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_SYN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
   }
 
   public void sendSynAck(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchType.SYN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
+    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_SYN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
   }
 
   public void sendFin(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchType.FIN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
+    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_FIN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
   }
 
   public void sendFinAck(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchType.FIN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
+    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_FIN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
   }
 
-  public void sendAck(long connectionId, int acknowledgedSequence, DpchType acknowledgedType, InetSocketAddress remoteEndpoint) {
+  public void sendAck(long connectionId, int acknowledgedSequence, DpchPacketType acknowledgedType, InetSocketAddress remoteEndpoint) {
     sender.sendAck(connectionId, acknowledgedSequence, acknowledgedType, remoteEndpoint);
   }
 
@@ -71,24 +71,24 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
   }
 
   public boolean awaitNoPendingSyn(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchType.SYN, timeoutMs);
+    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_SYN, timeoutMs);
   }
 
   public boolean awaitNoPendingFin(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchType.FIN, timeoutMs);
+    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_FIN, timeoutMs);
   }
 
   public boolean awaitNoPendingData(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchType.DATA, timeoutMs);
+    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_DATA, timeoutMs);
   }
 
   public void cancelPendingData(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.cancelPendingType(connectionId, remoteEndpoint, DpchType.DATA);
+    sender.cancelPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_DATA);
   }
 
   public void cancelPendingControl(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.cancelPendingType(connectionId, remoteEndpoint, DpchType.SYN);
-    sender.cancelPendingType(connectionId, remoteEndpoint, DpchType.FIN);
+    sender.cancelPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_SYN);
+    sender.cancelPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_FIN);
   }
 
   public void releaseConnection(long connectionId, InetSocketAddress remoteEndpoint) {

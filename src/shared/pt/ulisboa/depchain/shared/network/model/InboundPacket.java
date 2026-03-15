@@ -4,7 +4,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 
-import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
+import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 // Common inbound packet shape shared by link layers.

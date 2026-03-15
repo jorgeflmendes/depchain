@@ -10,9 +10,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import pt.ulisboa.depchain.shared.network.links.AsyncLinkContext;
 import pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
+import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-final class AuthenticatedContext extends AsyncLinkContext<pt.ulisboa.depchain.shared.network.model.InboundPacket> {
+final class AuthenticatedContext extends AsyncLinkContext<InboundPacket> {
   final HandshakedPerfectLink handshakedLink;
 
   final long localSenderId;
