@@ -2,18 +2,20 @@ package pt.ulisboa.depchain.shared.utils;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 
 import com.weavechain.curve25519.CompressedEdwardsY;
 import com.weavechain.curve25519.EdwardsPoint;
 import com.weavechain.curve25519.InvalidEncodingException;
 import com.weavechain.curve25519.Scalar;
 
+import pt.ulisboa.depchain.server.consensus.ClientRequestId;
 import pt.ulisboa.depchain.server.consensus.Message;
 import pt.ulisboa.depchain.server.consensus.Message.MessageType;
 import pt.ulisboa.depchain.server.consensus.Node;
+import pt.ulisboa.depchain.server.consensus.NodeCommand;
 import pt.ulisboa.depchain.server.consensus.QuorumCertificate;
 import pt.ulisboa.depchain.shared.model.ClientRequest;
+import pt.ulisboa.depchain.shared.model.ClientResponse;
 
 public final class SerializationUtil {
   private static final byte OPTIONAL_NOT_PRESENT = 0;
@@ -35,54 +37,88 @@ public final class SerializationUtil {
     ValidationUtils.requireNonNegativeLong(requestId, "requestId");
     ValidationUtils.requireNonNull(command, "command");
 
-    String encodedCommand = Base64.getEncoder().encodeToString(encodeString(command));
-    return encodeString(clientSenderId + "|" + requestId + "|" + encodedCommand);
-  }
-
-  public static String encodeClientRequestString(ClientRequest request) {
-    ValidationUtils.requireNonNull(request, "request");
-
-    String encodedCommand = Base64.getEncoder().encodeToString(encodeString(request.command()));
-    String encodedSignature = Base64.getEncoder().encodeToString(request.signature());
-    return request.clientSenderId() + "|" + request.requestId() + "|" + encodedCommand + "|" + encodedSignature;
-  }
-
-  public static ClientRequest decodeClientRequestString(String encodedRequest) {
-    ValidationUtils.requireNonNull(encodedRequest, "encodedRequest");
-    String[] parts = encodedRequest.split("\\|", 4);
-    if (parts.length != 4) {
-      throw new IllegalArgumentException("Invalid client request encoding");
-    }
-    long clientSenderId = ValidationUtils.requireNonNegativeLong(Long.parseLong(parts[0]), "clientSenderId");
-    long requestId = ValidationUtils.requireNonNegativeLong(Long.parseLong(parts[1]), "requestId");
-
-    String command = decodeString(Base64.getDecoder().decode(parts[2]));
-    byte[] signature = Base64.getDecoder().decode(parts[3]);
-    return new ClientRequest(clientSenderId, requestId, command, signature);
+    byte[] commandBytes = encodeString(command);
+    ByteBuffer buffer = ByteBuffer.allocate((2 * Long.BYTES) + Integer.BYTES + commandBytes.length);
+    buffer.putLong(clientSenderId);
+    buffer.putLong(requestId);
+    putByteArray(buffer, commandBytes);
+    return buffer.array();
   }
 
   public static byte[] encodeClientRequestBytes(ClientRequest request) {
     ValidationUtils.requireNonNull(request, "request");
 
-    return encodeString(encodeClientRequestString(request));
+    byte[] commandBytes = encodeString(request.command());
+    byte[] signatureBytes = request.signature();
+    ByteBuffer buffer = ByteBuffer.allocate((2 * Long.BYTES) + (2 * Integer.BYTES) + commandBytes.length + signatureBytes.length);
+    buffer.putLong(request.clientSenderId());
+    buffer.putLong(request.requestId());
+    putByteArray(buffer, commandBytes);
+    putByteArray(buffer, signatureBytes);
+    return buffer.array();
   }
 
   public static ClientRequest decodeClientRequestBytes(byte[] payload) {
     ValidationUtils.requireNonNull(payload, "payload");
+    ByteBuffer buffer = ByteBuffer.wrap(payload);
+    long clientSenderId = ValidationUtils.requireNonNegativeLong(buffer.getLong(), "clientSenderId");
+    long requestId = ValidationUtils.requireNonNegativeLong(buffer.getLong(), "requestId");
+    String command = decodeString(getByteArray(buffer));
+    byte[] signature = getByteArray(buffer);
+    return new ClientRequest(clientSenderId, requestId, command, signature);
+  }
 
-    return decodeClientRequestString(decodeString(payload));
+  public static byte[] encodeClientResponseBytes(ClientResponse response) {
+    ValidationUtils.requireNonNull(response, "response");
+
+    byte[] messageBytes = encodeString(response.message());
+    ByteBuffer buffer = ByteBuffer.allocate(Byte.BYTES + Integer.BYTES + messageBytes.length);
+    buffer.put(response.success() ? OPTIONAL_PRESENT : OPTIONAL_NOT_PRESENT);
+    putByteArray(buffer, messageBytes);
+    return buffer.array();
+  }
+
+  public static ClientResponse decodeClientResponseBytes(byte[] payload) {
+    ValidationUtils.requireNonNull(payload, "payload");
+    ByteBuffer buffer = ByteBuffer.wrap(payload);
+    boolean success = buffer.get() == OPTIONAL_PRESENT;
+    String message = decodeString(getByteArray(buffer));
+    return new ClientResponse(success, message);
   }
 
   public static byte[] encodeVotePayload(MessageType type, int viewNumber, Node node) {
     ValidationUtils.requireNonNull(type, "type");
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
 
-    String nodeHash = "null";
+    byte[] nodeHashBytes = null;
     if (node != null) {
-      nodeHash = node.getThisHash();
+      nodeHashBytes = encodeString(node.getThisHash());
     }
 
-    return encodeString(type.name() + "|" + viewNumber + "|" + nodeHash);
+    ByteBuffer buffer = ByteBuffer.allocate((2 * Integer.BYTES) + optionalByteArrayCapacity(nodeHashBytes));
+    buffer.putInt(type.ordinal());
+    buffer.putInt(viewNumber);
+    putOptionalByteArray(buffer, nodeHashBytes);
+    return buffer.array();
+  }
+
+  public static byte[] encodeNodeHashPayload(String parentHash, int viewNumber, NodeCommand command) {
+    ValidationUtils.requireAllNonNull(ValidationUtils.named("parentHash", parentHash), ValidationUtils.named("command", command));
+    ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
+
+    byte[] parentHashBytes = encodeString(parentHash);
+    byte[] commandValueBytes = encodeString(command.value());
+    int capacity = (2 * Integer.BYTES) + parentHashBytes.length + Integer.BYTES + commandValueBytes.length + Byte.BYTES;
+    if (command.clientRequestId() != null) {
+      capacity += 2 * Long.BYTES;
+    }
+
+    ByteBuffer buffer = ByteBuffer.allocate(capacity);
+    putByteArray(buffer, parentHashBytes);
+    buffer.putInt(viewNumber);
+    putByteArray(buffer, commandValueBytes);
+    putOptionalClientRequestId(buffer, command.clientRequestId());
+    return buffer.array();
   }
 
   public static EdwardsPoint decodeCommitment(byte[] commitment) throws InvalidEncodingException {
@@ -100,9 +136,9 @@ public final class SerializationUtil {
 
     byte[] nodeBytes = encodeNode(msg.getNode());
     byte[] justifyBytes = encodeQuorumCertificate(msg.getJustify());
-    byte[] commandBytes = null;
-    if (msg.getCommand() != null) {
-      commandBytes = encodeString(msg.getCommand());
+    byte[] forwardedRequestBytes = null;
+    if (msg.getForwardedRequest() != null) {
+      forwardedRequestBytes = encodeClientRequestBytes(msg.getForwardedRequest());
     }
     byte[] signature = null;
     byte[] partialCommitment = null;
@@ -128,11 +164,12 @@ public final class SerializationUtil {
     }
 
     int headerCapacity = 3 * Integer.BYTES;
-    int commandCapacity = optionalByteArrayCapacity(commandBytes);
+    int forwardedRequestCapacity = optionalByteArrayCapacity(forwardedRequestBytes);
     int signatureCapacity = optionalByteArrayCapacity(signature);
     int partialCommitmentCapacity = optionalByteArrayCapacity(partialCommitment);
     int aggregatedCommitmentCapacity = optionalByteArrayCapacity(aggregatedCommitment);
-    int capacity = headerCapacity + commandCapacity + nodeBytes.length + justifyBytes.length + signatureCapacity + partialCommitmentCapacity + aggregatedCommitmentCapacity
+    int capacity = headerCapacity + forwardedRequestCapacity + nodeBytes.length + justifyBytes.length + signatureCapacity + partialCommitmentCapacity
+        + aggregatedCommitmentCapacity
         + participantIndexesCapacity;
 
     ByteBuffer buffer = ByteBuffer.allocate(capacity);
@@ -141,7 +178,7 @@ public final class SerializationUtil {
     buffer.putInt(msg.getCurrView());
     buffer.putInt(msg.getSenderId());
     buffer.putInt(msg.getType().ordinal());
-    putOptionalByteArray(buffer, commandBytes);
+    putOptionalByteArray(buffer, forwardedRequestBytes);
     buffer.put(nodeBytes);
     buffer.put(justifyBytes);
     putOptionalByteArray(buffer, signature);
@@ -166,7 +203,7 @@ public final class SerializationUtil {
     int currView = buffer.getInt();
     int senderId = buffer.getInt();
     int typeOrdinal = buffer.getInt();
-    byte[] commandBytes = getOptionalByteArray(buffer);
+    byte[] forwardedRequestBytes = getOptionalByteArray(buffer);
     Node node = decodeNode(buffer);
     QuorumCertificate justify = decodeQuorumCertificate(buffer);
     byte[] signature = getOptionalByteArray(buffer);
@@ -184,8 +221,8 @@ public final class SerializationUtil {
 
     Message.MessageType type = Message.MessageType.values()[typeOrdinal];
     Message message;
-    if (commandBytes != null) {
-      message = new Message(currView, senderId, type, decodeString(commandBytes));
+    if (forwardedRequestBytes != null) {
+      message = new Message(currView, senderId, type, decodeClientRequestBytes(forwardedRequestBytes));
     } else {
       message = new Message(currView, senderId, type, node, justify);
     }
@@ -225,9 +262,13 @@ public final class SerializationUtil {
 
     byte[] parentHashBytes = node.getParentHash().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     byte[] thisHashBytes = node.getThisHash().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    byte[] commandBytes = node.getCommand().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] commandBytes = node.getCommand().value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    ClientRequestId clientRequestId = node.getCommand().clientRequestId();
 
-    int capacity = Byte.BYTES + (4 * Integer.BYTES) + parentHashBytes.length + thisHashBytes.length + commandBytes.length;
+    int capacity = Byte.BYTES + (4 * Integer.BYTES) + parentHashBytes.length + thisHashBytes.length + commandBytes.length + Byte.BYTES;
+    if (clientRequestId != null) {
+      capacity += 2 * Long.BYTES;
+    }
     ByteBuffer buffer = ByteBuffer.allocate(capacity);
 
     buffer.put(OPTIONAL_PRESENT);
@@ -238,6 +279,7 @@ public final class SerializationUtil {
     buffer.putInt(node.getViewNumber());
     buffer.putInt(commandBytes.length);
     buffer.put(commandBytes);
+    putOptionalClientRequestId(buffer, clientRequestId);
 
     return buffer.array();
   }
@@ -262,8 +304,9 @@ public final class SerializationUtil {
     byte[] commandBytes = new byte[commandLen];
     buffer.get(commandBytes);
     String command = new String(commandBytes, java.nio.charset.StandardCharsets.UTF_8);
+    ClientRequestId clientRequestId = getOptionalClientRequestId(buffer);
 
-    return new Node(parentHash, thisHash, viewNumber, command);
+    return new Node(parentHash, thisHash, viewNumber, command, clientRequestId);
   }
 
   private static byte[] encodeQuorumCertificate(QuorumCertificate qc) {
@@ -345,5 +388,40 @@ public final class SerializationUtil {
     byte[] bytes = new byte[length];
     buffer.get(bytes);
     return bytes;
+  }
+
+  private static void putByteArray(ByteBuffer buffer, byte[] value) {
+    buffer.putInt(value.length);
+    buffer.put(value);
+  }
+
+  private static byte[] getByteArray(ByteBuffer buffer) {
+    int length = buffer.getInt();
+    if (length < 0) {
+      throw new IllegalArgumentException("Negative byte array length");
+    }
+
+    byte[] bytes = new byte[length];
+    buffer.get(bytes);
+    return bytes;
+  }
+
+  private static void putOptionalClientRequestId(ByteBuffer buffer, ClientRequestId clientRequestId) {
+    if (clientRequestId == null) {
+      buffer.put(OPTIONAL_NOT_PRESENT);
+      return;
+    }
+
+    buffer.put(OPTIONAL_PRESENT);
+    buffer.putLong(clientRequestId.clientSenderId());
+    buffer.putLong(clientRequestId.requestId());
+  }
+
+  private static ClientRequestId getOptionalClientRequestId(ByteBuffer buffer) {
+    if (buffer.get() == OPTIONAL_NOT_PRESENT) {
+      return null;
+    }
+
+    return new ClientRequestId(buffer.getLong(), buffer.getLong());
   }
 }

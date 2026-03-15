@@ -1,14 +1,22 @@
 package pt.ulisboa.depchain.server.consensus;
 
 public class Node {
-  public static final Node GENESIS_NODE = new Node("0", "0", 0, "GENESIS");
+  public static final Node GENESIS_NODE = new Node("0", "0", 0, NodeCommand.GENESIS);
 
   private String thisHash;
   private String parentHash;
   private int viewNumber;
-  private String command;
+  private NodeCommand command;
 
   public Node(String parentHash, String thisHash, int viewNumber, String command) {
+    this(parentHash, thisHash, viewNumber, new NodeCommand(command, null));
+  }
+
+  public Node(String parentHash, String thisHash, int viewNumber, String command, ClientRequestId clientRequestId) {
+    this(parentHash, thisHash, viewNumber, new NodeCommand(command, clientRequestId));
+  }
+
+  public Node(String parentHash, String thisHash, int viewNumber, NodeCommand command) {
     this.parentHash = parentHash;
     this.thisHash = thisHash;
     this.viewNumber = viewNumber;
@@ -31,7 +39,7 @@ public class Node {
     return viewNumber;
   }
 
-  public String getCommand() {
+  public NodeCommand getCommand() {
     return command;
   }
 }

@@ -38,6 +38,7 @@ import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.model.ClientRequest;
+import pt.ulisboa.depchain.shared.model.ClientResponse;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.SerializationUtil;
@@ -68,7 +69,7 @@ class SecTest {
         byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
         assertResponseNotNull(response, "Client request should receive a response", servers);
-        assertEquals("Success: " + value, SerializationUtil.decodeString(response.packet().payload()));
+        assertEquals("Success: " + value, decodeClientResponse(response).message());
       }
     } finally {
       stopProcesses(servers);
@@ -90,7 +91,7 @@ class SecTest {
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket response = sendClientRequestPayload(configPath, "server2", payload, Duration.ofSeconds(45));
       assertResponseNotNull(response, "Forwarded client request should receive a response", servers);
-      assertEquals("Success: forwarded-test", SerializationUtil.decodeString(response.packet().payload()));
+      assertEquals("Success: forwarded-test", decodeClientResponse(response).message());
     } finally {
       stopProcesses(servers);
     }
@@ -111,7 +112,7 @@ class SecTest {
       byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
       InboundPacket firstResponse = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(10));
       assertResponseNotNull(firstResponse, "Initial client request should receive a response", servers);
-      assertEquals("Success: replayed-test", SerializationUtil.decodeString(firstResponse.packet().payload()));
+      assertEquals("Success: replayed-test", decodeClientResponse(firstResponse).message());
 
       // Replaying the exact same signed request should be ignored by deduplication.
       for (int i = 0; i < 10; i++) {
@@ -157,7 +158,7 @@ class SecTest {
         byte[] payload = SerializationUtil.encodeClientRequestBytes(request);
         InboundPacket response = sendClientRequestPayload(configPath, "server1", payload, Duration.ofSeconds(20));
         assertResponseNotNull(response, "Client request should still receive a response with one Byzantine invalid vote", servers);
-        assertEquals("Success: one-byzantine-test", SerializationUtil.decodeString(response.packet().payload()));
+        assertEquals("Success: one-byzantine-test", decodeClientResponse(response).message());
         assertTrue(byzantineReplica3.invalidVotesSent() > 0, "Byzantine replica server3 did not send any invalid vote");
       }
     } finally {
@@ -277,6 +278,10 @@ class SecTest {
       failure.append(server.describeState()).append(System.lineSeparator());
     }
     fail(failure.toString());
+  }
+
+  private static ClientResponse decodeClientResponse(InboundPacket response) {
+    return SerializationUtil.decodeClientResponseBytes(response.packet().payload());
   }
 
   private static List<StartedServer> startServers(List<String> replicaIds, Path configPath) throws IOException {

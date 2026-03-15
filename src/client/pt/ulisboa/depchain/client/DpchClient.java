@@ -14,6 +14,7 @@ import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.logging.Logger;
 import pt.ulisboa.depchain.shared.model.ClientRequest;
+import pt.ulisboa.depchain.shared.model.ClientResponse;
 import pt.ulisboa.depchain.shared.network.packet.DpchPacket;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
@@ -145,6 +146,7 @@ public final class DpchClient {
       return null;
     }
 
-    return SerializationUtil.decodeString(inbound.payload());
+    ClientResponse response = SerializationUtil.decodeClientResponseBytes(inbound.payload());
+    return response.message();
   }
 }

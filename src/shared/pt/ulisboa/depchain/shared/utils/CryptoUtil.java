@@ -1,6 +1,7 @@
 package pt.ulisboa.depchain.shared.utils;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
@@ -17,8 +18,21 @@ import javax.crypto.spec.SecretKeySpec;
 public class CryptoUtil {
   public record KeyContext(String label, String step) {
     public byte[] toHkdfContext() {
-      String value = label + "|" + step;
-      return value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      if (label == null) {
+        throw new IllegalArgumentException("label cannot be null");
+      }
+      if (step == null) {
+        throw new IllegalArgumentException("step cannot be null");
+      }
+
+      byte[] labelBytes = label.getBytes(StandardCharsets.UTF_8);
+      byte[] stepBytes = step.getBytes(StandardCharsets.UTF_8);
+      ByteBuffer buffer = ByteBuffer.allocate((2 * Integer.BYTES) + labelBytes.length + stepBytes.length);
+      buffer.putInt(labelBytes.length);
+      buffer.put(labelBytes);
+      buffer.putInt(stepBytes.length);
+      buffer.put(stepBytes);
+      return buffer.array();
     }
   }
 
@@ -103,5 +117,25 @@ public class CryptoUtil {
     ecdsaVerify.update(data);
 
     return ecdsaVerify.verify(signature);
+  }
+
+  public static String sha256Hex(byte[] value) {
+    if (value == null) {
+      throw new IllegalArgumentException("value cannot be null");
+    }
+
+    MessageDigest digest;
+    try {
+      digest = MessageDigest.getInstance("SHA-256");
+    } catch (Exception exception) {
+      throw new IllegalStateException("SHA-256 is not available", exception);
+    }
+    byte[] hash = digest.digest(value);
+    StringBuilder hex = new StringBuilder(hash.length * 2);
+    for (byte currentByte : hash) {
+      hex.append(Character.forDigit((currentByte >>> 4) & 0x0F, 16));
+      hex.append(Character.forDigit(currentByte & 0x0F, 16));
+    }
+    return hex.toString();
   }
 }

@@ -2,6 +2,8 @@ package pt.ulisboa.depchain.server.consensus;
 
 import java.util.Arrays;
 
+import pt.ulisboa.depchain.shared.model.ClientRequest;
+
 public class Message {
   // Hotstuff message types.
   public enum MessageType {
@@ -19,7 +21,7 @@ public class Message {
   private MessageType type;
   private Node node;
   private QuorumCertificate justify;
-  private String command;
+  private ClientRequest forwardedRequest;
 
   // Threshold signature things.
   private ThresholdPayloadType thresholdPayloadType; // It can be nothing (hotstuff stuff), a signature share, a commitment, or the full context.
@@ -34,17 +36,17 @@ public class Message {
     this.type = type;
     this.node = node;
     this.justify = justify;
-    this.command = null;
+    this.forwardedRequest = null;
     this.thresholdPayloadType = ThresholdPayloadType.HOTSTUFF;
   }
 
-  public Message(int currView, int senderId, MessageType type, String command) {
+  public Message(int currView, int senderId, MessageType type, ClientRequest forwardedRequest) {
     this.currView = currView;
     this.senderId = senderId;
     this.type = type;
     this.node = null;
     this.justify = null;
-    this.command = command;
+    this.forwardedRequest = forwardedRequest;
     this.thresholdPayloadType = ThresholdPayloadType.HOTSTUFF;
   }
 
@@ -68,8 +70,8 @@ public class Message {
     return justify;
   }
 
-  public String getCommand() {
-    return command;
+  public ClientRequest getForwardedRequest() {
+    return forwardedRequest;
   }
 
   public ThresholdPayloadType getThresholdPayloadType() {
