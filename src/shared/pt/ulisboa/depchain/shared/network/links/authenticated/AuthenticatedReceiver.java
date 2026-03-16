@@ -5,6 +5,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.security.KeyPair;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.util.List;
 
 import javax.crypto.SecretKey;
 
@@ -129,7 +130,7 @@ final class AuthenticatedReceiver {
 
     sender.sendReply(connectionKey, localEKeys, inbound.sender());
     AuthenticatedConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
-    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, senderId);
+    List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, senderId);
     sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
     return null;
   }
@@ -172,7 +173,7 @@ final class AuthenticatedReceiver {
     // Derive the shared secret (K) via ECDH using both ephemeral keys.
     SecretKey sharedSecret = deriveSharedSecret(connectionKey, localEphemeralSKey, peerEphemeralPKey);
 
-    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, responderId);
+    List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, responderId);
     sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
 
     return null;

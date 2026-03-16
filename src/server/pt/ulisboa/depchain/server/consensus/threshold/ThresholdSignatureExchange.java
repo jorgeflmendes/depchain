@@ -5,6 +5,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 import java.net.InetSocketAddress;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -129,7 +130,7 @@ final class ThresholdSignatureExchange {
 
     for (Integer participantSenderId : participantSenders) {
       ThresholdSignatureContext context = ThresholdSignatureContext.newBuilder().setAggregatedCommitment(ByteString.copyFrom(aggregatedCommitment))
-          .addAllParticipantReplicaIndexes(java.util.Arrays.stream(participantIndexes).boxed().toList()).build();
+          .addAllParticipantReplicaIndexes(Arrays.stream(participantIndexes).boxed().toList()).build();
       Message message = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(senderId).setMessageType(type)
           .setThresholdContext(ThresholdContextMessage.newBuilder().setVotedNode(node).setThresholdSignatureContext(context)).build();
       sendMessage(participantSenderId, message);
@@ -148,7 +149,7 @@ final class ThresholdSignatureExchange {
     List<Message> signatureMessages = collectMatchingMessages(expectedSenders
         .size(), messageQueue, msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.VOTE) && expectedSenders.contains(msg.getReplicaSenderId())
             && msg.getVote().getAggregatedCommitment().toByteArray().length > 0
-            && java.util.Arrays.equals(msg.getVote().getAggregatedCommitment().toByteArray(), aggregatedCommitment), deadlineNanos);
+            && Arrays.equals(msg.getVote().getAggregatedCommitment().toByteArray(), aggregatedCommitment), deadlineNanos);
 
     List<byte[]> signatures = new ArrayList<>(signatureMessages.size());
     for (Message signatureMessage : signatureMessages) {

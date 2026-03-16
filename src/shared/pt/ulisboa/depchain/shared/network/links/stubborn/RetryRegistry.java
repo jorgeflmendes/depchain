@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.shared.network.links.stubborn;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 
@@ -56,7 +57,7 @@ public final class RetryRegistry {
   }
 
   public Collection<TrackedMessage> takeAllTrackedMessages() {
-    Collection<TrackedMessage> trackedMessages = java.util.List.copyOf(trackedMessagesByTarget.values());
+    Collection<TrackedMessage> trackedMessages = List.copyOf(trackedMessagesByTarget.values());
     trackedMessagesByTarget.clear();
     scheduledRetries.clear();
     return trackedMessages;

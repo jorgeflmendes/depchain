@@ -93,7 +93,10 @@ final class HotStuffMessageInbox {
     try {
       while (true) {
         Message message = pollMessageUntil(deadlineNanos, "waiting for QC " + type);
-        QuorumCertificate justifyQc = message.hasPhaseCertificate() ? message.getPhaseCertificate().getJustifyQc() : null;
+        QuorumCertificate justifyQc = null;
+        if (message.hasPhaseCertificate()) {
+          justifyQc = message.getPhaseCertificate().getJustifyQc();
+        }
         if (matchingQc(justifyQc, type, view) && message.getReplicaSenderId() == senderId && !thresholdProtocol.isAuxiliaryMessage(message) && qcVerifier.test(justifyQc)) {
           return message;
         }

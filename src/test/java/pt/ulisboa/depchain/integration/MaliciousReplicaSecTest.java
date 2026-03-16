@@ -1,5 +1,8 @@
 package pt.ulisboa.depchain.integration;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -28,9 +31,9 @@ class MaliciousReplicaSecTest extends IntegrationTestSupport {
         ClientRequest request = signedRequest(configPath, "byzantine-test");
         byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
         var response = broadcastClientRequestPayload(configPath, payload, Duration.ofSeconds(10));
-        org.junit.jupiter.api.Assertions.assertNull(response, "Client request should time out when two Byzantine replicas prevent quorum");
-        org.junit.jupiter.api.Assertions.assertTrue(byzantineReplica3.attackObserved(), "Byzantine replica server3 was not exercised");
-        org.junit.jupiter.api.Assertions.assertTrue(byzantineReplica4.attackObserved(), "Byzantine replica server4 was not exercised");
+        assertNull(response, "Client request should time out when two Byzantine replicas prevent quorum");
+        assertTrue(byzantineReplica3.attackObserved(), "Byzantine replica server3 was not exercised");
+        assertTrue(byzantineReplica4.attackObserved(), "Byzantine replica server4 was not exercised");
       }
     } finally {
       stopProcesses(servers);
@@ -106,7 +109,7 @@ class MaliciousReplicaSecTest extends IntegrationTestSupport {
         assertRequestSucceeds(configPath, "malicious-broadcast-" + attackMode.name().toLowerCase(), Duration.ofSeconds(60), servers, scenarioLabel
             + " should preserve broadcast-path liveness");
         assertReplayIsIgnored(configPath, "malicious-replay-" + attackMode.name().toLowerCase(), servers, scenarioLabel + " should preserve replay protection");
-        org.junit.jupiter.api.Assertions.assertTrue(byzantineReplica.attackObserved(), scenarioLabel + " was never exercised");
+        assertTrue(byzantineReplica.attackObserved(), scenarioLabel + " was never exercised");
       }
     } finally {
       stopProcesses(servers);

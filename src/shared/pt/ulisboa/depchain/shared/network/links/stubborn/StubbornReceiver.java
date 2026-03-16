@@ -2,6 +2,8 @@ package pt.ulisboa.depchain.shared.network.links.stubborn;
 
 import java.io.IOException;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
@@ -29,6 +31,7 @@ final class StubbornReceiver {
 
   // Receives a message with a timeout, returning null if the timeout expires or the receiver is
   // closed.
+  @Nullable
   InboundBytes receive(long timeoutMs) throws IOException {
     if (!context.running.get()) {
       return null;

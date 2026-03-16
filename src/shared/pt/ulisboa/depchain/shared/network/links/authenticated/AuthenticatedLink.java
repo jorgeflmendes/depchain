@@ -8,6 +8,8 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Map;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink;
@@ -59,7 +61,7 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   }
 
   @Override
-  public InboundPacket receive(long timeoutMs) throws InterruptedException {
+  public @Nullable InboundPacket receive(long timeoutMs) throws InterruptedException {
     return context.receive(timeoutMs);
   }
 

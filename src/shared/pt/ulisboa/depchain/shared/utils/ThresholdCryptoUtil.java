@@ -1,6 +1,7 @@
 package pt.ulisboa.depchain.shared.utils;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
@@ -133,7 +134,7 @@ public final class ThresholdCryptoUtil {
     ValidationUtils.requireAllNonNull(ValidationUtils.named("payload", payload), ValidationUtils.named("signature", signature), ValidationUtils
         .named("thresholdPublicKey", thresholdPublicKey));
 
-    return ThresholdSigEd25519.verify(thresholdPublicKey, signature, thresholdPayload(payload).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    return ThresholdSigEd25519.verify(thresholdPublicKey, signature, thresholdPayload(payload).getBytes(StandardCharsets.UTF_8));
   }
 
   private static String thresholdPayload(byte[] payload) {

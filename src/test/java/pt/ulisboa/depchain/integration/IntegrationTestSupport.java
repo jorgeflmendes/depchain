@@ -332,7 +332,10 @@ abstract class IntegrationTestSupport {
 
   private static String javaExecutable() {
     String javaHome = System.getProperty("java.home");
-    String suffix = System.getProperty("os.name").toLowerCase().contains("win") ? ".exe" : "";
+    String suffix = "";
+    if (System.getProperty("os.name").toLowerCase().contains("win")) {
+      suffix = ".exe";
+    }
     return Path.of(javaHome, "bin", "java" + suffix).toString();
   }
 
@@ -422,7 +425,10 @@ abstract class IntegrationTestSupport {
 
     private void maybeSendInvalidVote(InboundPacket inbound, Message message, ConsensusMessageType expectedType, boolean staleView) throws Exception {
       if (!sentInvalidVote && message.getMessageType() == expectedType) {
-        int voteView = staleView ? Math.max(0, message.getViewNumber() - 1) : message.getViewNumber();
+        int voteView = message.getViewNumber();
+        if (staleView) {
+          voteView = Math.max(0, message.getViewNumber() - 1);
+        }
         sendInvalidVote(inbound, message, expectedType, voteView, staleView);
       }
     }
@@ -437,7 +443,10 @@ abstract class IntegrationTestSupport {
         return;
       }
 
-      Node votedNode = keepNodeHash ? originalNode : originalNode.toBuilder().setNodeHash(invalidSha256Hex(originalNode.getNodeHash())).build();
+      Node votedNode = originalNode;
+      if (!keepNodeHash) {
+        votedNode = originalNode.toBuilder().setNodeHash(invalidSha256Hex(originalNode.getNodeHash())).build();
+      }
       Message invalidVote = Message.newBuilder().setViewNumber(voteView).setReplicaSenderId(senderId).setMessageType(voteType).setVote(VoteMessage.newBuilder()
           .setVotedNode(votedNode).setThresholdSignatureShare(ByteString.copyFrom(new byte[32])).setAggregatedCommitment(ByteString.copyFrom(new byte[32]))).build();
       transport.send(inbound.packet().getConnectionId(), ProtoValidationUtil.requireValid(invalidVote, "ReplicaMessage").toByteArray(), inbound.sender());
@@ -533,7 +542,10 @@ abstract class IntegrationTestSupport {
     }
 
     private String invalidSha256Hex(String originalHash) {
-      char replacement = originalHash.charAt(0) == '0' ? '1' : '0';
+      char replacement = '0';
+      if (originalHash.charAt(0) == '0') {
+        replacement = '1';
+      }
       return replacement + originalHash.substring(1);
     }
 
@@ -545,10 +557,14 @@ abstract class IntegrationTestSupport {
         return;
       }
 
-      QuorumCertificate genesisQc = attackMode == ReplicaAttackMode.INVALID_NEW_VIEW
-          ? QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE).setViewNumber(0).setCertifiedNode(ConsensusUtil.GENESIS_NODE).build()
-          : QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE).setViewNumber(-1).setCertifiedNode(ConsensusUtil.GENESIS_NODE)
-              .build();
+      QuorumCertificate genesisQc;
+      if (attackMode == ReplicaAttackMode.INVALID_NEW_VIEW) {
+        genesisQc = QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE).setViewNumber(0).setCertifiedNode(ConsensusUtil.GENESIS_NODE)
+            .build();
+      } else {
+        genesisQc = QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE).setViewNumber(-1).setCertifiedNode(ConsensusUtil.GENESIS_NODE)
+            .build();
+      }
       Message newView = Message.newBuilder().setViewNumber(0).setReplicaSenderId(senderId).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW)
           .setPhaseCertificate(PhaseCertificateMessage.newBuilder().setJustifyQc(genesisQc)).build();
       long connectionId = ThreadLocalRandom.current().nextLong();
@@ -610,7 +626,12 @@ abstract class IntegrationTestSupport {
     }
 
     private String describeState() {
-      String state = process.isAlive() ? "alive" : "exited(" + process.exitValue() + ")";
+      String state;
+      if (process.isAlive()) {
+        state = "alive";
+      } else {
+        state = "exited(" + process.exitValue() + ")";
+      }
       return "Server " + replicaId + " [" + state + ", clientReady=" + clientReady.get() + ", nodeReady=" + nodeReady.get() + "]\n" + outputSnapshot();
     }
 

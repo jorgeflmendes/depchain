@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -12,6 +13,7 @@ import java.security.KeyPair;
 import java.util.List;
 
 import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.junit.jupiter.api.Test;
 
@@ -24,7 +26,7 @@ class AuthenticatedConnectionStateTest {
     AuthenticatedConnectionState state = new AuthenticatedConnectionState();
     byte[] payload = new byte[]{1, 2, 3};
     KeyPair localEphemeral = CryptoUtil.newECKeyPair();
-    SecretKey secretKey = new javax.crypto.spec.SecretKeySpec(new byte[32], "HmacSHA256");
+    SecretKey secretKey = new SecretKeySpec(new byte[32], "HmacSHA256");
 
     assertEquals(AuthenticatedConnectionState.SendAction.START_HANDSHAKE, state.planSend(payload).action());
     assertTrue(state.tryMarkHandshakeInitiated(localEphemeral.getPrivate()));
@@ -33,7 +35,7 @@ class AuthenticatedConnectionStateTest {
     List<byte[]> queuedPayloads = state.finishHandshake(secretKey, 42L);
 
     assertEquals(1, queuedPayloads.size());
-    org.junit.jupiter.api.Assertions.assertArrayEquals(payload, queuedPayloads.getFirst());
+    assertArrayEquals(payload, queuedPayloads.getFirst());
     assertTrue(state.isEstablished());
     assertEquals(42L, state.authenticatedRemoteSenderId());
     assertSame(secretKey, state.sharedSecret());
@@ -65,7 +67,7 @@ class AuthenticatedConnectionStateTest {
   @Test
   void reserveSecureSendAndReceiveNonceAreMonotonic() {
     AuthenticatedConnectionState state = new AuthenticatedConnectionState();
-    SecretKey secretKey = new javax.crypto.spec.SecretKeySpec(new byte[32], "HmacSHA256");
+    SecretKey secretKey = new SecretKeySpec(new byte[32], "HmacSHA256");
     state.finishHandshake(secretKey, 8L);
 
     assertEquals(1L, state.reserveSecureSend().nonce());
@@ -80,7 +82,7 @@ class AuthenticatedConnectionStateTest {
   @Test
   void closeClearsEstablishedState() {
     AuthenticatedConnectionState state = new AuthenticatedConnectionState();
-    SecretKey secretKey = new javax.crypto.spec.SecretKeySpec(new byte[32], "HmacSHA256");
+    SecretKey secretKey = new SecretKeySpec(new byte[32], "HmacSHA256");
     state.finishHandshake(secretKey, 12L);
 
     state.close();

@@ -110,7 +110,12 @@ public final class DpchClient {
     }
 
     try {
-      long deadlineNanos = requestTimeoutMs == 0L ? Long.MAX_VALUE : TimeUtil.monotonicDeadlineAfterNow(requestTimeoutMs);
+      long deadlineNanos;
+      if (requestTimeoutMs == 0L) {
+        deadlineNanos = Long.MAX_VALUE;
+      } else {
+        deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(requestTimeoutMs);
+      }
       return awaitCoherentReplies(transport, endpointsByConnectionId, deadlineNanos);
     } finally {
       closeClientConnections(transport, endpointsByConnectionId);

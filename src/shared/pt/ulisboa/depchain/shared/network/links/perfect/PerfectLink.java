@@ -3,6 +3,8 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
@@ -66,7 +68,7 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
   }
 
   @Override
-  public InboundPacket receive(long timeoutMs) throws InterruptedException {
+  public @Nullable InboundPacket receive(long timeoutMs) throws InterruptedException {
     return context.receive(timeoutMs);
   }
 

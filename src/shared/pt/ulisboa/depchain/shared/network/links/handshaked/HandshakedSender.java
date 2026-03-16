@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.shared.network.links.handshaked;
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
+import java.util.function.BooleanSupplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -170,7 +171,7 @@ final class HandshakedSender {
     }
   }
 
-  private void waitOnConnectionState(ConnectionState connectionState, java.util.function.BooleanSupplier done, String closingMessage, String interruptedMessage) {
+  private void waitOnConnectionState(ConnectionState connectionState, BooleanSupplier done, String closingMessage, String interruptedMessage) {
     synchronized (connectionState) {
       while (!done.getAsBoolean()) {
         ensureRunning();

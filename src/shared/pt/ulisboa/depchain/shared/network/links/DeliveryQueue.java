@@ -2,6 +2,9 @@ package pt.ulisboa.depchain.shared.network.links;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.concurrent.TimeUnit;
+
+import org.eclipse.jdt.annotation.Nullable;
 
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
@@ -28,16 +31,16 @@ public final class DeliveryQueue<T> {
     return queue.removeFirst();
   }
 
-  public synchronized T receive(long timeoutMs) throws InterruptedException {
+  public synchronized @Nullable T receive(long timeoutMs) throws InterruptedException {
     long remainingMs = ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs");
-    long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(remainingMs);
+    long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(remainingMs);
 
     while (queue.isEmpty() && !closed) {
       if (remainingMs <= 0L) {
         return null;
       }
       wait(remainingMs);
-      remainingMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0L, deadlineNanos - System.nanoTime()));
+      remainingMs = TimeUnit.NANOSECONDS.toMillis(Math.max(0L, deadlineNanos - System.nanoTime()));
     }
 
     if (queue.isEmpty()) {

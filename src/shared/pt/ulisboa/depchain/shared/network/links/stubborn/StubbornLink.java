@@ -3,6 +3,8 @@ package pt.ulisboa.depchain.shared.network.links.stubborn;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
@@ -66,7 +68,7 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
   }
 
   @Override
-  public InboundBytes receive(long timeoutMs) throws IOException {
+  public @Nullable InboundBytes receive(long timeoutMs) throws IOException {
     return receiver.receive(timeoutMs);
   }
 

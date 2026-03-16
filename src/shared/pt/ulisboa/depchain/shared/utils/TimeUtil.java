@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.shared.utils;
 
+import java.util.concurrent.TimeUnit;
+
 public final class TimeUtil {
   private static final long NANOS_PER_MILLISECOND = 1_000_000L;
 
@@ -42,7 +44,7 @@ public final class TimeUtil {
   public static long monotonicDeadlineAfter(long nowNanos, long delayMs) {
     ValidationUtils.requireNonNegativeLong(nowNanos, "nowNanos");
     ValidationUtils.requireNonNegativeLong(delayMs, "delayMs");
-    return nowNanos + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(delayMs);
+    return nowNanos + TimeUnit.MILLISECONDS.toNanos(delayMs);
   }
 
   public static long boundedMonotonicDeadlineAfterNow(long outerDeadlineNanos, long delayMs) {

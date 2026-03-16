@@ -4,6 +4,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 import java.security.KeyPair;
+import java.util.List;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
@@ -81,7 +82,7 @@ final class AuthenticatedSender {
     }
   }
 
-  void sendQueuedPayloads(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, java.util.List<byte[]> queuedPayloads, InetSocketAddress remoteEndpoint) {
+  void sendQueuedPayloads(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, List<byte[]> queuedPayloads, InetSocketAddress remoteEndpoint) {
     ValidationUtils
         .requireAllNonNull(named("connectionKey", connectionKey), named("connectionState", connectionState), named("queuedPayloads", queuedPayloads), named("remoteEndpoint", remoteEndpoint));
 

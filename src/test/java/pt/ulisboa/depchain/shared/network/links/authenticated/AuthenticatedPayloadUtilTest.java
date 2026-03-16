@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -9,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 
 import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.junit.jupiter.api.Test;
 
@@ -48,7 +50,7 @@ class AuthenticatedPayloadUtilTest {
 
   @Test
   void decodeHandshakeRejectsDataEnvelope() throws Exception {
-    SecretKey secretKey = new javax.crypto.spec.SecretKeySpec(new byte[32], "HmacSHA256");
+    SecretKey secretKey = new SecretKeySpec(new byte[32], "HmacSHA256");
     byte[] encoded = AuthenticatedPayloadUtil.encodeHmac(AuthOpcode.AUTH_OPCODE_DATA, "payload".getBytes(StandardCharsets.UTF_8), secretKey, 1L);
 
     assertThrows(IllegalArgumentException.class, () -> AuthenticatedPayloadUtil.decodeEcdsa(encoded));
@@ -90,9 +92,5 @@ class AuthenticatedPayloadUtilTest {
         .setApplicationPayload(ByteString.copyFromUtf8("payload")).setNonce(1L).setHmac(ByteString.copyFrom(new byte[31]))).build();
 
     assertThrows(IllegalArgumentException.class, () -> AuthenticatedPayloadUtil.decodeHmac(invalidEnvelope.toByteArray()));
-  }
-
-  private static void assertArrayEquals(byte[] expected, byte[] actual) {
-    org.junit.jupiter.api.Assertions.assertArrayEquals(expected, actual);
   }
 }

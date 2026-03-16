@@ -4,6 +4,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -69,7 +70,7 @@ final class PerfectReceiver {
       return;
     }
 
-    List<TrackedKey> cancellations = new java.util.ArrayList<>(1);
+    List<TrackedKey> cancellations = new ArrayList<>(1);
     // Resolve ACKs against the current sender state without racing with cleanup.
     context.connectionStates.computeIfPresent(key, (ignored, connectionState) -> {
       cancellations.addAll(connectionState.senderState().acknowledge(ackPacket.getConnectionId(), acknowledgedSequence, acknowledgedType));
@@ -79,7 +80,7 @@ final class PerfectReceiver {
   }
 
   private void handleReliable(InboundPacket inbound, DpchPacket packet, DpchPacketType reliableType, ConnectionKey key) {
-    List<InboundPacket> readyToDeliver = new java.util.ArrayList<>(1);
+    List<InboundPacket> readyToDeliver = new ArrayList<>(1);
     boolean shouldAckData = false;
     PerfectConnectionState connectionState = context.connectionStates.computeIfAbsent(key, ignored -> new PerfectConnectionState());
     ReceiverState receiverState = connectionState.receiverState();

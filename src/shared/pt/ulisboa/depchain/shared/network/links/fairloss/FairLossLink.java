@@ -10,6 +10,8 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.Arrays;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
@@ -59,11 +61,11 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
   }
 
   @Override
-  public InboundBytes receive(long timeoutMs) throws IOException {
+  public @Nullable InboundBytes receive(long timeoutMs) throws IOException {
     return receiveInternal(ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs"));
   }
 
-  private synchronized InboundBytes receiveInternal(long timeoutMs) throws IOException {
+  private synchronized @Nullable InboundBytes receiveInternal(long timeoutMs) throws IOException {
     configureReceiveTimeout((int) Math.min(Integer.MAX_VALUE, timeoutMs));
     receivePacket.setData(receiveBuffer, 0, receiveBuffer.length);
 

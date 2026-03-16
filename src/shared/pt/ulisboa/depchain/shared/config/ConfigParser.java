@@ -135,8 +135,8 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
   public ReplicaSection requireReplicaById(String replicaId) {
     ValidationUtils.requireNonBlank(replicaId, "replicaId");
 
-    return ValidationUtils
-        .requirePresent(replicas.stream().filter(replica -> replica.id().equals(replicaId)).findFirst().orElse(null), "Replica '%s' not found".formatted(replicaId));
+    return replicas.stream().filter(replica -> replica.id().equals(replicaId)).findFirst()
+        .orElseThrow(() -> new IllegalArgumentException("Replica '%s' not found".formatted(replicaId)));
   }
 
   public ReplicaSection requireReplicaBySenderId(int senderId) {
@@ -146,7 +146,7 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
   public ReplicaSection requireReplicaBySenderId(long senderId) {
     ValidationUtils.requireNonNegativeLong(senderId, "senderId");
 
-    return ValidationUtils.requirePresent(replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElse(null), "Unknown replica senderId: " + senderId);
+    return replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown replica senderId: " + senderId));
   }
 
   public int replicaIndexForSenderId(int senderId) {
@@ -220,7 +220,9 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
     Set<String> seenKnownReplicas = new HashSet<>();
     for (String replicaId : client.knownReplicas()) {
-      ValidationUtils.requirePresent(ids.contains(replicaId) ? replicaId : null, "client.knownReplicas contains unknown replica '%s'".formatted(replicaId));
+      if (!ids.contains(replicaId)) {
+        throw new IllegalArgumentException("client.knownReplicas contains unknown replica '%s'".formatted(replicaId));
+      }
       requireUnique(seenKnownReplicas, replicaId, "Duplicate id '%s' in client.knownReplicas".formatted(replicaId));
     }
   }

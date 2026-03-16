@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.integration;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -69,7 +71,7 @@ class SecTest extends IntegrationTestSupport {
     try {
       waitForServersStartup(servers, Duration.ofSeconds(15));
       InboundPacket response = sendForgedClientRequest(configPath, LEADER_REPLICA_ID, "forged-test");
-      org.junit.jupiter.api.Assertions.assertNull(response, "Forged client request should not receive a response");
+      assertNull(response, "Forged client request should not receive a response");
     } finally {
       stopProcesses(servers);
     }

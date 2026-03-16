@@ -2,6 +2,8 @@ package pt.ulisboa.depchain.shared.network.links;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 public abstract class AsyncLinkContext<T> {
   private final AtomicBoolean running = new AtomicBoolean(true);
   private final DeliveryQueue<T> deliveryQueue = new DeliveryQueue<>();
@@ -18,7 +20,7 @@ public abstract class AsyncLinkContext<T> {
     return deliveryQueue.receive();
   }
 
-  public final T receive(long timeoutMs) throws InterruptedException {
+  public final @Nullable T receive(long timeoutMs) throws InterruptedException {
     return deliveryQueue.receive(timeoutMs);
   }
 

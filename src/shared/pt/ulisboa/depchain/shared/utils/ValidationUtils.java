@@ -1,6 +1,10 @@
 package pt.ulisboa.depchain.shared.utils;
 
+import java.util.Collection;
 import java.util.Objects;
+
+import org.eclipse.jdt.annotation.NonNull;
+import org.eclipse.jdt.annotation.Nullable;
 
 public final class ValidationUtils {
   private ValidationUtils() {
@@ -23,7 +27,7 @@ public final class ValidationUtils {
 
   // Validate that the given value is not null, throwing a NullPointerException with the specified
   // message if it is.
-  public static <T> T requireNonNull(T value, String fieldName) {
+  public static <T extends Object> @NonNull T requireNonNull(@Nullable T value, String fieldName) {
     return Objects.requireNonNull(value, fieldName + " cannot be null");
   }
 
@@ -37,7 +41,7 @@ public final class ValidationUtils {
 
   // Validate that the given value is not null, throwing an IllegalArgumentException with the
   // specified message if it is.
-  public static <T> T requirePresent(T value, String message) {
+  public static <T extends Object> @NonNull T requirePresent(@Nullable T value, String message) {
     if (value == null) {
       throw new IllegalArgumentException(message);
     }
@@ -46,14 +50,14 @@ public final class ValidationUtils {
   }
 
   // Validate that the given string is not blank.
-  public static String requireNonBlank(String value, String fieldName) {
-    requireNonNull(value, fieldName);
+  public static @NonNull String requireNonBlank(@Nullable String value, String fieldName) {
+    String nonNullValue = requireNonNull(value, fieldName);
 
-    if (value.isBlank()) {
+    if (nonNullValue.isBlank()) {
       throw new IllegalArgumentException("%s must not be blank".formatted(fieldName));
     }
 
-    return value;
+    return nonNullValue;
   }
 
   // Validate that all the given values are not null, throwing an IllegalArgumentException with the
@@ -166,21 +170,21 @@ public final class ValidationUtils {
   }
 
   // Validate that the given collection is not empty.
-  public static <T extends java.util.Collection<?>> T requireNonEmpty(T value, String fieldName) {
-    requireNonNull(value, fieldName);
+  public static <T extends Collection<?>> @NonNull T requireNonEmpty(@Nullable T value, String fieldName) {
+    T nonNullValue = requireNonNull(value, fieldName);
 
-    if (value.isEmpty()) {
+    if (nonNullValue.isEmpty()) {
       throw new IllegalArgumentException("%s must not be empty".formatted(fieldName));
     }
 
-    return value;
+    return nonNullValue;
   }
 
   // Validate that the given byte array slice is within bounds.
   public static void requireValidSlice(byte[] bytes, int offset, int length) {
-    requireNonNull(bytes, "bytes");
+    byte[] nonNullBytes = requireNonNull(bytes, "bytes");
 
-    if (offset < 0 || length < 0 || offset > bytes.length || (offset + length) > bytes.length) {
+    if (offset < 0 || length < 0 || offset > nonNullBytes.length || (offset + length) > nonNullBytes.length) {
       throw new IllegalArgumentException("Invalid byte array slice");
     }
   }

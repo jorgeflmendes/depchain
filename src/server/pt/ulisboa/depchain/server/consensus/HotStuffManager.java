@@ -7,6 +7,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +39,7 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 public class HotStuffManager {
   private final ClientCommunicationManager clientCommunication;
   private final ReplicaCommunicationManager replicaCommunication;
-  private final java.util.Set<String> executedNodeHashes;
+  private final Set<String> executedNodeHashes;
 
   private int id;
   private int n;
@@ -59,7 +61,6 @@ public class HotStuffManager {
   private ThresholdSignatureProtocol thresholdProtocol;
   private final Logger logger;
   private long totalViewChanges;
-  private long totalReenqueuedPendingRequests;
   private long totalFetchAttempts;
   private long totalFetchFailures;
 
@@ -82,7 +83,7 @@ public class HotStuffManager {
     this.blockTree = new HashMap<>();
     this.clientCommunication = new ClientCommunicationManager(config.client().senderId(), clientPublicKey, logger);
     this.replicaCommunication = new ReplicaCommunicationManager(id, config, logger);
-    this.executedNodeHashes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    this.executedNodeHashes = ConcurrentHashMap.newKeySet();
     this.messageInbox = new HotStuffMessageInbox(id, thresholdProtocol);
 
     blockTree.put(ConsensusUtil.GENESIS_NODE.getNodeHash(), ConsensusUtil.GENESIS_NODE);
@@ -158,8 +159,12 @@ public class HotStuffManager {
         return;
       }
 
-      QuorumCertificate justify = prepareMsg.hasProposal() ? prepareMsg.getProposal().getJustifyQc() : null;
-      Node proposedNode = prepareMsg.hasProposal() ? prepareMsg.getProposal().getProposedNode() : null;
+      QuorumCertificate justify = null;
+      Node proposedNode = null;
+      if (prepareMsg.hasProposal()) {
+        justify = prepareMsg.getProposal().getJustifyQc();
+        proposedNode = prepareMsg.getProposal().getProposedNode();
+      }
 
       boolean hasValidJustify = justify != null && verifyQC(justify);
       boolean hasValidProposedNode = proposedNode != null && hasValidNode(proposedNode);
@@ -227,7 +232,6 @@ public class HotStuffManager {
           .debug("View change to {}. pendingRequests={}, reenqueuedThisView={}, totalViewChanges={}, totalFetchAttempts={}, totalFetchFailures={}", viewNumber, clientCommunication
               .pendingCount(), reenqueuedPendingRequests, totalViewChanges, totalFetchAttempts, totalFetchFailures);
     }
-    totalReenqueuedPendingRequests += reenqueuedPendingRequests;
     sendToLeader(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
   }
 
@@ -311,7 +315,10 @@ public class HotStuffManager {
   }
 
   private QuorumCertificate justifyQCOrNull(Message msg) {
-    return msg.hasPhaseCertificate() ? msg.getPhaseCertificate().getJustifyQc() : null;
+    if (msg.hasPhaseCertificate()) {
+      return msg.getPhaseCertificate().getJustifyQc();
+    }
+    return null;
   }
 
   private void observeMessage(Message msg) {
@@ -540,9 +547,20 @@ public class HotStuffManager {
     if (node == null) {
       return false;
     }
-    return isNodeOnJustifiedBranch(node, currentProposal) || isNodeOnJustifiedBranch(node, highQC != null ? highQC.getCertifiedNode() : null)
-        || isNodeOnJustifiedBranch(node, prepareQC != null ? prepareQC.getCertifiedNode() : null)
-        || isNodeOnJustifiedBranch(node, lockedQC != null ? lockedQC.getCertifiedNode() : null);
+    Node highQcNode = null;
+    Node prepareQcNode = null;
+    Node lockedQcNode = null;
+    if (highQC != null) {
+      highQcNode = highQC.getCertifiedNode();
+    }
+    if (prepareQC != null) {
+      prepareQcNode = prepareQC.getCertifiedNode();
+    }
+    if (lockedQC != null) {
+      lockedQcNode = lockedQC.getCertifiedNode();
+    }
+    return isNodeOnJustifiedBranch(node, currentProposal) || isNodeOnJustifiedBranch(node, highQcNode) || isNodeOnJustifiedBranch(node, prepareQcNode)
+        || isNodeOnJustifiedBranch(node, lockedQcNode);
   }
 
   private boolean isNodeOnJustifiedBranch(Node candidateNode, Node branchHead) {

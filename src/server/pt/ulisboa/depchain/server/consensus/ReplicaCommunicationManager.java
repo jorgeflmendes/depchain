@@ -1,6 +1,8 @@
 package pt.ulisboa.depchain.server.consensus;
 
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.slf4j.Logger;
@@ -61,7 +63,7 @@ final class ReplicaCommunicationManager {
   }
 
   int[] candidateReplicaSenderIds(int preferredSourceSenderId) {
-    java.util.List<Integer> candidateSenderIds = new java.util.ArrayList<>();
+    List<Integer> candidateSenderIds = new ArrayList<>();
     if (preferredSourceSenderId >= 0 && preferredSourceSenderId != localSenderId && consensusEndpointsBySenderId.containsKey(preferredSourceSenderId)) {
       candidateSenderIds.add(preferredSourceSenderId);
     }

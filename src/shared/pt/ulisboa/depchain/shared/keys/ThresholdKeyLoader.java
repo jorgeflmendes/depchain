@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.shared.keys;
 
+import java.io.ObjectInputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import com.weavechain.curve25519.Scalar;
@@ -46,10 +48,15 @@ public final class ThresholdKeyLoader {
     ValidationUtils.requireNonNull(path, "path");
     ValidationUtils.requireNonNull(type, "type");
 
-    try (var input = java.nio.file.Files.newInputStream(path); var in = new java.io.ObjectInputStream(input)) {
+    try (var input = Files.newInputStream(path); var in = new ObjectInputStream(input)) {
       Object value = in.readObject();
       if (!type.isInstance(value)) {
-        String actualType = value == null ? "null" : value.getClass().getName();
+        String actualType;
+        if (value == null) {
+          actualType = "null";
+        } else {
+          actualType = value.getClass().getName();
+        }
         throw new IllegalArgumentException("Unexpected key material type in " + path + ": " + actualType);
       }
       return type.cast(value);

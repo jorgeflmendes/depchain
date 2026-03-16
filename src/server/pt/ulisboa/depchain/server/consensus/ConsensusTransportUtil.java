@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.server.consensus;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.HashMap;
@@ -21,7 +22,7 @@ public final class ConsensusTransportUtil {
     Map<Integer, InetSocketAddress> endpointsBySenderId = new HashMap<>();
     for (ConfigParser.ReplicaSection replica : config.replicas()) {
       try {
-        endpointsBySenderId.put(Math.toIntExact(replica.senderId()), new InetSocketAddress(java.net.InetAddress.getByName(replica.host()), replica.consensusPort()));
+        endpointsBySenderId.put(Math.toIntExact(replica.senderId()), new InetSocketAddress(InetAddress.getByName(replica.host()), replica.consensusPort()));
       } catch (UnknownHostException exception) {
         throw new IllegalStateException("Unable to resolve consensus host for replica " + replica.id(), exception);
       }

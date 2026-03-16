@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.integration;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -47,7 +49,7 @@ class MaliciousLeaderSecTest extends IntegrationTestSupport {
         assertRequestSucceeds(configPath, "malicious-leader-broadcast-" + attackMode.name().toLowerCase(), Duration.ofSeconds(30), servers, scenarioLabel
             + " should still allow progress after the honest replicas move to the next view");
         assertReplayIsIgnored(configPath, "malicious-leader-replay-" + attackMode.name().toLowerCase(), servers, scenarioLabel + " should still preserve replay protection");
-        org.junit.jupiter.api.Assertions.assertTrue(byzantineLeader.attackObserved(), scenarioLabel + " was never exercised");
+        assertTrue(byzantineLeader.attackObserved(), scenarioLabel + " was never exercised");
       }
     } finally {
       stopProcesses(servers);

@@ -2,6 +2,9 @@ package pt.ulisboa.depchain.shared.network.links.stubborn;
 
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
+import java.util.Collection;
+import java.util.List;
+
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedTargetKey;
@@ -22,7 +25,7 @@ final class StubbornRetryEngine {
   }
 
   void runRetryLoop() {
-    java.util.Collection<TrackedMessage> remainingTracked = java.util.List.of();
+    Collection<TrackedMessage> remainingTracked = List.of();
     try {
       while (context.running.get()) {
         try {
