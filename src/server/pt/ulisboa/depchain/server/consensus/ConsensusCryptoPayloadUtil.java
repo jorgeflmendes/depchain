@@ -1,13 +1,15 @@
-package pt.ulisboa.depchain.shared.utils;
+package pt.ulisboa.depchain.server.consensus;
 
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.NodeHashPayload;
 import pt.ulisboa.depchain.proto.ThresholdVotePayload;
+import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public final class ConsensusPayloadUtil {
-  private ConsensusPayloadUtil() {
+public final class ConsensusCryptoPayloadUtil {
+  private ConsensusCryptoPayloadUtil() {
   }
 
   public static byte[] votePayload(ConsensusMessageType type, int viewNumber, Node node) {

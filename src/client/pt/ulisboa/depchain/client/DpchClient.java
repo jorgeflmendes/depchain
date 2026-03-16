@@ -29,7 +29,7 @@ import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
+import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
@@ -183,7 +183,7 @@ public final class DpchClient {
 
   private ClientRequest createClientRequest(String value) throws Exception {
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(localSenderId, requestId, value), localStaticSKey);
+    byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(localSenderId, requestId, value), localStaticSKey);
     return ProtoValidationUtil.requireValid(ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
         .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(localSenderId).setRequestId(requestId)).setValue(value).setSignature(ByteString.copyFrom(signature)))
         .build(), "ClientRequest");

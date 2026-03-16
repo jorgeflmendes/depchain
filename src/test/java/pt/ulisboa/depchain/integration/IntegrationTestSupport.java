@@ -46,6 +46,7 @@ import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
 import pt.ulisboa.depchain.proto.ProposalMessage;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.proto.VoteMessage;
+import pt.ulisboa.depchain.server.consensus.ConsensusCryptoPayloadUtil;
 import pt.ulisboa.depchain.server.consensus.ConsensusTransportUtil;
 import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -54,8 +55,7 @@ import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
-import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
+import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
@@ -186,7 +186,7 @@ abstract class IntegrationTestSupport {
   }
 
   protected static ClientRequest signedAppendRequest(long clientSenderId, long requestId, String command, PrivateKey clientPrivateKey) throws Exception {
-    byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, command), clientPrivateKey);
+    byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, command), clientPrivateKey);
     return ProtoValidationUtil.requireValid(ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
         .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setValue(command).setSignature(ByteString.copyFrom(signature)))
         .build(), "ClientRequest");
@@ -534,7 +534,7 @@ abstract class IntegrationTestSupport {
       try {
         ClientRequest request = signedAppendRequest(config.client().senderId(), requestId, value, PrivateKeyLoader.loadClientPrivateKey(config));
         NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
-        String nodeHash = CryptoUtil.sha256Hex(ConsensusPayloadUtil.nodeHashPayload(ConsensusUtil.GENESIS_NODE.getNodeHash(), view, command));
+        String nodeHash = CryptoUtil.sha256Hex(ConsensusCryptoPayloadUtil.nodeHashPayload(ConsensusUtil.GENESIS_NODE.getNodeHash(), view, command));
         return Node.newBuilder().setParentNodeHash(ConsensusUtil.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(view).setCommand(command).build();
       } catch (Exception exception) {
         throw new IllegalStateException("Could not build signed malicious test node", exception);

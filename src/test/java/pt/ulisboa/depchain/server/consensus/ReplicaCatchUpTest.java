@@ -30,8 +30,7 @@ import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
-import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
-import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
+import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
@@ -121,7 +120,7 @@ class ReplicaCatchUpTest {
 
   private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {
     NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(signedAppendRequest(requestId, value))).build();
-    String nodeHash = CryptoUtil.sha256Hex(ConsensusPayloadUtil.nodeHashPayload(parentHash, viewNumber, command));
+    String nodeHash = CryptoUtil.sha256Hex(ConsensusCryptoPayloadUtil.nodeHashPayload(parentHash, viewNumber, command));
     return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
   }
 
@@ -130,7 +129,7 @@ class ReplicaCatchUpTest {
       ConfigParser config = ConfigParser.load(configPath());
       long clientSenderId = config.client().senderId();
       PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
-      byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
+      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
       return ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder().setRequestKey(requestKey(requestId)).setValue(value).setSignature(ByteString.copyFrom(signature)))
           .build();
     } catch (Exception exception) {

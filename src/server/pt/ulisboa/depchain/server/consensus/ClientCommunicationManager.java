@@ -17,7 +17,7 @@ import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
-import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
+import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
@@ -180,7 +180,7 @@ final class ClientCommunicationManager {
     }
 
     try {
-      byte[] payload = ClientRequestPayloadUtil.signedAppendRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), request.getAppend().getValue());
+      byte[] payload = ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), request.getAppend().getValue());
       return CryptoUtil.verifyEcdsa(payload, request.getAppend().getSignature().toByteArray(), clientPublicKey);
     } catch (Exception exception) {
       return false;

@@ -3,8 +3,8 @@ package pt.ulisboa.depchain.shared.utils;
 import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 
-public final class ClientRequestPayloadUtil {
-  private ClientRequestPayloadUtil() {
+public final class ClientRequestSignaturePayloadUtil {
+  private ClientRequestSignaturePayloadUtil() {
   }
 
   public static byte[] signedAppendRequestPayload(long clientSenderId, long requestId, String command) {

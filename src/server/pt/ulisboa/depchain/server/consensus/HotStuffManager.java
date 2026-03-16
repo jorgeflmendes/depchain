@@ -32,7 +32,6 @@ import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
-import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
@@ -289,7 +288,7 @@ public class HotStuffManager {
   }
 
   private Node createLeaf(String parentHash, NodeCommand command) {
-    byte[] hashPayload = ConsensusPayloadUtil.nodeHashPayload(parentHash, viewNumber, command);
+    byte[] hashPayload = ConsensusCryptoPayloadUtil.nodeHashPayload(parentHash, viewNumber, command);
     String thisHash = CryptoUtil.sha256Hex(hashPayload);
     return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(thisHash).setViewNumber(viewNumber).setCommand(command).build();
   }
@@ -381,7 +380,7 @@ public class HotStuffManager {
       return true;
     }
 
-    byte[] expectedHashPayload = ConsensusPayloadUtil.nodeHashPayload(node.getParentNodeHash(), node.getViewNumber(), node.getCommand());
+    byte[] expectedHashPayload = ConsensusCryptoPayloadUtil.nodeHashPayload(node.getParentNodeHash(), node.getViewNumber(), node.getCommand());
     return node.getNodeHash().equals(CryptoUtil.sha256Hex(expectedHashPayload));
   }
 

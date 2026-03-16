@@ -15,11 +15,11 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.proto.VoteMessage;
+import pt.ulisboa.depchain.server.consensus.ConsensusCryptoPayloadUtil;
 import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
 import pt.ulisboa.depchain.server.consensus.ViewChangeTimeoutException;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdNonceShare;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdPartialSignContext;
@@ -154,7 +154,7 @@ public final class ThresholdSignatureProtocol {
   }
 
   private byte[] buildVotePayload(ConsensusMessageType type, int viewNumber, Node node) {
-    return ConsensusPayloadUtil.votePayload(type, viewNumber, node);
+    return ConsensusCryptoPayloadUtil.votePayload(type, viewNumber, node);
   }
 
   private int findReplicaIndex(ConfigParser config, int senderId) {
