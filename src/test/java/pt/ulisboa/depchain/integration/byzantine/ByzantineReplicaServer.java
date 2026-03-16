@@ -19,7 +19,9 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import pt.ulisboa.depchain.proto.AppendNodeCommand;
+import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
+import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
@@ -37,6 +39,7 @@ import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
@@ -275,8 +278,12 @@ public final class ByzantineReplicaServer {
 
   private Node validLeafNode(int view, long requestId, String value) {
     try {
-      ClientRequest request = IntegrationRequestFactory
-          .signedAppendRequest(configParser.client().senderId(), requestId, value, PrivateKeyLoader.loadClientPrivateKey(configParser));
+      long clientSenderId = configParser.client().senderId();
+      PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(configParser);
+      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
+      ClientRequest request = ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
+          .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setValue(value).setSignature(ByteString.copyFrom(signature)))
+          .build();
       NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
       String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(HotStuffSupport.GENESIS_NODE.getNodeHash(), view, command));
       return Node.newBuilder().setParentNodeHash(HotStuffSupport.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(view).setCommand(command).build();

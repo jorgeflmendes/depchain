@@ -12,7 +12,9 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 
+import com.weavechain.curve25519.CompressedEdwardsY;
 import com.weavechain.curve25519.EdwardsPoint;
+import com.weavechain.curve25519.InvalidEncodingException;
 import com.weavechain.curve25519.Scalar;
 import com.weavechain.sig.ThresholdSigEd25519;
 import com.weavechain.sig.ThresholdSigEd25519Params;
@@ -95,7 +97,7 @@ public final class ThresholdCryptoUtil {
     ThresholdSigEd25519 signatureScheme = new ThresholdSigEd25519(threshold, totalReplicas);
     List<EdwardsPoint> commitmentPoints = new ArrayList<>(commitments.size());
     for (byte[] commitment : commitments) {
-      commitmentPoints.add(ThresholdEncodingUtil.decodeCommitment(commitment));
+      commitmentPoints.add(decodeCommitment(commitment));
     }
 
     return signatureScheme.computeR(commitmentPoints).compress().toByteArray();
@@ -106,7 +108,7 @@ public final class ThresholdCryptoUtil {
         .named("nonceShare", nonceShare), ValidationUtils.named("context", context));
 
     ThresholdSigEd25519 signatureScheme = new ThresholdSigEd25519(context.threshold(), context.totalReplicas());
-    EdwardsPoint aggregatedCommitment = ThresholdEncodingUtil.decodeCommitment(context.aggregatedCommitment());
+    EdwardsPoint aggregatedCommitment = decodeCommitment(context.aggregatedCommitment());
     Scalar challenge = signatureScheme.computeK(context.thresholdPublicKey(), aggregatedCommitment, thresholdPayload(payload));
     Scalar partialSignature = signatureScheme.computeSignature(context.replicaIndex() + 1, privateShare, nonceShare.nonceShare(), challenge, context.participantIndexes());
 
@@ -121,10 +123,10 @@ public final class ThresholdCryptoUtil {
     ValidationUtils.requireExactInt(partialSignatures.size(), threshold, "partialSignatures.size");
 
     ThresholdSigEd25519 signatureScheme = new ThresholdSigEd25519(threshold, totalReplicas);
-    EdwardsPoint aggregatedPoint = ThresholdEncodingUtil.decodeCommitment(aggregatedCommitment);
+    EdwardsPoint aggregatedPoint = decodeCommitment(aggregatedCommitment);
     List<Scalar> signatureShares = new ArrayList<>(partialSignatures.size());
     for (byte[] partialSignature : partialSignatures) {
-      signatureShares.add(ThresholdEncodingUtil.decodeScalar(partialSignature));
+      signatureShares.add(decodeScalar(partialSignature));
     }
 
     return signatureScheme.computeSignature(aggregatedPoint, signatureShares);
@@ -140,5 +142,15 @@ public final class ThresholdCryptoUtil {
   private static String thresholdPayload(byte[] payload) {
     ValidationUtils.requireNonNull(payload, "payload");
     return HEX_FORMAT.formatHex(payload);
+  }
+
+  private static EdwardsPoint decodeCommitment(byte[] commitment) throws InvalidEncodingException {
+    ValidationUtils.requireNonNull(commitment, "commitment");
+    return new CompressedEdwardsY(commitment).decompress();
+  }
+
+  private static Scalar decodeScalar(byte[] scalarBytes) {
+    ValidationUtils.requireNonNull(scalarBytes, "scalarBytes");
+    return Scalar.fromCanonicalBytes(scalarBytes.clone());
   }
 }
