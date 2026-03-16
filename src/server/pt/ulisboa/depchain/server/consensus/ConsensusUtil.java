@@ -52,7 +52,7 @@ public final class ConsensusUtil {
   public static boolean isAuxiliaryMessage(Message message) {
     ValidationUtils.requireNonNull(message, "message");
     return switch (message.getBodyCase()) {
-      case VOTE, COMMITMENT, THRESHOLD_CONTEXT -> true;
+      case VOTE, COMMITMENT, THRESHOLD_CONTEXT, FETCH_NODE_REQUEST, FETCH_NODE_RESPONSE -> true;
       default -> false;
     };
   }

@@ -24,6 +24,7 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.ThresholdContextMessage;
 import pt.ulisboa.depchain.proto.ThresholdSignatureContext;
+import pt.ulisboa.depchain.server.consensus.ConsensusTransportUtil;
 import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
 import pt.ulisboa.depchain.server.consensus.ViewChangeTimeoutException;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -36,22 +37,25 @@ final class ThresholdSignatureExchange {
   record ThresholdContext(byte[] aggregatedCommitment, Set<Integer> participantIndexes) {
   }
 
-  record CommitmentBatch(List<byte[]> commitments, int[] participantIndexes, Set<Integer> participantIndexesSet, Set<Integer> participantSenders) {
+  record RemoteCommitment(int senderId, int participantIndex, byte[] commitment) {
   }
 
   private final ConfigParser config;
-  private final long viewChangeTimeoutMs;
+  private final int localSenderId;
+  private final long thresholdRoundTimeoutMs;
   private final Map<Integer, InetSocketAddress> consensusEndpointsBySenderId;
 
   private AuthenticatedLink nodeTransport;
 
-  ThresholdSignatureExchange(ConfigParser config, long viewChangeTimeoutMs) {
+  ThresholdSignatureExchange(ConfigParser config, int localSenderId, long thresholdRoundTimeoutMs) {
     ValidationUtils.requireAllNonNull(named("config", config));
-    ValidationUtils.requireNonNegativeLong(viewChangeTimeoutMs, "viewChangeTimeoutMs");
+    ValidationUtils.requireNonNegativeInt(localSenderId, "localSenderId");
+    ValidationUtils.requireNonNegativeLong(thresholdRoundTimeoutMs, "thresholdRoundTimeoutMs");
 
     this.config = config;
-    this.viewChangeTimeoutMs = viewChangeTimeoutMs;
-    this.consensusEndpointsBySenderId = buildConsensusEndpointsBySenderId(config);
+    this.localSenderId = localSenderId;
+    this.thresholdRoundTimeoutMs = thresholdRoundTimeoutMs;
+    this.consensusEndpointsBySenderId = ConsensusTransportUtil.buildConsensusEndpointsBySenderId(config);
   }
 
   void initTransport(AuthenticatedLink nodeTransport) {
@@ -85,35 +89,38 @@ final class ThresholdSignatureExchange {
     return new ThresholdContext(context.getAggregatedCommitment().toByteArray(), participantIndexes);
   }
 
-  CommitmentBatch collectCommitments(int localReplicaIndex, byte[] localCommitment, ConsensusMessageType type, int viewNumber, Node node, int expectedRemoteCount,
-      BlockingDeque<Message> messageQueue) {
-    ValidationUtils.requireNonNegativeInt(localReplicaIndex, "localReplicaIndex");
+  List<RemoteCommitment> collectCommitments(ConsensusMessageType type, int viewNumber, Node node, int minimumRemoteCount, BlockingDeque<Message> messageQueue, long deadlineNanos) {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
-    ValidationUtils.requireNonNegativeInt(expectedRemoteCount, "expectedRemoteCount");
-    ValidationUtils.requireAllNonNull(named("localCommitment", localCommitment), named("type", type), named("node", node), named("messageQueue", messageQueue));
+    ValidationUtils.requireNonNegativeInt(minimumRemoteCount, "minimumRemoteCount");
+    ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("messageQueue", messageQueue));
 
-    List<Message> commitmentMessages = collectMatchingMessages(expectedRemoteCount, messageQueue,
-        msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.COMMITMENT));
+    int maxRemoteCount = Math.max(0, config.system().n() - 1);
+    LinkedHashMap<Integer, RemoteCommitment> commitmentsBySender = new LinkedHashMap<>();
+    ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
+    try {
+      while (commitmentsBySender.size() < maxRemoteCount && !TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
+        Message msg = pollMessageUntilDeadlineOrNull(messageQueue, deadlineNanos);
+        if (msg == null) {
+          break;
+        }
 
-    int[] participantIndexes = new int[commitmentMessages.size() + 1];
-    List<byte[]> commitments = new ArrayList<>(commitmentMessages.size() + 1);
-    Set<Integer> participantIndexesSet = new LinkedHashSet<>();
-    Set<Integer> participantSenders = new LinkedHashSet<>();
-
-    participantIndexes[0] = localReplicaIndex;
-    commitments.add(localCommitment);
-    participantIndexesSet.add(localReplicaIndex);
-
-    for (int i = 0; i < commitmentMessages.size(); i++) {
-      Message commitmentMessage = commitmentMessages.get(i);
-      int participantIndex = replicaIndexForSender(commitmentMessage.getReplicaSenderId());
-      participantIndexes[i + 1] = participantIndex;
-      commitments.add(commitmentMessage.getCommitment().getThresholdSignatureCommitment().toByteArray());
-      participantIndexesSet.add(participantIndex);
-      participantSenders.add(commitmentMessage.getReplicaSenderId());
+        if (isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.COMMITMENT)) {
+          commitmentsBySender.putIfAbsent(msg.getReplicaSenderId(),
+              new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
+                  msg.getCommitment().getThresholdSignatureCommitment().toByteArray()));
+        } else {
+          deferredMessages.addLast(msg);
+        }
+      }
+    } finally {
+      restoreDeferredMessages(messageQueue, deferredMessages);
     }
 
-    return new CommitmentBatch(commitments, participantIndexes, participantIndexesSet, participantSenders);
+    if (commitmentsBySender.size() < minimumRemoteCount) {
+      throw new ViewChangeTimeoutException("Timed out waiting for threshold commitments");
+    }
+
+    return new ArrayList<>(commitmentsBySender.values());
   }
 
   void sendContextMessages(Set<Integer> participantSenders, int viewNumber, int senderId, ConsensusMessageType type, Node node, byte[] aggregatedCommitment,
@@ -136,16 +143,22 @@ final class ThresholdSignatureExchange {
     }
   }
 
-  List<byte[]> collectSignatureShares(ConsensusMessageType type, int viewNumber, Node node, Set<Integer> expectedSenders, BlockingDeque<Message> messageQueue) {
+  List<byte[]> collectSignatureShares(ConsensusMessageType type, int viewNumber, Node node, byte[] aggregatedCommitment, Set<Integer> expectedSenders,
+      BlockingDeque<Message> messageQueue, long deadlineNanos) {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
-    ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("expectedSenders", expectedSenders), named("messageQueue", messageQueue));
+    ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("aggregatedCommitment", aggregatedCommitment),
+        named("expectedSenders", expectedSenders), named("messageQueue", messageQueue));
 
     if (expectedSenders.isEmpty()) {
       return List.of();
     }
 
     List<Message> signatureMessages = collectMatchingMessages(expectedSenders.size(), messageQueue,
-        msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.VOTE) && expectedSenders.contains(msg.getReplicaSenderId()));
+        msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.VOTE)
+            && expectedSenders.contains(msg.getReplicaSenderId())
+            && msg.getVote().getAggregatedCommitment().toByteArray().length > 0
+            && java.util.Arrays.equals(msg.getVote().getAggregatedCommitment().toByteArray(), aggregatedCommitment),
+        deadlineNanos);
 
     List<byte[]> signatures = new ArrayList<>(signatureMessages.size());
     for (Message signatureMessage : signatureMessages) {
@@ -160,14 +173,13 @@ final class ThresholdSignatureExchange {
     ValidationUtils.requireAllNonNull(named("msg", msg), named("nodeTransport", nodeTransport));
 
     byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
-    nodeTransport.send(0L, payload, requireConsensusEndpoint(senderId));
+    nodeTransport.send(thresholdConnectionId(senderId, msg.getViewNumber()), payload, requireConsensusEndpoint(senderId));
   }
 
-  private List<Message> collectMatchingMessages(int expectedCount, BlockingDeque<Message> messageQueue, Predicate<Message> matcher) {
+  private List<Message> collectMatchingMessages(int expectedCount, BlockingDeque<Message> messageQueue, Predicate<Message> matcher, long deadlineNanos) {
     ValidationUtils.requireNonNegativeInt(expectedCount, "expectedCount");
     ValidationUtils.requireAllNonNull(named("messageQueue", messageQueue), named("matcher", matcher));
 
-    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
     LinkedHashMap<Integer, Message> messagesBySender = new LinkedHashMap<>();
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
@@ -189,7 +201,7 @@ final class ThresholdSignatureExchange {
   private Message waitForMatchingMessage(BlockingDeque<Message> messageQueue, Predicate<Message> matcher) {
     ValidationUtils.requireAllNonNull(named("messageQueue", messageQueue), named("matcher", matcher));
 
-    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(thresholdRoundTimeoutMs);
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
       while (true) {
@@ -202,6 +214,19 @@ final class ThresholdSignatureExchange {
       }
     } finally {
       restoreDeferredMessages(messageQueue, deferredMessages);
+    }
+  }
+
+  private Message pollMessageUntilDeadlineOrNull(BlockingDeque<Message> messageQueue, long deadlineNanos) {
+    try {
+      long remainingMs = TimeUtil.monotonicRemainingMsUntil(deadlineNanos);
+      if (remainingMs <= 0) {
+        return null;
+      }
+      return messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new ViewChangeTimeoutException("Interrupted while waiting for threshold messages");
     }
   }
 
@@ -251,15 +276,7 @@ final class ThresholdSignatureExchange {
     }
   }
 
-  private static Map<Integer, InetSocketAddress> buildConsensusEndpointsBySenderId(ConfigParser config) {
-    Map<Integer, InetSocketAddress> endpointsBySenderId = new HashMap<>();
-    for (ConfigParser.ReplicaSection replica : config.replicas()) {
-      try {
-        endpointsBySenderId.put(Math.toIntExact(replica.senderId()), new InetSocketAddress(java.net.InetAddress.getByName(replica.host()), replica.consensusPort()));
-      } catch (UnknownHostException exception) {
-        throw new IllegalStateException("Unable to resolve consensus host for replica " + replica.id(), exception);
-      }
-    }
-    return Map.copyOf(endpointsBySenderId);
+  private long thresholdConnectionId(int remoteSenderId, int messageViewNumber) {
+    return ConsensusTransportUtil.connectionIdForView(messageViewNumber, localSenderId, remoteSenderId, ConsensusTransportUtil.THRESHOLD_MESSAGE_LANE);
   }
 }

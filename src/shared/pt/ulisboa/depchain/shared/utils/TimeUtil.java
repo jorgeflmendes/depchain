@@ -45,6 +45,12 @@ public final class TimeUtil {
     return nowNanos + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(delayMs);
   }
 
+  public static long boundedMonotonicDeadlineAfterNow(long outerDeadlineNanos, long delayMs) {
+    ValidationUtils.requireNonNegativeLong(outerDeadlineNanos, "outerDeadlineNanos");
+    ValidationUtils.requireNonNegativeLong(delayMs, "delayMs");
+    return Math.min(outerDeadlineNanos, monotonicDeadlineAfterNow(delayMs));
+  }
+
   public static long monotonicRemainingMsUntil(long deadlineNanos) {
     return monotonicRemainingMsUntil(deadlineNanos, monotonicNowNanos());
   }

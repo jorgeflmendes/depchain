@@ -60,6 +60,7 @@ final class AuthenticatedConnectionState {
   private Phase phase = Phase.NEW;
   private PrivateKey ephemeralPrivateKey;
   private SecretKey sharedSecret;
+  private Long authenticatedRemoteSenderId;
   private final RunOnce onTerminal;
 
   AuthenticatedConnectionState() {
@@ -142,12 +143,13 @@ final class AuthenticatedConnectionState {
     return ephemeralPrivateKey;
   }
 
-  synchronized List<byte[]> finishHandshake(SecretKey secretKey) {
+  synchronized List<byte[]> finishHandshake(SecretKey secretKey, long remoteSenderId) {
     if (phase == Phase.CLOSED) {
       return List.of();
     }
 
     sharedSecret = ValidationUtils.requireNonNull(secretKey, "secretKey");
+    authenticatedRemoteSenderId = remoteSenderId;
     ephemeralPrivateKey = null;
     phase = Phase.ESTABLISHED;
     return List.copyOf(takePendingPayloadsLocked());
@@ -155,6 +157,10 @@ final class AuthenticatedConnectionState {
 
   synchronized SecretKey sharedSecret() {
     return sharedSecret;
+  }
+
+  synchronized Long authenticatedRemoteSenderId() {
+    return authenticatedRemoteSenderId;
   }
 
   synchronized HandshakeAction decideHandshake(AuthOpcode opcode, long remoteSenderId, long localSenderId) {
@@ -217,6 +223,7 @@ final class AuthenticatedConnectionState {
     phase = Phase.CLOSED;
     ephemeralPrivateKey = null;
     sharedSecret = null;
+    authenticatedRemoteSenderId = null;
     pendingPayloads.clear();
     onTerminal.run();
   }
@@ -238,6 +245,7 @@ final class AuthenticatedConnectionState {
 
     ephemeralPrivateKey = null;
     if (sharedSecret == null) {
+      authenticatedRemoteSenderId = null;
       phase = Phase.NEW;
     }
   }

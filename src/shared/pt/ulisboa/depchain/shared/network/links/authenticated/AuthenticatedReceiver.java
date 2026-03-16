@@ -129,7 +129,7 @@ final class AuthenticatedReceiver {
 
     sender.sendReply(connectionKey, localEKeys, inbound.sender());
     AuthenticatedConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
-    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret);
+    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, senderId);
     sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
     return null;
   }
@@ -172,7 +172,7 @@ final class AuthenticatedReceiver {
     // Derive the shared secret (K) via ECDH using both ephemeral keys.
     SecretKey sharedSecret = deriveSharedSecret(connectionKey, localEphemeralSKey, peerEphemeralPKey);
 
-    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret);
+    java.util.List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, responderId);
     sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
 
     return null;
@@ -212,7 +212,7 @@ final class AuthenticatedReceiver {
     }
     DpchPacket decodedPacket = DpchPacket.newBuilder().setConnectionId(inbound.packet().getConnectionId()).setPacketType(DpchPacketType.DPCH_PACKET_TYPE_DATA).setHasAck(false)
         .setSequenceNumber(inbound.packet().getSequenceNumber()).setPayload(decodedPayload.getApplicationPayload()).build();
-    return new InboundPacket(inbound.sender(), decodedPacket);
+    return new InboundPacket(inbound.sender(), decodedPacket, connectionState.authenticatedRemoteSenderId());
   }
 
   private AuthenticatedHandshakeEnvelope decodeHandshakePayload(InboundPacket inbound) {

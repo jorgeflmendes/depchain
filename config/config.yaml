@@ -67,4 +67,7 @@ client:
     private: config/keys/client/private/client.pem
 
 timeouts:
-  viewChangeMs: 1500
+  viewChangeMs: 1000
+  clientCommandWaitMs: 800
+  thresholdRoundMs: 800
+  fetchNodeMs: 300

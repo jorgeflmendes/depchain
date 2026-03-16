@@ -45,7 +45,7 @@ public final class DpchClient {
     this.targetAddress = new InetSocketAddress(targetReplicaConfig.host(), targetReplicaConfig.clientPort());
     this.localSenderId = config.client().senderId();
     this.localStaticSKey = PrivateKeyLoader.loadClientPrivateKey(config);
-    this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(config);
+    this.staticPKeys = PublicKeyLoader.loadReplicaPublicKeys(config);
     this.requestTimeoutMs = config.client().requestTimeoutMs();
   }
 
@@ -103,7 +103,7 @@ public final class DpchClient {
           return null;
         }
 
-        String reply = handleReply(inbound.packet(), connectionId);
+        String reply = handleReply(inbound, connectionId);
         if (reply != null) {
           return reply;
         }
@@ -152,13 +152,13 @@ public final class DpchClient {
         .setSignature(ByteString.copyFrom(signature))).build(), "ClientRequest");
   }
 
-  private String handleReply(DpchPacket inbound, long connectionId) {
-    if (inbound.getConnectionId() != connectionId) {
+  private String handleReply(InboundPacket inbound, long connectionId) {
+    if (inbound.packet().getConnectionId() != connectionId) {
       return null;
     }
 
     try {
-      ClientResponse response = ProtoValidationUtil.requireValid(ClientResponse.parseFrom(inbound.getPayload()), "ClientResponse");
+      ClientResponse response = ProtoValidationUtil.requireValid(ClientResponse.parseFrom(inbound.packet().getPayload()), "ClientResponse");
       if (!response.hasAppend()) {
         throw new IllegalArgumentException("Unsupported client response type: " + response.getBodyCase());
       }

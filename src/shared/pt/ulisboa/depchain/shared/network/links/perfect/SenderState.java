@@ -8,6 +8,9 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
@@ -15,8 +18,12 @@ import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 final class SenderState {
+  private static final Logger logger = LoggerFactory.getLogger(SenderState.class);
+  private static final int NEAR_EXHAUSTION_THRESHOLD = 1024;
+
   private int nextSequence;
   private final NavigableMap<Integer, DpchPacketType> inFlightBySeq = new TreeMap<>();
+  private boolean nearExhaustionLogged;
 
   synchronized int nextOrPendingSequence(DpchPacketType type, boolean reusePendingSameType) {
     if (reusePendingSameType) {
@@ -25,6 +32,11 @@ final class SenderState {
           return entry.getKey();
         }
       }
+    }
+
+    if (!nearExhaustionLogged && nextSequence >= DpchPacketUtil.MAX_PACKET_NUMBER - NEAR_EXHAUSTION_THRESHOLD) {
+      nearExhaustionLogged = true;
+      logger.warn("Sender sequence number nearing exhaustion for stream. nextSequence={}, inFlight={}", nextSequence, inFlightBySeq.size());
     }
 
     if (nextSequence > DpchPacketUtil.MAX_PACKET_NUMBER) {

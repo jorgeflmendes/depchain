@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -17,7 +18,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
-import pt.ulisboa.depchain.server.consensus.Replica;
+import pt.ulisboa.depchain.server.consensus.HotStuffManager;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -33,17 +34,21 @@ public final class DpchServer {
   private final ConfigParser configParser;
   private final ConfigParser.ReplicaSection replicaConfig;
   private final PrivateKey localStaticSKey;
-  private final Map<Long, PublicKey> staticPKeys;
-  private final Replica replica;
+  private final Map<Long, PublicKey> clientStaticPKeys;
+  private final Map<Long, PublicKey> replicaStaticPKeys;
+  private final Map<String, Long> replicaSenderIdByConsensusEndpoint;
+  private final HotStuffManager hotStuffManager;
 
   public DpchServer(String serverId, String configPath) throws Exception {
     this.configParser = ConfigParser.load(Path.of(configPath));
     this.replicaConfig = configParser.requireReplicaById(serverId);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
-    this.staticPKeys = PublicKeyLoader.loadStaticPublicKeys(configParser);
+    this.clientStaticPKeys = Map.of(configParser.client().senderId(), PublicKeyLoader.loadClientPublicKey(configParser));
+    this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
+    this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
-    PublicKey clientPublicKey = staticPKeys.get(configParser.client().senderId());
-    this.replica = new Replica(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey);
+    PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
+    this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey);
   }
 
   public void run() throws Exception {
@@ -52,15 +57,15 @@ public final class DpchServer {
     ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
     try (workers;
-        AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys);
-        AuthenticatedLink nodeTransport = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, staticPKeys)) {
+        AuthenticatedLink clientTransport = AuthenticatedLink.bind(clientBindEndpoint, replicaConfig.senderId(), localStaticSKey, clientStaticPKeys);
+        AuthenticatedLink nodeTransport = AuthenticatedLink.bind(nodeBindEndpoint, replicaConfig.senderId(), localStaticSKey, replicaStaticPKeys)) {
 
       logger.info("Replica {} client listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       logger.info("Replica {} node listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
 
       // Set up the replica with the transports and start the hotstuff loop
-      this.replica.initNetwork(nodeTransport, clientTransport);
-      workers.submit(() -> this.replica.run());
+      this.hotStuffManager.initNetwork(nodeTransport, clientTransport);
+      workers.submit(() -> this.hotStuffManager.run());
 
       // Dedicated loop for inter-replica traffic.
       workers.submit(() -> runNodeLoop(nodeTransport));
@@ -78,7 +83,7 @@ public final class DpchServer {
         continue;
       }
 
-      handleClientRequest(transport, request.packet(), request.sender());
+      handleClientRequest(request);
     }
   }
 
@@ -90,7 +95,7 @@ public final class DpchServer {
         continue;
       }
 
-      handleNodeRequest(transport, request.packet(), request.sender());
+      handleNodeRequest(request);
     }
   }
 
@@ -105,26 +110,67 @@ public final class DpchServer {
   }
 
   // Handles messages from clients
-  private void handleClientRequest(AuthenticatedLink transport, DpchPacket inbound, InetSocketAddress sender) {
+  private void handleClientRequest(InboundPacket inbound) {
+    DpchPacket packet = inbound.packet();
+    InetSocketAddress sender = inbound.sender();
     String senderText = sender.getAddress().getHostAddress() + ":" + sender.getPort();
     logger.debug("Client request from {}", sender);
 
     try {
-      ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.getPayload()), "ClientRequest");
-      ConnectionKey key = new ConnectionKey(sender, inbound.getConnectionId());
-      this.replica.receiveClientCommand(request, key);
+      if (inbound.authenticatedSenderId() == null || inbound.authenticatedSenderId() != configParser.client().senderId()) {
+        logger.warn("Rejecting client request from {} with unauthenticated senderId {}", sender, inbound.authenticatedSenderId());
+        return;
+      }
+
+      ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(packet.getPayload()), "ClientRequest");
+      ConnectionKey key = new ConnectionKey(sender, packet.getConnectionId());
+      this.hotStuffManager.onClientRequest(request, key);
     } catch (InvalidProtocolBufferException | RuntimeException exception) {
       logger.error("Client request error from {}", senderText, exception);
     }
   }
 
   // Handles messages from other replicas
-  private void handleNodeRequest(AuthenticatedLink transport, DpchPacket inbound, InetSocketAddress sender) {
+  private void handleNodeRequest(InboundPacket inbound) {
+    DpchPacket packet = inbound.packet();
+    InetSocketAddress sender = inbound.sender();
     try {
-      Message msg = ProtoValidationUtil.requireValid(Message.parseFrom(inbound.getPayload()), "ReplicaMessage");
-      this.replica.receiveMessage(msg);
+      Long expectedSenderId = replicaSenderIdByConsensusEndpoint.get(endpointKey(sender));
+      if (expectedSenderId == null) {
+        logger.warn("Rejecting node message from unknown consensus endpoint {}", sender);
+        return;
+      }
+
+      if (inbound.authenticatedSenderId() == null || !expectedSenderId.equals(inbound.authenticatedSenderId())) {
+        logger.warn("Rejecting node message from {} with unauthenticated senderId {}", sender, inbound.authenticatedSenderId());
+        return;
+      }
+
+      Message msg = ProtoValidationUtil.requireValid(Message.parseFrom(packet.getPayload()), "ReplicaMessage");
+      if (msg.getReplicaSenderId() != expectedSenderId.intValue()) {
+        logger.warn("Rejecting spoofed node message from {} claiming senderId {}", sender, msg.getReplicaSenderId());
+        return;
+      }
+
+      this.hotStuffManager.onReplicaMessage(msg);
     } catch (InvalidProtocolBufferException | RuntimeException e) {
       logger.error("Error handling node message from {}", sender, e);
     }
+  }
+
+  private static Map<String, Long> buildReplicaSenderIdByConsensusEndpoint(ConfigParser configParser) {
+    Map<String, Long> senderIdByEndpoint = new HashMap<>();
+    for (ConfigParser.ReplicaSection replica : configParser.replicas()) {
+      senderIdByEndpoint.put(endpointKey(replica.host(), replica.consensusPort()), replica.senderId());
+    }
+    return Map.copyOf(senderIdByEndpoint);
+  }
+
+  private static String endpointKey(InetSocketAddress endpoint) {
+    return endpointKey(endpoint.getAddress().getHostAddress(), endpoint.getPort());
+  }
+
+  private static String endpointKey(String host, int port) {
+    return host + ":" + port;
   }
 }

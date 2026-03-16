@@ -119,9 +119,12 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     }
   }
 
-  public record TimeoutsSection(int viewChangeMs) {
+  public record TimeoutsSection(int viewChangeMs, int clientCommandWaitMs, int thresholdRoundMs, int fetchNodeMs) {
     public TimeoutsSection {
       ValidationUtils.requirePositiveInt(viewChangeMs, "timeouts.viewChangeMs");
+      ValidationUtils.requirePositiveInt(clientCommandWaitMs, "timeouts.clientCommandWaitMs");
+      ValidationUtils.requirePositiveInt(thresholdRoundMs, "timeouts.thresholdRoundMs");
+      ValidationUtils.requirePositiveInt(fetchNodeMs, "timeouts.fetchNodeMs");
     }
   }
 

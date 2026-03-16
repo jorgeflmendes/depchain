@@ -17,6 +17,8 @@ enum ConsensusMessageType {
   CONSENSUS_MESSAGE_TYPE_COMMIT = 4;
   CONSENSUS_MESSAGE_TYPE_DECIDE = 5;
   CONSENSUS_MESSAGE_TYPE_FORWARDED_REQUEST = 6;
+  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_REQUEST = 7;
+  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE = 8;
 }
 
 message AppendNodeCommand {
@@ -121,10 +123,6 @@ message ThresholdSignatureContext {
   }];
 }
 
-message ForwardedRequestMessage {
-  depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
-}
-
 message ProposalMessage {
   Node proposed_node = 1 [(buf.validate.field).required = true];
   QuorumCertificate justify_qc = 2 [(buf.validate.field).required = true];
@@ -137,6 +135,7 @@ message PhaseCertificateMessage {
 message VoteMessage {
   Node voted_node = 1 [(buf.validate.field).required = true];
   bytes threshold_signature_share = 2 [(buf.validate.field).bytes.len = 32];
+  bytes aggregated_commitment = 3 [(buf.validate.field).bytes.len = 32];
 }
 
 message CommitmentMessage {
@@ -147,6 +146,18 @@ message CommitmentMessage {
 message ThresholdContextMessage {
   Node voted_node = 1 [(buf.validate.field).required = true];
   ThresholdSignatureContext threshold_signature_context = 2 [(buf.validate.field).required = true];
+}
+
+message ForwardedRequestMessage {
+  depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
+}
+
+message FetchNodeRequestMessage {
+  string node_hash = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message FetchNodeResponseMessage {
+  Node node = 1 [(buf.validate.field).required = true];
 }
 
 message Message {
@@ -185,6 +196,16 @@ message Message {
     message: "threshold context bodies must use PREPARE, PRE_COMMIT, or COMMIT"
     expression: "has(this.threshold_context) ? this.message_type in [2, 3, 4] : true"
   };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.fetch-node-request"
+    message: "fetch node request bodies must use FETCH_NODE_REQUEST"
+    expression: "has(this.fetch_node_request) ? this.message_type == 7 : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.fetch-node-response"
+    message: "fetch node response bodies must use FETCH_NODE_RESPONSE"
+    expression: "has(this.fetch_node_response) ? this.message_type == 8 : true"
+  };
 
   optional int32 view_number = 1 [
     (buf.validate.field).required = true,
@@ -201,5 +222,7 @@ message Message {
     VoteMessage vote = 7;
     CommitmentMessage commitment = 8;
     ThresholdContextMessage threshold_context = 9;
+    FetchNodeRequestMessage fetch_node_request = 10;
+    FetchNodeResponseMessage fetch_node_response = 11;
   }
 }
