@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.hotstuff;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -12,16 +12,17 @@ import java.util.function.Predicate;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-final class HotStuffMessageInbox {
+final class HotStuffInbox {
   private final int localSenderId;
   private final BlockingDeque<Message> messageQueue;
   private final ThresholdSignatureProtocol thresholdProtocol;
 
-  HotStuffMessageInbox(int localSenderId, ThresholdSignatureProtocol thresholdProtocol) {
+  HotStuffInbox(int localSenderId, ThresholdSignatureProtocol thresholdProtocol) {
     this.localSenderId = localSenderId;
     this.messageQueue = new LinkedBlockingDeque<>();
     this.thresholdProtocol = ValidationUtils.requireNonNull(thresholdProtocol, "thresholdProtocol");
@@ -71,8 +72,7 @@ final class HotStuffMessageInbox {
     }
   }
 
-  Message waitForMessageFromSender(ConsensusMessageType type, int view, int senderId, long timeoutMs) {
-    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(timeoutMs);
+  Message waitForMessageFromSenderUntil(ConsensusMessageType type, int view, int senderId, long deadlineNanos) {
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
       while (true) {
@@ -87,8 +87,7 @@ final class HotStuffMessageInbox {
     }
   }
 
-  Message waitForQcMessage(ConsensusMessageType type, int view, int senderId, long timeoutMs, Predicate<QuorumCertificate> qcVerifier) {
-    long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(timeoutMs);
+  Message waitForQcMessageUntil(ConsensusMessageType type, int view, int senderId, long deadlineNanos, Predicate<QuorumCertificate> qcVerifier) {
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
       while (true) {
@@ -109,19 +108,19 @@ final class HotStuffMessageInbox {
 
   Message pollMessageUntil(long deadlineNanos, String description) {
     if (TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
-      throw new ViewChangeTimeoutException("Timed out " + description);
+      throw new ConsensusTimeoutException("Timed out " + description);
     }
 
     try {
       long remainingMs = TimeUtil.monotonicRemainingMsUntil(deadlineNanos);
       Message message = messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
       if (message == null) {
-        throw new ViewChangeTimeoutException("Timed out " + description);
+        throw new ConsensusTimeoutException("Timed out " + description);
       }
       return message;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
-      throw new ViewChangeTimeoutException("Interrupted while " + description);
+      throw new ConsensusTimeoutException("Interrupted while " + description);
     }
   }
 

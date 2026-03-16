@@ -67,6 +67,7 @@ final class AuthenticatedSender {
       context.handshakedLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
     } catch (Exception exception) {
       connectionState.rollbackHandshake(localEKeys.getPrivate());
+      connectionState.close();
       throw new IllegalStateException("Failed to send authenticated init", exception);
     }
   }
@@ -78,6 +79,10 @@ final class AuthenticatedSender {
       byte[] replyPayload = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_REPLY, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
       context.handshakedLink.send(connectionKey.connectionId(), replyPayload, remoteEndpoint);
     } catch (Exception exception) {
+      AuthenticatedConnectionState state = context.getConnectionStateOrNull(connectionKey);
+      if (state != null) {
+        state.close();
+      }
       throw new IllegalStateException("Failed to send authenticated reply", exception);
     }
   }
@@ -100,6 +105,7 @@ final class AuthenticatedSender {
       byte[] securePayload = AuthenticatedPayloadUtil.encodeHmac(AuthOpcode.AUTH_OPCODE_DATA, payload, secureSend.sharedSecret(), secureSend.nonce());
       context.handshakedLink.send(connectionKey.connectionId(), securePayload, remoteEndpoint);
     } catch (Exception exception) {
+      connectionState.close();
       throw new IllegalStateException("Failed to send authenticated data", exception);
     }
   }

@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.hotstuff;
 
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.Node;
@@ -8,8 +8,8 @@ import pt.ulisboa.depchain.proto.ThresholdVotePayload;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public final class ConsensusCryptoPayloadUtil {
-  private ConsensusCryptoPayloadUtil() {
+public final class HotStuffCryptoPayloads {
+  private HotStuffCryptoPayloads() {
   }
 
   public static byte[] votePayload(ConsensusMessageType type, int viewNumber, Node node) {

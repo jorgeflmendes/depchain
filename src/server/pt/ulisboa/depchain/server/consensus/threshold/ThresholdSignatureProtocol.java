@@ -15,9 +15,9 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.proto.VoteMessage;
-import pt.ulisboa.depchain.server.consensus.ConsensusCryptoPayloadUtil;
-import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
-import pt.ulisboa.depchain.server.consensus.ViewChangeTimeoutException;
+import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffCryptoPayloads;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
@@ -58,7 +58,7 @@ public final class ThresholdSignatureProtocol {
 
   public QuorumCertificate genesisQC() {
     return QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE).setViewNumber(GENESIS_VIEW_NUMBER)
-        .setCertifiedNode(ConsensusUtil.GENESIS_NODE).build();
+        .setCertifiedNode(HotStuffSupport.GENESIS_NODE).build();
   }
 
   public Message createVoteMessage(int viewNumber, ConsensusMessageType type, Node node, int leaderId, BlockingDeque<Message> messageQueue) {
@@ -77,7 +77,7 @@ public final class ThresholdSignatureProtocol {
       byte[] thresholdSignatureShare = ThresholdCryptoUtil.thresholdPartialSign(payload, localThresholdShare, nonceShare, signContext);
       return Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(localSenderId).setMessageType(type).setVote(VoteMessage.newBuilder().setVotedNode(node)
           .setThresholdSignatureShare(ByteString.copyFrom(thresholdSignatureShare)).setAggregatedCommitment(ByteString.copyFrom(context.aggregatedCommitment()))).build();
-    } catch (ViewChangeTimeoutException exception) {
+    } catch (ConsensusTimeoutException exception) {
       throw exception;
     } catch (Exception exception) {
       throw new IllegalStateException("Unable to produce threshold vote for " + type + " at view " + viewNumber, exception);
@@ -117,13 +117,13 @@ public final class ThresholdSignatureProtocol {
             return QuorumCertificate.newBuilder().setMessageType(type).setViewNumber(viewNumber).setCertifiedNode(node).setQuorumSignature(ByteString.copyFrom(aggregatedSignature))
                 .build();
           }
-        } catch (ViewChangeTimeoutException | IllegalStateException ignored) {
+        } catch (ConsensusTimeoutException | IllegalStateException ignored) {
           // Try the next participant subset within the same overall deadline.
         }
       }
 
-      throw new ViewChangeTimeoutException("Unable to assemble a valid threshold quorum certificate before the view deadline");
-    } catch (ViewChangeTimeoutException exception) {
+      throw new ConsensusTimeoutException("Unable to assemble a valid threshold quorum certificate before the view deadline");
+    } catch (ConsensusTimeoutException exception) {
       throw exception;
     } catch (Exception exception) {
       throw new IllegalStateException("Unable to build quorum certificate for " + type + " at view " + viewNumber, exception);
@@ -134,7 +134,7 @@ public final class ThresholdSignatureProtocol {
     if (qc == null) {
       return false;
     }
-    if (isSameNode(qc.getCertifiedNode(), ConsensusUtil.GENESIS_NODE) && !qc.hasQuorumSignature() && qc.getViewNumber() == GENESIS_VIEW_NUMBER) {
+    if (isSameNode(qc.getCertifiedNode(), HotStuffSupport.GENESIS_NODE) && !qc.hasQuorumSignature() && qc.getViewNumber() == GENESIS_VIEW_NUMBER) {
       return true;
     }
     if (!qc.hasCertifiedNode() || !qc.hasQuorumSignature()) {
@@ -154,7 +154,7 @@ public final class ThresholdSignatureProtocol {
   }
 
   private byte[] buildVotePayload(ConsensusMessageType type, int viewNumber, Node node) {
-    return ConsensusCryptoPayloadUtil.votePayload(type, viewNumber, node);
+    return HotStuffCryptoPayloads.votePayload(type, viewNumber, node);
   }
 
   private int findReplicaIndex(ConfigParser config, int senderId) {
@@ -216,6 +216,6 @@ public final class ThresholdSignatureProtocol {
   }
 
   static boolean isSameNode(Node left, Node right) {
-    return ConsensusUtil.isSameNode(left, right);
+    return HotStuffSupport.isSameNode(left, right);
   }
 }

@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.hotstuff;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -26,6 +26,7 @@ import pt.ulisboa.depchain.proto.FetchNodeResponseMessage;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
+import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -34,11 +35,11 @@ import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
-class ReplicaCatchUpTest {
+class HotStuffCatchUpTest {
   @Test
   void executeCommittedBranchExecutesAllUnexecutedAncestorsAndIsIdempotent() throws Exception {
     HotStuffManager hotStuffManager = newHotStuffManager();
-    Node node1 = newNode(1, ConsensusUtil.GENESIS_NODE.getNodeHash(), 101L, "one");
+    Node node1 = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 101L, "one");
     Node node2 = newNode(2, node1.getNodeHash(), 102L, "two");
     Node node3 = newNode(3, node2.getNodeHash(), 103L, "three");
 
@@ -46,7 +47,7 @@ class ReplicaCatchUpTest {
     putKnownNode(hotStuffManager, node2);
     putKnownNode(hotStuffManager, node3);
 
-    invokeEnsureDeliveredBranchOnDecide(hotStuffManager, node3, -1);
+    invokeEnsureDeliveredBranch(hotStuffManager, node3, -1);
     invokeExecuteCommittedBranch(hotStuffManager, node3);
 
     Set<String> executedHashes = executedNodeHashes(hotStuffManager);
@@ -60,7 +61,7 @@ class ReplicaCatchUpTest {
     assertEquals(4, executedHashes.size());
     assertEquals(3, completedRequestIds.size());
 
-    invokeEnsureDeliveredBranchOnDecide(hotStuffManager, node3, -1);
+    invokeEnsureDeliveredBranch(hotStuffManager, node3, -1);
     invokeExecuteCommittedBranch(hotStuffManager, node3);
 
     assertEquals(4, executedNodeHashes(hotStuffManager).size());
@@ -70,7 +71,7 @@ class ReplicaCatchUpTest {
   @Test
   void fetchNodeFromReplicasRejectsInvalidResponseAndFallsBackToAlternateReplica() throws Exception {
     HotStuffManager hotStuffManager = newHotStuffManager();
-    Node parent = newNode(1, ConsensusUtil.GENESIS_NODE.getNodeHash(), 201L, "parent");
+    Node parent = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 201L, "parent");
     ClientRequest tamperedRequest = parent.getCommand().getAppend().getClientRequest().toBuilder()
         .setAppend(parent.getCommand().getAppend().getClientRequest().getAppend().toBuilder().setValue("tampered")).build();
     Node invalidParent = parent.toBuilder().setCommand(parent.getCommand().toBuilder().setAppend(parent.getCommand().getAppend().toBuilder().setClientRequest(tamperedRequest)))
@@ -88,7 +89,7 @@ class ReplicaCatchUpTest {
   @Test
   void executeCommittedBranchFetchesMissingAncestorsBeforeExecution() throws Exception {
     HotStuffManager hotStuffManager = newHotStuffManager();
-    Node parent = newNode(1, ConsensusUtil.GENESIS_NODE.getNodeHash(), 301L, "parent");
+    Node parent = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 301L, "parent");
     Node child = newNode(2, parent.getNodeHash(), 302L, "child");
     putKnownNode(hotStuffManager, child);
 
@@ -101,7 +102,7 @@ class ReplicaCatchUpTest {
       }
     });
 
-    invokeEnsureDeliveredBranchOnDecide(hotStuffManager, child, 1);
+    invokeEnsureDeliveredBranch(hotStuffManager, child, 1);
     invokeExecuteCommittedBranch(hotStuffManager, child);
 
     assertTrue(executedNodeHashes(hotStuffManager).contains(parent.getNodeHash()));
@@ -120,7 +121,7 @@ class ReplicaCatchUpTest {
 
   private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {
     NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(signedAppendRequest(requestId, value))).build();
-    String nodeHash = CryptoUtil.sha256Hex(ConsensusCryptoPayloadUtil.nodeHashPayload(parentHash, viewNumber, command));
+    String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(parentHash, viewNumber, command));
     return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
   }
 
@@ -159,7 +160,7 @@ class ReplicaCatchUpTest {
   @SuppressWarnings("unchecked")
   private static Set<ClientRequestKey> completedRequestIds(HotStuffManager hotStuffManager) throws Exception {
     Object clientCommunication = getField(hotStuffManager, "clientCommunication");
-    Field field = ClientCommunicationManager.class.getDeclaredField("completedRequestIds");
+    Field field = ClientRequestManager.class.getDeclaredField("completedRequestIds");
     field.setAccessible(true);
     return (Set<ClientRequestKey>) field.get(clientCommunication);
   }
@@ -176,10 +177,10 @@ class ReplicaCatchUpTest {
     return (Node) method.invoke(hotStuffManager, sourceSenderId, nodeHash, deadlineNanos);
   }
 
-  private static void invokeEnsureDeliveredBranchOnDecide(HotStuffManager hotStuffManager, Node node, int sourceSenderId) throws Exception {
-    Method method = HotStuffManager.class.getDeclaredMethod("ensureDeliveredBranchOnDecide", Node.class, int.class);
+  private static void invokeEnsureDeliveredBranch(HotStuffManager hotStuffManager, Node node, int sourceSenderId) throws Exception {
+    Method method = HotStuffManager.class.getDeclaredMethod("ensureDeliveredBranch", Node.class, int.class, long.class);
     method.setAccessible(true);
-    method.invoke(hotStuffManager, node, sourceSenderId);
+    method.invoke(hotStuffManager, node, sourceSenderId, TimeUtil.monotonicDeadlineAfterNow(1000));
   }
 
   private static void invokeExecuteCommittedBranch(HotStuffManager hotStuffManager, Node node) throws Exception {

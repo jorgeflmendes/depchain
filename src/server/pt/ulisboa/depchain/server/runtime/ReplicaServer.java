@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server;
+package pt.ulisboa.depchain.server.runtime;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -18,7 +18,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
-import pt.ulisboa.depchain.server.consensus.HotStuffManager;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffManager;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -28,8 +28,8 @@ import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
-public final class DpchServer {
-  private static final Logger logger = LoggerFactory.getLogger(DpchServer.class);
+public final class ReplicaServer {
+  private static final Logger logger = LoggerFactory.getLogger(ReplicaServer.class);
 
   private final ConfigParser configParser;
   private final ConfigParser.ReplicaSection replicaConfig;
@@ -39,7 +39,7 @@ public final class DpchServer {
   private final Map<String, Long> replicaSenderIdByConsensusEndpoint;
   private final HotStuffManager hotStuffManager;
 
-  public DpchServer(String serverId, String configPath) throws Exception {
+  public ReplicaServer(String serverId, String configPath) throws Exception {
     this.configParser = ConfigParser.load(Path.of(configPath));
     this.replicaConfig = configParser.requireReplicaById(serverId);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());

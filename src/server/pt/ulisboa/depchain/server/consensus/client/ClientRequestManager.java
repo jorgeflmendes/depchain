@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.client;
 
 import java.security.PublicKey;
 import java.util.Map;
@@ -15,6 +15,8 @@ import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
+import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
@@ -23,7 +25,7 @@ import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-final class ClientCommunicationManager {
+public final class ClientRequestManager {
   private final long expectedClientSenderId;
   private final PublicKey clientPublicKey;
   private final Logger logger;
@@ -34,24 +36,24 @@ final class ClientCommunicationManager {
   private final Set<ClientRequestKey> completedRequestIds = ConcurrentHashMap.newKeySet();
   private AuthenticatedLink clientTransport;
 
-  ClientCommunicationManager(long expectedClientSenderId, PublicKey clientPublicKey, Logger logger) {
+  public ClientRequestManager(long expectedClientSenderId, PublicKey clientPublicKey, Logger logger) {
     this.expectedClientSenderId = expectedClientSenderId;
     this.clientPublicKey = ValidationUtils.requireNonNull(clientPublicKey, "clientPublicKey");
     this.logger = ValidationUtils.requireNonNull(logger, "logger");
   }
 
-  void init(AuthenticatedLink clientTransport) {
+  public void init(AuthenticatedLink clientTransport) {
     this.clientTransport = clientTransport;
   }
 
-  void onClientRequest(ClientRequest request, ConnectionKey key, boolean isLeader) {
+  public void onClientRequest(ClientRequest request, ConnectionKey key, boolean isLeader) {
     ClientRequest acceptedRequest = registerKnownRequest(request, key);
     if (acceptedRequest != null && isLeader) {
       enqueueIfNotQueued(acceptedRequest);
     }
   }
 
-  boolean observeProposedCommand(NodeCommand command) {
+  public boolean observeProposedCommand(NodeCommand command) {
     if (command == null || !command.hasAppend()) {
       return true;
     }
@@ -60,18 +62,18 @@ final class ClientCommunicationManager {
     return registerKnownRequest(request, null) != null;
   }
 
-  int pendingCount() {
+  public int pendingCount() {
     return pendingRequests.size();
   }
 
-  int enqueuePendingKnownRequestsIfLeader(boolean isLeader) {
+  public int enqueuePendingKnownRequestsIfLeader(boolean isLeader) {
     if (!isLeader || pendingRequests.isEmpty()) {
       return 0;
     }
     return enqueuePendingRequests();
   }
 
-  ClientRequest awaitNextPending(long deadlineNanos) {
+  public ClientRequest awaitNextPending(long deadlineNanos) {
     while (true) {
       ClientRequest nextRequest = pollPendingCommand(deadlineNanos);
       if (nextRequest == null) {
@@ -99,9 +101,9 @@ final class ClientCommunicationManager {
     return false;
   }
 
-  ExecutionResult markExecuted(Node node) {
+  public ExecutionResult markExecuted(Node node) {
     NodeCommand command = node.getCommand();
-    String commandValue = ConsensusUtil.commandValue(command);
+    String commandValue = HotStuffSupport.commandValue(command);
     ClientRequestKey requestKey = requestKeyOrNull(command);
     if (requestKey == null) {
       return new ExecutionResult(commandValue, null);
@@ -113,7 +115,7 @@ final class ClientCommunicationManager {
     return new ExecutionResult(commandValue, clientContexts.remove(requestKey));
   }
 
-  void replyToClient(ConnectionKey key, ClientResponse response) {
+  public void replyToClient(ConnectionKey key, ClientResponse response) {
     if (clientTransport == null || key == null) {
       return;
     }
@@ -127,12 +129,27 @@ final class ClientCommunicationManager {
   }
 
   private ClientRequest registerKnownRequest(ClientRequest request, ConnectionKey key) {
-    if (!hasValidClientRequest(request)) {
+    if (request == null || !request.hasAppend()) {
       return null;
     }
 
     ClientRequestKey requestKey = request.getAppend().getRequestKey();
     if (completedRequestIds.contains(requestKey)) {
+      return null;
+    }
+
+    ClientRequest knownRequest = pendingRequests.get(requestKey);
+    if (knownRequest != null) {
+      if (!knownRequest.equals(request)) {
+        return null;
+      }
+      if (key != null) {
+        clientContexts.putIfAbsent(requestKey, key);
+      }
+      return knownRequest;
+    }
+
+    if (!hasValidClientRequest(request)) {
       return null;
     }
 
@@ -162,7 +179,7 @@ final class ClientCommunicationManager {
         }
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
-        throw new ViewChangeTimeoutException("Interrupted while waiting for client command");
+        throw new ConsensusTimeoutException("Interrupted while waiting for client command");
       }
     }
 
@@ -194,6 +211,6 @@ final class ClientCommunicationManager {
     return command.getAppend().getClientRequest().getAppend().getRequestKey();
   }
 
-  record ExecutionResult(String commandValue, ConnectionKey replyTarget) {
+  public record ExecutionResult(String commandValue, ConnectionKey replyTarget) {
   }
 }

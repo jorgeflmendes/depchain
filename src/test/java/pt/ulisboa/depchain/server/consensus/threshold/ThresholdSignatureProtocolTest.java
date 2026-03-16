@@ -21,8 +21,8 @@ import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
-import pt.ulisboa.depchain.server.consensus.ConsensusCryptoPayloadUtil;
-import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffCryptoPayloads;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
@@ -80,7 +80,7 @@ class ThresholdSignatureProtocolTest {
 
   private static QuorumCertificate signedQc(ConsensusMessageType type, int viewNumber, Node node, byte[] publicThresholdKey, List<Scalar> shares, Set<Integer> participantIndexes, int totalReplicas, int threshold)
       throws Exception {
-    byte[] payload = ConsensusCryptoPayloadUtil.votePayload(type, viewNumber, node);
+    byte[] payload = HotStuffCryptoPayloads.votePayload(type, viewNumber, node);
     ThresholdCryptoUtil.ThresholdNonceShare nonce0 = ThresholdCryptoUtil.thresholdNonceShare(payload, shares.get(0));
     ThresholdCryptoUtil.ThresholdNonceShare nonce1 = ThresholdCryptoUtil.thresholdNonceShare(payload, shares.get(1));
     ThresholdCryptoUtil.ThresholdNonceShare nonce2 = ThresholdCryptoUtil.thresholdNonceShare(payload, shares.get(2));
@@ -100,8 +100,8 @@ class ThresholdSignatureProtocolTest {
 
   private static Node newNode(int viewNumber, String value, long requestId) {
     NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(signedAppendRequest(requestId, value))).build();
-    String nodeHash = CryptoUtil.sha256Hex(ConsensusCryptoPayloadUtil.nodeHashPayload(ConsensusUtil.GENESIS_NODE.getNodeHash(), viewNumber, command));
-    return Node.newBuilder().setParentNodeHash(ConsensusUtil.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
+    String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(HotStuffSupport.GENESIS_NODE.getNodeHash(), viewNumber, command));
+    return Node.newBuilder().setParentNodeHash(HotStuffSupport.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
   }
 
   private static ClientRequest signedAppendRequest(long requestId, String value) {

@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.network;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -13,24 +13,26 @@ import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-final class ReplicaCommunicationManager {
+public final class ReplicaMessenger {
   private final int localSenderId;
   private final Map<Integer, InetSocketAddress> consensusEndpointsBySenderId;
   private final Logger logger;
+  private final SerializedPeerSender peerSendScheduler;
 
   private AuthenticatedLink nodeTransport;
 
-  ReplicaCommunicationManager(int localSenderId, ConfigParser config, Logger logger) {
+  public ReplicaMessenger(int localSenderId, ConfigParser config, Logger logger) {
     this.localSenderId = localSenderId;
-    this.consensusEndpointsBySenderId = ConsensusTransportUtil.buildConsensusEndpointsBySenderId(config);
+    this.consensusEndpointsBySenderId = ReplicaTransportIds.buildConsensusEndpointsBySenderId(config);
     this.logger = ValidationUtils.requireNonNull(logger, "logger");
+    this.peerSendScheduler = new SerializedPeerSender("replica-send-" + localSenderId, this.logger);
   }
 
-  void init(AuthenticatedLink nodeTransport) {
+  public void init(AuthenticatedLink nodeTransport) {
     this.nodeTransport = nodeTransport;
   }
 
-  void broadcast(Message message) {
+  public void broadcast(Message message) {
     if (nodeTransport == null) {
       return;
     }
@@ -41,28 +43,20 @@ final class ReplicaCommunicationManager {
         continue;
       }
 
-      try {
-        nodeTransport.send(replicaConnectionId(entry.getKey(), message.getViewNumber()), payload, entry.getValue());
-      } catch (Exception exception) {
-        logger.error("Error in broadcast to replica {}", entry.getKey(), exception);
-      }
+      sendAsync(entry.getKey(), message.getViewNumber(), payload, entry.getValue(), "broadcast");
     }
   }
 
-  void sendToReplica(int replicaSenderId, Message message) {
+  public void sendToReplica(int replicaSenderId, Message message) {
     if (nodeTransport == null) {
       return;
     }
 
-    try {
-      byte[] payload = ProtoValidationUtil.requireValid(message, "ReplicaMessage").toByteArray();
-      nodeTransport.send(replicaConnectionId(replicaSenderId, message.getViewNumber()), payload, requireConsensusEndpoint(replicaSenderId));
-    } catch (Exception exception) {
-      logger.error("Error sending message to replica {}", replicaSenderId, exception);
-    }
+    byte[] payload = ProtoValidationUtil.requireValid(message, "ReplicaMessage").toByteArray();
+    sendAsync(replicaSenderId, message.getViewNumber(), payload, requireConsensusEndpoint(replicaSenderId), "send");
   }
 
-  int[] candidateReplicaSenderIds(int preferredSourceSenderId) {
+  public int[] candidateReplicaSenderIds(int preferredSourceSenderId) {
     List<Integer> candidateSenderIds = new ArrayList<>();
     if (preferredSourceSenderId >= 0 && preferredSourceSenderId != localSenderId && consensusEndpointsBySenderId.containsKey(preferredSourceSenderId)) {
       candidateSenderIds.add(preferredSourceSenderId);
@@ -84,6 +78,15 @@ final class ReplicaCommunicationManager {
   }
 
   private long replicaConnectionId(int remoteSenderId, int messageViewNumber) {
-    return ConsensusTransportUtil.connectionIdForView(messageViewNumber, localSenderId, remoteSenderId, ConsensusTransportUtil.REPLICA_MESSAGE_LANE);
+    return ReplicaTransportIds.connectionIdForView(messageViewNumber, localSenderId, remoteSenderId, ReplicaTransportIds.REPLICA_MESSAGE_LANE);
+  }
+
+  private void sendAsync(int replicaSenderId, int messageViewNumber, byte[] payload, InetSocketAddress endpoint, String operation) {
+    peerSendScheduler.schedule(replicaSenderId, "replica " + operation, () -> {
+      if (nodeTransport == null) {
+        return;
+      }
+      nodeTransport.send(replicaConnectionId(replicaSenderId, messageViewNumber), payload, endpoint);
+    });
   }
 }

@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.network;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -9,11 +9,11 @@ import java.util.Map;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public final class ConsensusTransportUtil {
+public final class ReplicaTransportIds {
   public static final int REPLICA_MESSAGE_LANE = 1;
   public static final int THRESHOLD_MESSAGE_LANE = 2;
 
-  private ConsensusTransportUtil() {
+  private ReplicaTransportIds() {
   }
 
   public static Map<Integer, InetSocketAddress> buildConsensusEndpointsBySenderId(ConfigParser config) {

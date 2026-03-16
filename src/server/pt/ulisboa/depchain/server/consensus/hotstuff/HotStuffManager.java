@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.hotstuff;
 
 import java.security.PublicKey;
 import java.util.ArrayDeque;
@@ -28,6 +28,9 @@ import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
 import pt.ulisboa.depchain.proto.ProposalMessage;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
+import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
+import pt.ulisboa.depchain.server.consensus.network.ReplicaMessenger;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
@@ -36,8 +39,8 @@ import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class HotStuffManager {
-  private final ClientCommunicationManager clientCommunication;
-  private final ReplicaCommunicationManager replicaCommunication;
+  private final ClientRequestManager clientCommunication;
+  private final ReplicaMessenger replicaCommunication;
   private final Set<String> executedNodeHashes;
 
   private int id;
@@ -55,7 +58,7 @@ public class HotStuffManager {
   private Node currentProposal;
   private Map<String, Node> blockTree;
 
-  private final HotStuffMessageInbox messageInbox;
+  private final HotStuffInbox messageInbox;
 
   private ThresholdSignatureProtocol thresholdProtocol;
   private final Logger logger;
@@ -77,16 +80,16 @@ public class HotStuffManager {
     this.highQC = thresholdProtocol.genesisQC();
     this.lockedQC = thresholdProtocol.genesisQC();
     this.prepareQC = thresholdProtocol.genesisQC();
-    this.currentProposal = ConsensusUtil.GENESIS_NODE;
+    this.currentProposal = HotStuffSupport.GENESIS_NODE;
     this.viewNumber = 0;
     this.blockTree = new HashMap<>();
-    this.clientCommunication = new ClientCommunicationManager(config.client().senderId(), clientPublicKey, logger);
-    this.replicaCommunication = new ReplicaCommunicationManager(id, config, logger);
+    this.clientCommunication = new ClientRequestManager(config.client().senderId(), clientPublicKey, logger);
+    this.replicaCommunication = new ReplicaMessenger(id, config, logger);
     this.executedNodeHashes = ConcurrentHashMap.newKeySet();
-    this.messageInbox = new HotStuffMessageInbox(id, thresholdProtocol);
+    this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
 
-    blockTree.put(ConsensusUtil.GENESIS_NODE.getNodeHash(), ConsensusUtil.GENESIS_NODE);
-    executedNodeHashes.add(ConsensusUtil.GENESIS_NODE.getNodeHash());
+    blockTree.put(HotStuffSupport.GENESIS_NODE.getNodeHash(), HotStuffSupport.GENESIS_NODE);
+    executedNodeHashes.add(HotStuffSupport.GENESIS_NODE.getNodeHash());
   }
 
   public void initNetwork(AuthenticatedLink nodeTransport, AuthenticatedLink clientTransport) {
@@ -106,7 +109,7 @@ public class HotStuffManager {
         onCommit();
         onDecide();
         onNewView();
-      } catch (ViewChangeTimeoutException e) {
+      } catch (ConsensusTimeoutException e) {
         onNewView();
       }
     }
@@ -142,7 +145,7 @@ public class HotStuffManager {
       long commandDeadlineNanos = TimeUtil.boundedMonotonicDeadlineAfterNow(viewDeadlineNanos, clientCommandWaitTimeoutMs);
       ClientRequest request = clientCommunication.awaitNextPending(commandDeadlineNanos);
       if (request == null) {
-        throw new ViewChangeTimeoutException("Timed out waiting for client command");
+        throw new ConsensusTimeoutException("Timed out waiting for client command");
       }
 
       NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
@@ -153,10 +156,8 @@ public class HotStuffManager {
           .setProposal(ProposalMessage.newBuilder().setProposedNode(currentProposal).setJustifyQc(selectedHighQC)).build();
       broadcast(proposal);
     } else {
-      Message prepareMsg = messageInbox.waitForMessageFromSender(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber), viewChangeTimeoutMs);
-      if (prepareMsg == null) {
-        return;
-      }
+      long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+      Message prepareMsg = messageInbox.waitForMessageFromSenderUntil(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber), phaseDeadlineNanos);
 
       QuorumCertificate justify = null;
       Node proposedNode = null;
@@ -168,12 +169,12 @@ public class HotStuffManager {
       boolean hasValidJustify = justify != null && verifyQC(justify);
       boolean hasValidProposedNode = proposedNode != null && hasValidNode(proposedNode);
       boolean hasAvailableProposedRequest = proposedNode != null && clientCommunication.observeProposedCommand(proposedNode.getCommand());
-      boolean extendsJustifiedNode = justify != null && proposedNode != null && ConsensusUtil.extendsNode(proposedNode, justify.getCertifiedNode());
+      boolean extendsJustifiedNode = justify != null && proposedNode != null && HotStuffSupport.extendsNode(proposedNode, justify.getCertifiedNode());
       boolean isSafeProposal = proposedNode != null && safeNode(proposedNode, justify);
       if (hasValidJustify && hasValidProposedNode && hasAvailableProposedRequest && extendsJustifiedNode && isSafeProposal) {
         observeQuorumCertificate(justify);
         observeNode(proposedNode);
-        ensureDeliveredBranchOnPrepare(proposedNode, prepareMsg.getReplicaSenderId());
+        ensureDeliveredBranch(proposedNode, prepareMsg.getReplicaSenderId(), phaseDeadlineNanos);
         currentProposal = proposedNode;
         sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, currentProposal));
       }
@@ -186,7 +187,8 @@ public class HotStuffManager {
       updateHighQC(prepareQC);
       broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC));
     } else {
-      Message msg = messageInbox.waitForQcMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber), viewChangeTimeoutMs, this::verifyQC);
+      long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+      Message msg = messageInbox.waitForQcMessageUntil(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber), phaseDeadlineNanos, this::verifyQC);
       prepareQC = msg.getPhaseCertificate().getJustifyQc();
       updateHighQC(prepareQC);
       sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC.getCertifiedNode()));
@@ -200,7 +202,9 @@ public class HotStuffManager {
       updateHighQC(preCommitQC);
       broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, preCommitQC));
     } else {
-      Message msg = messageInbox.waitForQcMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, viewNumber, getLeader(viewNumber), viewChangeTimeoutMs, this::verifyQC);
+      long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+      Message msg = messageInbox
+          .waitForQcMessageUntil(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, viewNumber, getLeader(viewNumber), phaseDeadlineNanos, this::verifyQC);
       lockedQC = msg.getPhaseCertificate().getJustifyQc();
       updateHighQC(lockedQC);
       sendToLeader(voteMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, lockedQC.getCertifiedNode()));
@@ -214,10 +218,11 @@ public class HotStuffManager {
       broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE, commitQC));
       executeCommittedBranch(currentProposal);
     } else {
-      Message msg = messageInbox.waitForQcMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, viewNumber, getLeader(viewNumber), viewChangeTimeoutMs, this::verifyQC);
+      long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
+      Message msg = messageInbox.waitForQcMessageUntil(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, viewNumber, getLeader(viewNumber), phaseDeadlineNanos, this::verifyQC);
       QuorumCertificate decideQC = msg.getPhaseCertificate().getJustifyQc();
       updateHighQC(decideQC);
-      ensureDeliveredBranchOnDecide(decideQC.getCertifiedNode(), msg.getReplicaSenderId());
+      ensureDeliveredBranch(decideQC.getCertifiedNode(), msg.getReplicaSenderId(), phaseDeadlineNanos);
       executeCommittedBranch(decideQC.getCertifiedNode());
     }
   }
@@ -236,10 +241,10 @@ public class HotStuffManager {
 
   private void executeCommand(Node node) {
     NodeCommand command = node.getCommand();
-    ClientCommunicationManager.ExecutionResult executionResult = clientCommunication.markExecuted(node);
+    ClientRequestManager.ExecutionResult executionResult = clientCommunication.markExecuted(node);
     String clientCommand = executionResult.commandValue();
 
-    if (!ConsensusUtil.isNoOp(command)) {
+    if (!HotStuffSupport.isNoOp(command)) {
       logger.debug("Executing command: {}", clientCommand);
     }
     observeNode(node);
@@ -288,7 +293,7 @@ public class HotStuffManager {
   }
 
   private Node createLeaf(String parentHash, NodeCommand command) {
-    byte[] hashPayload = ConsensusCryptoPayloadUtil.nodeHashPayload(parentHash, viewNumber, command);
+    byte[] hashPayload = HotStuffCryptoPayloads.nodeHashPayload(parentHash, viewNumber, command);
     String thisHash = CryptoUtil.sha256Hex(hashPayload);
     return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(thisHash).setViewNumber(viewNumber).setCommand(command).build();
   }
@@ -376,11 +381,11 @@ public class HotStuffManager {
     if (node == null) {
       return false;
     }
-    if (ConsensusUtil.isSameNode(node, ConsensusUtil.GENESIS_NODE)) {
+    if (HotStuffSupport.isSameNode(node, HotStuffSupport.GENESIS_NODE)) {
       return true;
     }
 
-    byte[] expectedHashPayload = ConsensusCryptoPayloadUtil.nodeHashPayload(node.getParentNodeHash(), node.getViewNumber(), node.getCommand());
+    byte[] expectedHashPayload = HotStuffCryptoPayloads.nodeHashPayload(node.getParentNodeHash(), node.getViewNumber(), node.getCommand());
     return node.getNodeHash().equals(CryptoUtil.sha256Hex(expectedHashPayload));
   }
 
@@ -388,12 +393,12 @@ public class HotStuffManager {
     if (node == null || ancestor == null) {
       return false;
     }
-    if (ConsensusUtil.isSameNode(node, ancestor)) {
+    if (HotStuffSupport.isSameNode(node, ancestor)) {
       return true;
     }
 
     Node current = node;
-    while (current != null && !ConsensusUtil.isSameNode(current, ancestor)) {
+    while (current != null && !HotStuffSupport.isSameNode(current, ancestor)) {
       String parentHash = current.getParentNodeHash();
       if (parentHash.equals(current.getNodeHash()) || parentHash.equals("0")) {
         return ancestor.getNodeHash().equals(parentHash);
@@ -401,7 +406,7 @@ public class HotStuffManager {
       current = blockTree.get(parentHash);
     }
 
-    return current != null && ConsensusUtil.isSameNode(current, ancestor);
+    return current != null && HotStuffSupport.isSameNode(current, ancestor);
   }
 
   private void executeCommittedBranch(Node decidedNode) {
@@ -421,22 +426,10 @@ public class HotStuffManager {
     }
   }
 
-  private void ensureDeliveredBranchOnPrepare(Node proposedNode, int sourceSenderId) {
-    ensureDeliveredBranch(proposedNode, sourceSenderId);
-  }
-
-  private void ensureDeliveredBranchOnDecide(Node decidedNode, int sourceSenderId) {
-    ensureDeliveredBranch(decidedNode, sourceSenderId);
-  }
-
-  private void ensureDeliveredBranch(Node targetNode, int sourceSenderId) {
-    long deadlineNanos = TimeUtil.boundedMonotonicDeadlineAfterNow(TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs), fetchNodeTimeoutMs);
-    ensureDeliveredBranchWithinDeadline(targetNode, sourceSenderId, deadlineNanos);
-  }
-
-  private void ensureDeliveredBranchWithinDeadline(Node node, int sourceSenderId, long deadlineNanos) {
+  private void ensureDeliveredBranch(Node node, int sourceSenderId, long phaseDeadlineNanos) {
+    long deadlineNanos = TimeUtil.boundedMonotonicDeadlineAfterNow(phaseDeadlineNanos, fetchNodeTimeoutMs);
     Node current = node;
-    while (current != null && !ConsensusUtil.isSameNode(current, ConsensusUtil.GENESIS_NODE)) {
+    while (current != null && !HotStuffSupport.isSameNode(current, HotStuffSupport.GENESIS_NODE)) {
       observeNode(current);
 
       String parentHash = current.getParentNodeHash();
@@ -447,22 +440,22 @@ public class HotStuffManager {
       Node parentNode = blockTree.get(parentHash);
       if (parentNode != null) {
         if (!isValidParentLink(current, parentNode)) {
-          throw new ViewChangeTimeoutException("Known ancestor link is invalid for node " + current.getNodeHash());
+          throw new ConsensusTimeoutException("Known ancestor link is invalid for node " + current.getNodeHash());
         }
         current = parentNode;
         continue;
       }
 
       if (sourceSenderId < 0) {
-        throw new ViewChangeTimeoutException("Missing ancestor node " + parentHash);
+        throw new ConsensusTimeoutException("Missing ancestor node " + parentHash);
       }
 
       Node fetchedNode = fetchNodeFromReplicas(sourceSenderId, parentHash, deadlineNanos);
       if (fetchedNode == null) {
-        throw new ViewChangeTimeoutException("Timed out fetching missing node " + parentHash);
+        throw new ConsensusTimeoutException("Timed out fetching missing node " + parentHash);
       }
       if (!isValidParentLink(current, fetchedNode)) {
-        throw new ViewChangeTimeoutException("Fetched ancestor link is invalid for node " + current.getNodeHash());
+        throw new ConsensusTimeoutException("Fetched ancestor link is invalid for node " + current.getNodeHash());
       }
       current = fetchedNode;
     }
@@ -498,7 +491,7 @@ public class HotStuffManager {
         }
         deferredMessages.addLast(msg);
       }
-    } catch (ViewChangeTimeoutException exception) {
+    } catch (ConsensusTimeoutException exception) {
       totalFetchFailures++;
       throw exception;
     } finally {
@@ -536,7 +529,7 @@ public class HotStuffManager {
     if (!childNode.getParentNodeHash().equals(parentNode.getNodeHash())) {
       return false;
     }
-    if (ConsensusUtil.isSameNode(parentNode, ConsensusUtil.GENESIS_NODE)) {
+    if (HotStuffSupport.isSameNode(parentNode, HotStuffSupport.GENESIS_NODE)) {
       return true;
     }
     return parentNode.getViewNumber() < childNode.getViewNumber();

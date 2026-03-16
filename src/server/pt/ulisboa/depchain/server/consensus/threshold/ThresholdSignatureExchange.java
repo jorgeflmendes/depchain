@@ -15,6 +15,9 @@ import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.protobuf.ByteString;
 
 import pt.ulisboa.depchain.proto.CommitmentMessage;
@@ -23,9 +26,10 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.ThresholdContextMessage;
 import pt.ulisboa.depchain.proto.ThresholdSignatureContext;
-import pt.ulisboa.depchain.server.consensus.ConsensusTransportUtil;
-import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
-import pt.ulisboa.depchain.server.consensus.ViewChangeTimeoutException;
+import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
+import pt.ulisboa.depchain.server.consensus.network.ReplicaTransportIds;
+import pt.ulisboa.depchain.server.consensus.network.SerializedPeerSender;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
@@ -33,6 +37,8 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class ThresholdSignatureExchange {
+  private static final Logger logger = LoggerFactory.getLogger(ThresholdSignatureExchange.class);
+
   record ThresholdContext(byte[] aggregatedCommitment, Set<Integer> participantIndexes) {
   }
 
@@ -43,6 +49,7 @@ final class ThresholdSignatureExchange {
   private final int localSenderId;
   private final long thresholdRoundTimeoutMs;
   private final Map<Integer, InetSocketAddress> consensusEndpointsBySenderId;
+  private final SerializedPeerSender peerSendScheduler;
 
   private AuthenticatedLink nodeTransport;
 
@@ -54,7 +61,8 @@ final class ThresholdSignatureExchange {
     this.config = config;
     this.localSenderId = localSenderId;
     this.thresholdRoundTimeoutMs = thresholdRoundTimeoutMs;
-    this.consensusEndpointsBySenderId = ConsensusTransportUtil.buildConsensusEndpointsBySenderId(config);
+    this.consensusEndpointsBySenderId = ReplicaTransportIds.buildConsensusEndpointsBySenderId(config);
+    this.peerSendScheduler = new SerializedPeerSender("threshold-send-" + localSenderId, logger);
   }
 
   void initTransport(AuthenticatedLink nodeTransport) {
@@ -62,7 +70,7 @@ final class ThresholdSignatureExchange {
   }
 
   boolean isAuxiliaryMessage(Message msg) {
-    return msg != null && ConsensusUtil.isAuxiliaryMessage(msg);
+    return msg != null && HotStuffSupport.isAuxiliaryMessage(msg);
   }
 
   void sendCommitment(int leaderId, int viewNumber, int senderId, ConsensusMessageType type, Node node, byte[] commitment) throws Exception {
@@ -73,7 +81,7 @@ final class ThresholdSignatureExchange {
 
     Message message = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(senderId).setMessageType(type)
         .setCommitment(CommitmentMessage.newBuilder().setVotedNode(node).setThresholdSignatureCommitment(ByteString.copyFrom(commitment))).build();
-    sendMessage(leaderId, message);
+    trySendMessage(leaderId, message);
   }
 
   ThresholdContext waitForContext(ConsensusMessageType type, int viewNumber, int leaderId, Node node, BlockingDeque<Message> messageQueue) {
@@ -97,8 +105,22 @@ final class ThresholdSignatureExchange {
     LinkedHashMap<Integer, RemoteCommitment> commitmentsBySender = new LinkedHashMap<>();
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
-      while (commitmentsBySender.size() < maxRemoteCount && !TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
+      while (commitmentsBySender.size() < minimumRemoteCount && !TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
         Message msg = pollMessageUntilDeadlineOrNull(messageQueue, deadlineNanos);
+        if (msg == null) {
+          break;
+        }
+
+        if (isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.COMMITMENT)) {
+          commitmentsBySender.putIfAbsent(msg.getReplicaSenderId(), new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
+              msg.getCommitment().getThresholdSignatureCommitment().toByteArray()));
+        } else {
+          deferredMessages.addLast(msg);
+        }
+      }
+
+      while (commitmentsBySender.size() < maxRemoteCount) {
+        Message msg = messageQueue.poll();
         if (msg == null) {
           break;
         }
@@ -115,7 +137,7 @@ final class ThresholdSignatureExchange {
     }
 
     if (commitmentsBySender.size() < minimumRemoteCount) {
-      throw new ViewChangeTimeoutException("Timed out waiting for threshold commitments");
+      throw new ConsensusTimeoutException("Timed out waiting for threshold commitments");
     }
 
     return new ArrayList<>(commitmentsBySender.values());
@@ -133,7 +155,7 @@ final class ThresholdSignatureExchange {
           .addAllParticipantReplicaIndexes(Arrays.stream(participantIndexes).boxed().toList()).build();
       Message message = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(senderId).setMessageType(type)
           .setThresholdContext(ThresholdContextMessage.newBuilder().setVotedNode(node).setThresholdSignatureContext(context)).build();
-      sendMessage(participantSenderId, message);
+      trySendMessage(participantSenderId, message);
     }
   }
 
@@ -165,6 +187,23 @@ final class ThresholdSignatureExchange {
 
     byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
     nodeTransport.send(thresholdConnectionId(senderId, msg.getViewNumber()), payload, requireConsensusEndpoint(senderId));
+  }
+
+  private void trySendMessage(int senderId, Message msg) {
+    byte[] payload;
+    try {
+      payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
+    } catch (RuntimeException exception) {
+      logger.debug("Ignoring invalid threshold message for replica {} at view {}", senderId, msg.getViewNumber(), exception);
+      return;
+    }
+
+    peerSendScheduler.schedule(senderId, "threshold transport send for " + msg.getMessageType() + " at view " + msg.getViewNumber(), () -> {
+      if (nodeTransport == null) {
+        return;
+      }
+      nodeTransport.send(thresholdConnectionId(senderId, msg.getViewNumber()), payload, requireConsensusEndpoint(senderId));
+    });
   }
 
   private List<Message> collectMatchingMessages(int expectedCount, BlockingDeque<Message> messageQueue, Predicate<Message> matcher, long deadlineNanos) {
@@ -217,25 +256,25 @@ final class ThresholdSignatureExchange {
       return messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
-      throw new ViewChangeTimeoutException("Interrupted while waiting for threshold messages");
+      throw new ConsensusTimeoutException("Interrupted while waiting for threshold messages");
     }
   }
 
   private Message takeMessageUntilDeadline(BlockingDeque<Message> messageQueue, long deadlineNanos) {
     if (TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
-      throw new ViewChangeTimeoutException("Timed out waiting for threshold messages");
+      throw new ConsensusTimeoutException("Timed out waiting for threshold messages");
     }
 
     try {
       long remainingMs = TimeUtil.monotonicRemainingMsUntil(deadlineNanos);
       Message msg = messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
       if (msg == null) {
-        throw new ViewChangeTimeoutException("Timed out waiting for threshold messages");
+        throw new ConsensusTimeoutException("Timed out waiting for threshold messages");
       }
       return msg;
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
-      throw new ViewChangeTimeoutException("Interrupted while waiting for threshold messages");
+      throw new ConsensusTimeoutException("Interrupted while waiting for threshold messages");
     }
   }
 
@@ -268,6 +307,6 @@ final class ThresholdSignatureExchange {
   }
 
   private long thresholdConnectionId(int remoteSenderId, int messageViewNumber) {
-    return ConsensusTransportUtil.connectionIdForView(messageViewNumber, localSenderId, remoteSenderId, ConsensusTransportUtil.THRESHOLD_MESSAGE_LANE);
+    return ReplicaTransportIds.connectionIdForView(messageViewNumber, localSenderId, remoteSenderId, ReplicaTransportIds.THRESHOLD_MESSAGE_LANE);
   }
 }

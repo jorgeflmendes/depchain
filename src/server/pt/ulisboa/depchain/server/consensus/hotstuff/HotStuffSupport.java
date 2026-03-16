@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.server.consensus;
+package pt.ulisboa.depchain.server.consensus.hotstuff;
 
 import pt.ulisboa.depchain.proto.GenesisCommand;
 import pt.ulisboa.depchain.proto.Message;
@@ -7,14 +7,14 @@ import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public final class ConsensusUtil {
+public final class HotStuffSupport {
   public static final String NO_OP_VALUE = "no-op";
   public static final String GENESIS_VALUE = "GENESIS";
   public static final NodeCommand NO_OP_COMMAND = NodeCommand.newBuilder().setNoOp(NoOpCommand.getDefaultInstance()).build();
   public static final NodeCommand GENESIS_COMMAND = NodeCommand.newBuilder().setGenesis(GenesisCommand.getDefaultInstance()).build();
   public static final Node GENESIS_NODE = Node.newBuilder().setParentNodeHash("0").setNodeHash("0").setViewNumber(0).setCommand(GENESIS_COMMAND).build();
 
-  private ConsensusUtil() {
+  private HotStuffSupport() {
   }
 
   public static boolean isNoOp(NodeCommand command) {
