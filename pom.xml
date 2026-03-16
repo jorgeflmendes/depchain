@@ -159,7 +159,7 @@
         <executions>
           <execution>
             <id>sort-imports</id>
-            <phase>process-sources</phase>
+            <phase>validate</phase>
             <goals>
               <goal>sort</goal>
             </goals>
@@ -189,7 +189,7 @@
         <executions>
           <execution>
             <id>format-java</id>
-            <phase>process-sources</phase>
+            <phase>validate</phase>
             <goals>
               <goal>format</goal>
             </goals>
