@@ -44,10 +44,9 @@ class MaliciousLeaderSecTest extends IntegrationTestSupport {
       try (ByzantineReplicaHandle byzantineLeader = new ByzantineReplicaHandle(configPath, LEADER_REPLICA_ID, attackMode)) {
         waitForServersStartup(servers, Duration.ofSeconds(15));
 
-        assertRequestSucceeds(configPath, FOLLOWER_REPLICA_ID, "malicious-leader-forwarded-" + attackMode.name().toLowerCase(), Duration.ofSeconds(30), servers, scenarioLabel
+        assertRequestSucceeds(configPath, "malicious-leader-broadcast-" + attackMode.name().toLowerCase(), Duration.ofSeconds(30), servers, scenarioLabel
             + " should still allow progress after the honest replicas move to the next view");
-        assertReplayIsIgnored(configPath, FOLLOWER_REPLICA_ID, "malicious-leader-replay-" + attackMode.name().toLowerCase(), servers, scenarioLabel
-            + " should still preserve replay protection");
+        assertReplayIsIgnored(configPath, "malicious-leader-replay-" + attackMode.name().toLowerCase(), servers, scenarioLabel + " should still preserve replay protection");
         org.junit.jupiter.api.Assertions.assertTrue(byzantineLeader.attackObserved(), scenarioLabel + " was never exercised");
       }
     } finally {

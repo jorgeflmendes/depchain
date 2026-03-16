@@ -5,8 +5,14 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.slf4j.Logger;
@@ -18,7 +24,6 @@ import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
-import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -32,26 +37,26 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 public final class DpchClient {
   private static final Logger logger = LoggerFactory.getLogger(DpchClient.class);
 
-  private final ConfigParser.ReplicaSection targetReplicaConfig;
-  private final InetSocketAddress targetAddress;
+  private final List<ReplicaTarget> replicaTargets;
   private final long localSenderId;
   private final PrivateKey localStaticSKey;
   private final Map<Long, PublicKey> staticPKeys;
   private final long requestTimeoutMs;
+  private final int requiredReplyCount;
 
-  public DpchClient(String targetReplicaId, String configPath) throws Exception {
+  public DpchClient(String configPath) throws Exception {
     ConfigParser config = ConfigParser.load(Path.of(configPath));
-    this.targetReplicaConfig = config.requireReplicaById(targetReplicaId);
-    this.targetAddress = new InetSocketAddress(targetReplicaConfig.host(), targetReplicaConfig.clientPort());
+    this.replicaTargets = config.replicas().stream()
+        .map(replica -> new ReplicaTarget(replica.id(), replica.senderId(), new InetSocketAddress(replica.host(), replica.clientPort()))).toList();
     this.localSenderId = config.client().senderId();
     this.localStaticSKey = PrivateKeyLoader.loadClientPrivateKey(config);
     this.staticPKeys = PublicKeyLoader.loadReplicaPublicKeys(config);
     this.requestTimeoutMs = config.client().requestTimeoutMs();
+    this.requiredReplyCount = config.system().f() + 1;
   }
 
   public void run() {
-    try (AuthenticatedLink transport = AuthenticatedLink.unbound(localSenderId, localStaticSKey, staticPKeys);
-        Scanner scanner = new Scanner(System.in)) {
+    try (AuthenticatedLink transport = AuthenticatedLink.unbound(localSenderId, localStaticSKey, staticPKeys); Scanner scanner = new Scanner(System.in)) {
       runInputLoop(scanner, transport);
     } catch (Exception exception) {
       throw new IllegalStateException("Failed to initialize client transport", exception);
@@ -77,47 +82,75 @@ public final class DpchClient {
         }
         logger.info("response = {}", response);
       } catch (Exception exception) {
-        logger.error("Error appending value through the server {}", targetReplicaConfig.id(), exception);
+        logger.error("Error broadcasting append request", exception);
       }
     }
   }
 
   private String sendAppendRequest(AuthenticatedLink transport, String value) throws Exception {
-    return runRequestLoop(transport, value, targetAddress);
+    ClientRequest request = createClientRequest(value);
+    byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
+    return runBroadcastRequestLoop(transport, payload);
   }
 
-  private String runRequestLoop(AuthenticatedLink transport, String value, InetSocketAddress targetAddress) throws IOException, InterruptedException {
-    long connectionId = ThreadLocalRandom.current().nextLong();
-    try {
-      ClientRequest request = createClientRequest(value);
-      byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
-      transport.send(connectionId, payload, targetAddress);
-    } catch (Exception exception) {
-      throw new IOException("Could not sign client request", exception);
-    }
-
-    try {
-      while (true) {
-        InboundPacket inbound = receiveNextInbound(transport);
-        if (inbound == null) {
-          return null;
-        }
-
-        String reply = handleReply(inbound, connectionId);
-        if (reply != null) {
-          return reply;
-        }
-      }
-    } finally {
+  private String runBroadcastRequestLoop(AuthenticatedLink transport, byte[] payload) throws IOException, InterruptedException {
+    Map<Long, InetSocketAddress> endpointsByConnectionId = new LinkedHashMap<>();
+    for (ReplicaTarget replicaTarget : replicaTargets) {
+      long connectionId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
       try {
-        transport.closeConnection(connectionId, targetAddress);
+        transport.send(connectionId, payload, replicaTarget.endpoint());
+        endpointsByConnectionId.put(connectionId, replicaTarget.endpoint());
       } catch (RuntimeException exception) {
-        logger.debug("Ignoring client connection close failure", exception);
+        logger.debug("Ignoring failed client broadcast init to {}", replicaTarget.endpoint(), exception);
+      }
+    }
+
+    if (endpointsByConnectionId.isEmpty()) {
+      return null;
+    }
+
+    try {
+      long deadlineNanos = requestTimeoutMs == 0L ? Long.MAX_VALUE : TimeUtil.monotonicDeadlineAfterNow(requestTimeoutMs);
+      return awaitCoherentReplies(transport, endpointsByConnectionId, deadlineNanos);
+    } finally {
+      closeClientConnections(transport, endpointsByConnectionId);
+    }
+  }
+
+  private String awaitCoherentReplies(AuthenticatedLink transport, Map<Long, InetSocketAddress> endpointsByConnectionId, long deadlineNanos) {
+    Set<Long> expectedReplicaSenderIds = staticPKeys.keySet();
+    Map<Long, String> responseKeyByReplicaSender = new HashMap<>();
+    Map<String, ReplyAccumulator> coherentReplies = new HashMap<>();
+
+    while (true) {
+      InboundPacket inbound = receiveNextInbound(transport, deadlineNanos);
+      if (inbound == null) {
+        return null;
+      }
+
+      long connectionId = inbound.packet().getConnectionId();
+      if (!endpointsByConnectionId.containsKey(connectionId)) {
+        continue;
+      }
+
+      Long replicaSenderId = inbound.authenticatedSenderId();
+      if (replicaSenderId == null || !expectedReplicaSenderIds.contains(replicaSenderId) || responseKeyByReplicaSender.containsKey(replicaSenderId)) {
+        continue;
+      }
+
+      ClientResponse response = decodeResponse(inbound);
+      String responseKey = Base64.getEncoder().encodeToString(ProtoValidationUtil.requireValid(response, "ClientResponse").toByteArray());
+      responseKeyByReplicaSender.put(replicaSenderId, responseKey);
+
+      ReplyAccumulator accumulator = coherentReplies.computeIfAbsent(responseKey, ignored -> new ReplyAccumulator(response));
+      accumulator.addReplicaSender(replicaSenderId);
+      if (accumulator.count() >= requiredReplyCount) {
+        return accumulator.response().getAppend().getMessage();
       }
     }
   }
 
-  private InboundPacket receiveNextInbound(AuthenticatedLink transport) {
+  private InboundPacket receiveNextInbound(AuthenticatedLink transport, long deadlineNanos) {
     try {
       if (requestTimeoutMs == 0L) {
         while (true) {
@@ -128,7 +161,6 @@ public final class DpchClient {
         }
       }
 
-      long deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(requestTimeoutMs);
       while (!TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
         long remainingMs = TimeUtil.monotonicRemainingMsUntil(deadlineNanos);
         InboundPacket inbound = transport.receive(remainingMs);
@@ -147,24 +179,54 @@ public final class DpchClient {
   private ClientRequest createClientRequest(String value) throws Exception {
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
     byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(localSenderId, requestId, value), localStaticSKey);
-    return ProtoValidationUtil.requireValid(ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder().setRequestKey(
-        ClientRequestKey.newBuilder().setClientSenderId(localSenderId).setRequestId(requestId)).setValue(value)
-        .setSignature(ByteString.copyFrom(signature))).build(), "ClientRequest");
+    return ProtoValidationUtil.requireValid(ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
+        .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(localSenderId).setRequestId(requestId)).setValue(value).setSignature(ByteString.copyFrom(signature)))
+        .build(), "ClientRequest");
   }
 
-  private String handleReply(InboundPacket inbound, long connectionId) {
-    if (inbound.packet().getConnectionId() != connectionId) {
-      return null;
-    }
-
+  private ClientResponse decodeResponse(InboundPacket inbound) {
     try {
       ClientResponse response = ProtoValidationUtil.requireValid(ClientResponse.parseFrom(inbound.packet().getPayload()), "ClientResponse");
       if (!response.hasAppend()) {
         throw new IllegalArgumentException("Unsupported client response type: " + response.getBodyCase());
       }
-      return response.getAppend().getMessage();
+      return response;
     } catch (com.google.protobuf.InvalidProtocolBufferException exception) {
       throw new IllegalArgumentException("Invalid protobuf client response payload", exception);
+    }
+  }
+
+  private static void closeClientConnections(AuthenticatedLink transport, Map<Long, InetSocketAddress> endpointsByConnectionId) {
+    for (Map.Entry<Long, InetSocketAddress> entry : endpointsByConnectionId.entrySet()) {
+      try {
+        transport.closeConnection(entry.getKey(), entry.getValue());
+      } catch (RuntimeException exception) {
+        logger.debug("Ignoring client connection close failure", exception);
+      }
+    }
+  }
+
+  private record ReplicaTarget(String replicaId, long senderId, InetSocketAddress endpoint) {
+  }
+
+  private static final class ReplyAccumulator {
+    private final ClientResponse response;
+    private final List<Long> replicaSenderIds = new ArrayList<>();
+
+    private ReplyAccumulator(ClientResponse response) {
+      this.response = response;
+    }
+
+    private void addReplicaSender(long replicaSenderId) {
+      replicaSenderIds.add(replicaSenderId);
+    }
+
+    private int count() {
+      return replicaSenderIds.size();
+    }
+
+    private ClientResponse response() {
+      return response;
     }
   }
 }

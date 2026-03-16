@@ -64,4 +64,3 @@ public final class HandshakedPerfectLink implements BlockingLink<InboundPacket> 
     }
   }
 }
-

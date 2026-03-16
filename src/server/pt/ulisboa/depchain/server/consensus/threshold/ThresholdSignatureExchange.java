@@ -3,10 +3,8 @@ package pt.ulisboa.depchain.server.consensus.threshold;
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -82,8 +80,8 @@ final class ThresholdSignatureExchange {
     ValidationUtils.requireNonNegativeInt(leaderId, "leaderId");
     ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("messageQueue", messageQueue));
 
-    Message contextMessage = waitForMatchingMessage(messageQueue,
-        msg -> msg.getReplicaSenderId() == leaderId && isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.THRESHOLD_CONTEXT));
+    Message contextMessage = waitForMatchingMessage(messageQueue, msg -> msg.getReplicaSenderId() == leaderId
+        && isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.THRESHOLD_CONTEXT));
     ThresholdSignatureContext context = contextMessage.getThresholdContext().getThresholdSignatureContext();
     Set<Integer> participantIndexes = new LinkedHashSet<>(context.getParticipantReplicaIndexesList());
     return new ThresholdContext(context.getAggregatedCommitment().toByteArray(), participantIndexes);
@@ -105,9 +103,8 @@ final class ThresholdSignatureExchange {
         }
 
         if (isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.COMMITMENT)) {
-          commitmentsBySender.putIfAbsent(msg.getReplicaSenderId(),
-              new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
-                  msg.getCommitment().getThresholdSignatureCommitment().toByteArray()));
+          commitmentsBySender.putIfAbsent(msg.getReplicaSenderId(), new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
+              msg.getCommitment().getThresholdSignatureCommitment().toByteArray()));
         } else {
           deferredMessages.addLast(msg);
         }
@@ -123,16 +120,12 @@ final class ThresholdSignatureExchange {
     return new ArrayList<>(commitmentsBySender.values());
   }
 
-  void sendContextMessages(Set<Integer> participantSenders, int viewNumber, int senderId, ConsensusMessageType type, Node node, byte[] aggregatedCommitment,
-      int[] participantIndexes) throws Exception {
+  void sendContextMessages(Set<Integer> participantSenders, int viewNumber, int senderId, ConsensusMessageType type, Node node, byte[] aggregatedCommitment, int[] participantIndexes)
+      throws Exception {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
     ValidationUtils.requireNonNegativeInt(senderId, "senderId");
-    ValidationUtils.requireAllNonNull(
-        named("participantSenders", participantSenders),
-        named("type", type),
-        named("node", node),
-        named("aggregatedCommitment", aggregatedCommitment),
-        named("participantIndexes", participantIndexes));
+    ValidationUtils
+        .requireAllNonNull(named("participantSenders", participantSenders), named("type", type), named("node", node), named("aggregatedCommitment", aggregatedCommitment), named("participantIndexes", participantIndexes));
 
     for (Integer participantSenderId : participantSenders) {
       ThresholdSignatureContext context = ThresholdSignatureContext.newBuilder().setAggregatedCommitment(ByteString.copyFrom(aggregatedCommitment))
@@ -143,22 +136,19 @@ final class ThresholdSignatureExchange {
     }
   }
 
-  List<byte[]> collectSignatureShares(ConsensusMessageType type, int viewNumber, Node node, byte[] aggregatedCommitment, Set<Integer> expectedSenders,
-      BlockingDeque<Message> messageQueue, long deadlineNanos) {
+  List<byte[]> collectSignatureShares(ConsensusMessageType type, int viewNumber, Node node, byte[] aggregatedCommitment, Set<Integer> expectedSenders, BlockingDeque<Message> messageQueue, long deadlineNanos) {
     ValidationUtils.requireNonNegativeInt(viewNumber, "viewNumber");
-    ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("aggregatedCommitment", aggregatedCommitment),
-        named("expectedSenders", expectedSenders), named("messageQueue", messageQueue));
+    ValidationUtils
+        .requireAllNonNull(named("type", type), named("node", node), named("aggregatedCommitment", aggregatedCommitment), named("expectedSenders", expectedSenders), named("messageQueue", messageQueue));
 
     if (expectedSenders.isEmpty()) {
       return List.of();
     }
 
-    List<Message> signatureMessages = collectMatchingMessages(expectedSenders.size(), messageQueue,
-        msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.VOTE)
-            && expectedSenders.contains(msg.getReplicaSenderId())
+    List<Message> signatureMessages = collectMatchingMessages(expectedSenders
+        .size(), messageQueue, msg -> isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.VOTE) && expectedSenders.contains(msg.getReplicaSenderId())
             && msg.getVote().getAggregatedCommitment().toByteArray().length > 0
-            && java.util.Arrays.equals(msg.getVote().getAggregatedCommitment().toByteArray(), aggregatedCommitment),
-        deadlineNanos);
+            && java.util.Arrays.equals(msg.getVote().getAggregatedCommitment().toByteArray(), aggregatedCommitment), deadlineNanos);
 
     List<byte[]> signatures = new ArrayList<>(signatureMessages.size());
     for (Message signatureMessage : signatureMessages) {

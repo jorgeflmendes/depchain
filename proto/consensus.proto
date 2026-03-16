@@ -16,14 +16,12 @@ enum ConsensusMessageType {
   CONSENSUS_MESSAGE_TYPE_PRE_COMMIT = 3;
   CONSENSUS_MESSAGE_TYPE_COMMIT = 4;
   CONSENSUS_MESSAGE_TYPE_DECIDE = 5;
-  CONSENSUS_MESSAGE_TYPE_FORWARDED_REQUEST = 6;
-  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_REQUEST = 7;
-  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE = 8;
+  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_REQUEST = 6;
+  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE = 7;
 }
 
 message AppendNodeCommand {
-  ClientRequestKey client_request_key = 1 [(buf.validate.field).required = true];
-  optional string value = 2 [(buf.validate.field).required = true];
+  depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
 }
 
 message NoOpCommand {}
@@ -148,10 +146,6 @@ message ThresholdContextMessage {
   ThresholdSignatureContext threshold_signature_context = 2 [(buf.validate.field).required = true];
 }
 
-message ForwardedRequestMessage {
-  depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
-}
-
 message FetchNodeRequestMessage {
   string node_hash = 1 [(buf.validate.field).string.min_len = 1];
 }
@@ -165,11 +159,6 @@ message Message {
     id: "replica.message.type.specified"
     message: "replica message type must be specified"
     expression: "this.message_type != 0"
-  };
-  option (buf.validate.message).cel = {
-    id: "replica.message.body.forwarded-request"
-    message: "FORWARDED_REQUEST messages must use the forwarded_request body"
-    expression: "has(this.forwarded_request) ? this.message_type == 6 : true"
   };
   option (buf.validate.message).cel = {
     id: "replica.message.body.proposal"
@@ -199,12 +188,12 @@ message Message {
   option (buf.validate.message).cel = {
     id: "replica.message.body.fetch-node-request"
     message: "fetch node request bodies must use FETCH_NODE_REQUEST"
-    expression: "has(this.fetch_node_request) ? this.message_type == 7 : true"
+    expression: "has(this.fetch_node_request) ? this.message_type == 6 : true"
   };
   option (buf.validate.message).cel = {
     id: "replica.message.body.fetch-node-response"
     message: "fetch node response bodies must use FETCH_NODE_RESPONSE"
-    expression: "has(this.fetch_node_response) ? this.message_type == 8 : true"
+    expression: "has(this.fetch_node_response) ? this.message_type == 7 : true"
   };
 
   optional int32 view_number = 1 [
@@ -216,13 +205,12 @@ message Message {
 
   oneof body {
     option (buf.validate.oneof).required = true;
-    ForwardedRequestMessage forwarded_request = 4;
-    ProposalMessage proposal = 5;
-    PhaseCertificateMessage phase_certificate = 6;
-    VoteMessage vote = 7;
-    CommitmentMessage commitment = 8;
-    ThresholdContextMessage threshold_context = 9;
-    FetchNodeRequestMessage fetch_node_request = 10;
-    FetchNodeResponseMessage fetch_node_response = 11;
+    ProposalMessage proposal = 4;
+    PhaseCertificateMessage phase_certificate = 5;
+    VoteMessage vote = 6;
+    CommitmentMessage commitment = 7;
+    ThresholdContextMessage threshold_context = 8;
+    FetchNodeRequestMessage fetch_node_request = 9;
+    FetchNodeResponseMessage fetch_node_response = 10;
   }
 }

@@ -15,21 +15,15 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class AuthenticatedConnectionState {
   enum SendAction {
-    SEND,
-    START_HANDSHAKE,
-    WAIT
+    SEND, START_HANDSHAKE, WAIT
   }
 
   enum ReceiveMode {
-    DATA,
-    HANDSHAKE,
-    INIT
+    DATA, HANDSHAKE, INIT
   }
 
   enum HandshakeAction {
-    USE_REPLY,
-    RESTART,
-    IGNORE
+    USE_REPLY, RESTART, IGNORE
   }
 
   record SendPlan(SendAction action) {
@@ -46,11 +40,7 @@ final class AuthenticatedConnectionState {
   }
 
   enum Phase {
-    NEW,
-    INITIATED,
-    ESTABLISHED,
-    CLOSING,
-    CLOSED
+    NEW, INITIATED, ESTABLISHED, CLOSING, CLOSED
   }
 
   private long sentNonce;
@@ -250,4 +240,3 @@ final class AuthenticatedConnectionState {
     }
   }
 }
-

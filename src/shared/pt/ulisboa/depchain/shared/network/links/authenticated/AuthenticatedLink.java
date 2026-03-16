@@ -82,4 +82,3 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
     }
   }
 }
-

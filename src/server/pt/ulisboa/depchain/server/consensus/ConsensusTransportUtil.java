@@ -39,9 +39,6 @@ public final class ConsensusTransportUtil {
     long normalizedLane = lane & 0xFFL;
     long normalizedLocalSenderId = localSenderId & 0xFFFL;
     long normalizedRemoteSenderId = remoteSenderId & 0xFFFL;
-    return (normalizedView << 32)
-        | (normalizedLane << 24)
-        | (normalizedLocalSenderId << 12)
-        | normalizedRemoteSenderId;
+    return (normalizedView << 32) | (normalizedLane << 24) | (normalizedLocalSenderId << 12) | normalizedRemoteSenderId;
   }
 }

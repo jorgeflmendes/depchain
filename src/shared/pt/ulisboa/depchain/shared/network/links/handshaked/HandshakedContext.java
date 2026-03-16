@@ -20,4 +20,3 @@ final class HandshakedContext extends AsyncLinkContext<InboundPacket> {
     connectionStateRegistry.signalAllStates();
   }
 }
-

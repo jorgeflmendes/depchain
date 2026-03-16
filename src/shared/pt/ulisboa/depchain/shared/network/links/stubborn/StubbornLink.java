@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
-import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
+import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
@@ -85,4 +85,3 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
     LinkThreadUtil.awaitStop(retryLoopThread, "stubborn-link");
   }
 }
-

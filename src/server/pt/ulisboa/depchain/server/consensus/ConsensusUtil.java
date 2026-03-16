@@ -2,9 +2,9 @@ package pt.ulisboa.depchain.server.consensus;
 
 import pt.ulisboa.depchain.proto.GenesisCommand;
 import pt.ulisboa.depchain.proto.Message;
+import pt.ulisboa.depchain.proto.NoOpCommand;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
-import pt.ulisboa.depchain.proto.NoOpCommand;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class ConsensusUtil {
@@ -25,7 +25,7 @@ public final class ConsensusUtil {
   public static String commandValue(NodeCommand command) {
     ValidationUtils.requireNonNull(command, "command");
     if (command.hasAppend()) {
-      return command.getAppend().getValue();
+      return command.getAppend().getClientRequest().getAppend().getValue();
     }
     if (command.hasNoOp()) {
       return NO_OP_VALUE;

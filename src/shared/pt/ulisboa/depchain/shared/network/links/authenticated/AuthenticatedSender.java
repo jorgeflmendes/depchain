@@ -81,10 +81,9 @@ final class AuthenticatedSender {
     }
   }
 
-  void sendQueuedPayloads(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState,
-      java.util.List<byte[]> queuedPayloads, InetSocketAddress remoteEndpoint) {
-    ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("connectionState", connectionState),
-        named("queuedPayloads", queuedPayloads), named("remoteEndpoint", remoteEndpoint));
+  void sendQueuedPayloads(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, java.util.List<byte[]> queuedPayloads, InetSocketAddress remoteEndpoint) {
+    ValidationUtils
+        .requireAllNonNull(named("connectionKey", connectionKey), named("connectionState", connectionState), named("queuedPayloads", queuedPayloads), named("remoteEndpoint", remoteEndpoint));
 
     for (byte[] queuedPayload : queuedPayloads) {
       sendData(connectionKey, connectionState, queuedPayload, remoteEndpoint);
@@ -104,4 +103,3 @@ final class AuthenticatedSender {
     }
   }
 }
-

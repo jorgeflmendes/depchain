@@ -3,8 +3,8 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
-import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 
 final class ReceiverState {
   private int nextExpectedSeq;

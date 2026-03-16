@@ -1,14 +1,12 @@
 package pt.ulisboa.depchain.server.consensus;
 
 import java.security.PublicKey;
-import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 
@@ -46,38 +44,31 @@ final class ClientCommunicationManager {
     this.clientTransport = clientTransport;
   }
 
-  void receiveClientRequest(ClientRequest request, ConnectionKey key, boolean isLeader, Consumer<ClientRequest> forwardAction) {
-    ClientRequest acceptedRequest = registerClientRequest(request, key);
-    if (acceptedRequest != null) {
-      submitRequest(acceptedRequest, isLeader, forwardAction);
-    }
-  }
-
-  void receiveForwardedRequest(ClientRequest request, boolean isLeader) {
-    ClientRequest acceptedRequest = registerForwardedRequest(request);
+  void onClientRequest(ClientRequest request, ConnectionKey key, boolean isLeader) {
+    ClientRequest acceptedRequest = registerKnownRequest(request, key);
     if (acceptedRequest != null && isLeader) {
       enqueueIfNotQueued(acceptedRequest);
     }
+  }
+
+  boolean observeProposedCommand(NodeCommand command) {
+    if (command == null || !command.hasAppend()) {
+      return true;
+    }
+
+    ClientRequest request = command.getAppend().getClientRequest();
+    return registerKnownRequest(request, null) != null;
   }
 
   int pendingCount() {
     return pendingRequests.size();
   }
 
-  int resubmitPendingRequests(boolean isLeader, Consumer<ClientRequest> forwardAction) {
-    if (pendingRequests.isEmpty()) {
+  int enqueuePendingKnownRequestsIfLeader(boolean isLeader) {
+    if (!isLeader || pendingRequests.isEmpty()) {
       return 0;
     }
-    if (isLeader) {
-      return enqueuePendingRequests();
-    }
-
-    int forwardedRequests = 0;
-    for (ClientRequest request : pendingRequests.values()) {
-      forwardAction.accept(request);
-      forwardedRequests++;
-    }
-    return forwardedRequests;
+    return enqueuePendingRequests();
   }
 
   ClientRequest awaitNextPending(long deadlineNanos) {
@@ -93,15 +84,6 @@ final class ClientCommunicationManager {
         return nextRequest;
       }
     }
-  }
-
-  private void submitRequest(ClientRequest request, boolean isLeader, Consumer<ClientRequest> forwardAction) {
-    if (isLeader) {
-      enqueueIfNotQueued(request);
-      return;
-    }
-
-    forwardAction.accept(request);
   }
 
   private boolean enqueueIfNotQueued(ClientRequest request) {
@@ -120,7 +102,7 @@ final class ClientCommunicationManager {
   ExecutionResult markExecuted(Node node) {
     NodeCommand command = node.getCommand();
     String commandValue = ConsensusUtil.commandValue(command);
-    ClientRequestKey requestKey = command.hasAppend() ? command.getAppend().getClientRequestKey() : null;
+    ClientRequestKey requestKey = requestKeyOrNull(command);
     if (requestKey == null) {
       return new ExecutionResult(commandValue, null);
     }
@@ -144,7 +126,7 @@ final class ClientCommunicationManager {
     }
   }
 
-  private ClientRequest registerClientRequest(ClientRequest request, ConnectionKey key) {
+  private ClientRequest registerKnownRequest(ClientRequest request, ConnectionKey key) {
     if (!hasValidClientRequest(request)) {
       return null;
     }
@@ -154,21 +136,9 @@ final class ClientCommunicationManager {
       return null;
     }
 
-    clientContexts.putIfAbsent(requestKey, key);
-    pendingRequests.putIfAbsent(requestKey, request);
-    return request;
-  }
-
-  private ClientRequest registerForwardedRequest(ClientRequest request) {
-    if (!hasValidClientRequest(request)) {
-      return null;
+    if (key != null) {
+      clientContexts.putIfAbsent(requestKey, key);
     }
-
-    ClientRequestKey requestKey = request.getAppend().getRequestKey();
-    if (completedRequestIds.contains(requestKey)) {
-      return null;
-    }
-
     pendingRequests.putIfAbsent(requestKey, request);
     return request;
   }
@@ -215,6 +185,13 @@ final class ClientCommunicationManager {
     } catch (Exception exception) {
       return false;
     }
+  }
+
+  private static ClientRequestKey requestKeyOrNull(NodeCommand command) {
+    if (command == null || !command.hasAppend() || !command.getAppend().hasClientRequest() || !command.getAppend().getClientRequest().hasAppend()) {
+      return null;
+    }
+    return command.getAppend().getClientRequest().getAppend().getRequestKey();
   }
 
   record ExecutionResult(String commandValue, ConnectionKey replyTarget) {

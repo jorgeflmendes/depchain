@@ -12,6 +12,7 @@ public final class ClientRequestPayloadUtil {
     ValidationUtils.requireNonNegativeLong(requestId, "requestId");
     ValidationUtils.requireNonNull(command, "command");
 
-    return AppendRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setValue(command).build().toByteArray();
+    return AppendRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setValue(command).build()
+        .toByteArray();
   }
 }

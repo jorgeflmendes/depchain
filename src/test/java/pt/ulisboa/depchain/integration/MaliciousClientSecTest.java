@@ -40,7 +40,7 @@ class MaliciousClientSecTest extends IntegrationTestSupport {
 
       assertNull(sendPayloadToConsensusPort(configPath, LEADER_REPLICA_ID, config.client().senderId(), clientPrivateKey, replicaPublicKeys, payload, Duration
           .ofSeconds(3)), "A client must not be able to authenticate on the consensus port");
-      assertRequestSucceeds(configPath, FOLLOWER_REPLICA_ID, "post-consensus-port-reject", Duration
+      assertRequestSucceeds(configPath, "post-consensus-port-reject", Duration
           .ofSeconds(45), servers, "Cluster should remain responsive after rejecting client traffic on the consensus port");
     } finally {
       stopProcesses(servers);
@@ -64,8 +64,7 @@ class MaliciousClientSecTest extends IntegrationTestSupport {
 
       assertNull(sendPayloadToClientPort(configPath, LEADER_REPLICA_ID, config.client().senderId(), clientPrivateKey, staticPublicKeys, forgedSenderRequest.toByteArray(), Duration
           .ofSeconds(3)), "Requests with a mismatched client sender id must be rejected");
-      assertRequestSucceeds(configPath, FOLLOWER_REPLICA_ID, "post-wrong-sender", Duration
-          .ofSeconds(45), servers, "Cluster should remain responsive after rejecting a forged client sender id");
+      assertRequestSucceeds(configPath, "post-wrong-sender", Duration.ofSeconds(45), servers, "Cluster should remain responsive after rejecting a forged client sender id");
     } finally {
       stopProcesses(servers);
     }
@@ -87,8 +86,7 @@ class MaliciousClientSecTest extends IntegrationTestSupport {
 
       assertNull(sendPayloadToClientPort(configPath, LEADER_REPLICA_ID, config.client().senderId(), clientPrivateKey, staticPublicKeys, new byte[]{1, 2, 3, 4}, Duration
           .ofSeconds(3)), "Malformed protobuf client payloads must be rejected");
-      assertRequestSucceeds(configPath, FOLLOWER_REPLICA_ID, "post-malformed-payload", Duration
-          .ofSeconds(45), servers, "Cluster should remain responsive after malformed client payloads");
+      assertRequestSucceeds(configPath, "post-malformed-payload", Duration.ofSeconds(45), servers, "Cluster should remain responsive after malformed client payloads");
     } finally {
       stopProcesses(servers);
     }
@@ -112,8 +110,7 @@ class MaliciousClientSecTest extends IntegrationTestSupport {
 
       assertNull(sendPayloadToClientPort(configPath, LEADER_REPLICA_ID, config.client().senderId(), clientPrivateKey, staticPublicKeys, invalidRequest.toByteArray(), Duration
           .ofSeconds(3)), "Proto-valid but protovalidate-invalid client requests must be rejected");
-      assertRequestSucceeds(configPath, FOLLOWER_REPLICA_ID, "post-invalid-client-proto", Duration
-          .ofSeconds(45), servers, "Cluster should remain responsive after rejecting invalid client protos");
+      assertRequestSucceeds(configPath, "post-invalid-client-proto", Duration.ofSeconds(45), servers, "Cluster should remain responsive after rejecting invalid client protos");
     } finally {
       stopProcesses(servers);
     }

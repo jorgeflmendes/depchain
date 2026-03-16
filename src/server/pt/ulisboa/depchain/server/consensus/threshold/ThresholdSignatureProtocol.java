@@ -20,10 +20,10 @@ import pt.ulisboa.depchain.server.consensus.ViewChangeTimeoutException;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdNonceShare;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdPartialSignContext;
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class ThresholdSignatureProtocol {
@@ -39,10 +39,8 @@ public final class ThresholdSignatureProtocol {
   private final ThresholdSignatureExchange messageExchange;
 
   public ThresholdSignatureProtocol(int localSenderId, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey) {
-    ValidationUtils.requireAllNonNull(
-        ValidationUtils.named("config", config),
-        ValidationUtils.named("localThresholdShare", localThresholdShare),
-        ValidationUtils.named("publicThresholdKey", publicThresholdKey));
+    ValidationUtils.requireAllNonNull(ValidationUtils.named("config", config), ValidationUtils.named("localThresholdShare", localThresholdShare), ValidationUtils
+        .named("publicThresholdKey", publicThresholdKey));
 
     this.localSenderId = localSenderId;
     this.totalReplicas = config.system().n();
@@ -77,10 +75,8 @@ public final class ThresholdSignatureProtocol {
       ThresholdPartialSignContext signContext = new ThresholdPartialSignContext(localReplicaIndex, totalReplicas, threshold, context.participantIndexes(), publicThresholdKey,
           context.aggregatedCommitment());
       byte[] thresholdSignatureShare = ThresholdCryptoUtil.thresholdPartialSign(payload, localThresholdShare, nonceShare, signContext);
-      return Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(localSenderId).setMessageType(type)
-          .setVote(VoteMessage.newBuilder().setVotedNode(node).setThresholdSignatureShare(ByteString.copyFrom(thresholdSignatureShare))
-              .setAggregatedCommitment(ByteString.copyFrom(context.aggregatedCommitment())))
-          .build();
+      return Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(localSenderId).setMessageType(type).setVote(VoteMessage.newBuilder().setVotedNode(node)
+          .setThresholdSignatureShare(ByteString.copyFrom(thresholdSignatureShare)).setAggregatedCommitment(ByteString.copyFrom(context.aggregatedCommitment()))).build();
     } catch (ViewChangeTimeoutException exception) {
       throw exception;
     } catch (Exception exception) {
@@ -97,8 +93,8 @@ public final class ThresholdSignatureProtocol {
       long commitmentDeadlineNanos = Math.min(overallDeadlineNanos, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(1L, thresholdRoundTimeoutMs / 2)));
       byte[] payload = buildVotePayload(type, viewNumber, node);
       ThresholdNonceShare localNonceShare = ThresholdCryptoUtil.thresholdNonceShare(payload, localThresholdShare);
-      List<ThresholdSignatureExchange.RemoteCommitment> remoteCommitments =
-          messageExchange.collectCommitments(type, viewNumber, node, threshold - 1, messageQueue, commitmentDeadlineNanos);
+      List<ThresholdSignatureExchange.RemoteCommitment> remoteCommitments = messageExchange
+          .collectCommitments(type, viewNumber, node, threshold - 1, messageQueue, commitmentDeadlineNanos);
 
       List<CommitmentBatch> candidateBatches = buildCandidateCommitmentBatches(localNonceShare.commitment(), remoteCommitments);
       for (int batchIndex = 0; batchIndex < candidateBatches.size(); batchIndex++) {
@@ -113,8 +109,8 @@ public final class ThresholdSignatureProtocol {
               aggregatedCommitment);
           List<byte[]> partialSignatures = new ArrayList<>(threshold);
           partialSignatures.add(ThresholdCryptoUtil.thresholdPartialSign(payload, localThresholdShare, localNonceShare, localContext));
-          partialSignatures.addAll(messageExchange.collectSignatureShares(type, viewNumber, node, aggregatedCommitment, batch.participantSenders(), messageQueue,
-              attemptDeadlineNanos));
+          partialSignatures
+              .addAll(messageExchange.collectSignatureShares(type, viewNumber, node, aggregatedCommitment, batch.participantSenders(), messageQueue, attemptDeadlineNanos));
 
           byte[] aggregatedSignature = ThresholdCryptoUtil.thresholdCombinePartialSignatures(totalReplicas, threshold, aggregatedCommitment, partialSignatures);
           if (ThresholdCryptoUtil.verifyThresholdSignature(payload, aggregatedSignature, publicThresholdKey)) {
@@ -171,8 +167,7 @@ public final class ThresholdSignatureProtocol {
     return candidateBatches;
   }
 
-  private void buildCommitmentBatchCombinations(byte[] localCommitment, List<ThresholdSignatureExchange.RemoteCommitment> remoteCommitments, int nextIndex,
-      List<ThresholdSignatureExchange.RemoteCommitment> selectedRemoteCommitments, List<CommitmentBatch> candidateBatches) {
+  private void buildCommitmentBatchCombinations(byte[] localCommitment, List<ThresholdSignatureExchange.RemoteCommitment> remoteCommitments, int nextIndex, List<ThresholdSignatureExchange.RemoteCommitment> selectedRemoteCommitments, List<CommitmentBatch> candidateBatches) {
     if (selectedRemoteCommitments.size() == threshold - 1) {
       candidateBatches.add(newCommitmentBatch(localCommitment, selectedRemoteCommitments));
       return;

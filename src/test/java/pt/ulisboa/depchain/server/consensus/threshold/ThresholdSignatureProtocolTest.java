@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.security.PrivateKey;
 import java.util.List;
 import java.util.Set;
 
@@ -13,6 +14,8 @@ import com.google.protobuf.ByteString;
 import com.weavechain.curve25519.Scalar;
 
 import pt.ulisboa.depchain.proto.AppendNodeCommand;
+import pt.ulisboa.depchain.proto.AppendRequest;
+import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.Node;
@@ -20,7 +23,9 @@ import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.server.consensus.ConsensusUtil;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
+import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
@@ -94,10 +99,22 @@ class ThresholdSignatureProtocolTest {
   }
 
   private static Node newNode(int viewNumber, String value, long requestId) {
-    NodeCommand command = NodeCommand.newBuilder()
-        .setAppend(AppendNodeCommand.newBuilder().setClientRequestKey(ClientRequestKey.newBuilder().setClientSenderId(100L).setRequestId(requestId)).setValue(value)).build();
+    NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(signedAppendRequest(requestId, value))).build();
     String nodeHash = CryptoUtil.sha256Hex(ConsensusPayloadUtil.nodeHashPayload(ConsensusUtil.GENESIS_NODE.getNodeHash(), viewNumber, command));
     return Node.newBuilder().setParentNodeHash(ConsensusUtil.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
+  }
+
+  private static ClientRequest signedAppendRequest(long requestId, String value) {
+    try {
+      ConfigParser config = ConfigParser.load(configPath());
+      long clientSenderId = config.client().senderId();
+      PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
+      byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
+      return ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
+          .setValue(value).setSignature(ByteString.copyFrom(signature))).build();
+    } catch (Exception exception) {
+      throw new IllegalStateException("Could not create signed append request", exception);
+    }
   }
 
   private static Path configPath() {

@@ -22,7 +22,7 @@ class SecTest extends IntegrationTestSupport {
     try {
       waitForServersStartup(servers, Duration.ofSeconds(10));
       for (int i = 1; i <= 4; i++) {
-        assertRequestSucceeds(configPath, LEADER_REPLICA_ID, "simple-test-" + i, Duration.ofSeconds(45), servers, "Client request should receive a response");
+        assertRequestSucceeds(configPath, "simple-test-" + i, Duration.ofSeconds(45), servers, "Client request should receive a response");
       }
     } finally {
       stopProcesses(servers);
@@ -31,14 +31,14 @@ class SecTest extends IntegrationTestSupport {
 
   @Test
   @Timeout(90)
-  void forwardedClientRequestTest() throws Exception {
+  void broadcastClientRequestTest() throws Exception {
     Path configPath = integrationConfigPath();
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(REPLICA_IDS, configPath);
     try {
       waitForServersStartup(servers, Duration.ofSeconds(15));
-      assertRequestSucceeds(configPath, FOLLOWER_REPLICA_ID, "forwarded-test", Duration.ofSeconds(45), servers, "Forwarded client request should receive a response");
+      assertRequestSucceeds(configPath, "broadcast-test", Duration.ofSeconds(45), servers, "Broadcast client request should receive a response");
     } finally {
       stopProcesses(servers);
     }
@@ -53,7 +53,7 @@ class SecTest extends IntegrationTestSupport {
     List<StartedServer> servers = startServers(REPLICA_IDS, configPath);
     try {
       waitForServersStartup(servers, Duration.ofSeconds(15));
-      assertReplayIsIgnored(configPath, LEADER_REPLICA_ID, "replayed-test", servers, "Replayed client request should not receive a response");
+      assertReplayIsIgnored(configPath, "replayed-test", servers, "Replayed client request should not receive a response");
     } finally {
       stopProcesses(servers);
     }

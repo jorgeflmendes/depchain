@@ -92,4 +92,3 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
     socket.close();
   }
 }
-

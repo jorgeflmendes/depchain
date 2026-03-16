@@ -57,4 +57,3 @@ final class AuthenticatedContext extends AsyncLinkContext<InboundPacket> {
     return new AuthenticatedConnectionState(() -> connectionStates.remove(connectionKey));
   }
 }
-

@@ -31,8 +31,8 @@ public final class AuthenticatedPayloadUtil {
 
     byte[] signedData = buildHandshakeSignaturePayload(opcode, senderId, publicKeyBytes);
     byte[] signature = CryptoUtil.signEcdsa(signedData, privateKey);
-    AuthenticatedHandshakeEnvelope handshake = AuthenticatedHandshakeEnvelope.newBuilder().setAuthOpcode(opcode).setSenderId(senderId).setEphemeralPublicKeyBytes(ByteString.copyFrom(publicKeyBytes))
-        .setSignature(ByteString.copyFrom(signature)).build();
+    AuthenticatedHandshakeEnvelope handshake = AuthenticatedHandshakeEnvelope.newBuilder().setAuthOpcode(opcode).setSenderId(senderId)
+        .setEphemeralPublicKeyBytes(ByteString.copyFrom(publicKeyBytes)).setSignature(ByteString.copyFrom(signature)).build();
     AuthenticatedEnvelope envelope = AuthenticatedEnvelope.newBuilder().setHandshake(handshake).build();
     return ProtoValidationUtil.requireValid(envelope, "AuthenticatedEnvelope").toByteArray();
   }
@@ -102,8 +102,8 @@ public final class AuthenticatedPayloadUtil {
 
   public static boolean verifyHmac(AuthenticatedDataEnvelope data, SecretKey key) throws Exception {
     ValidationUtils.requireAllNonNull(named("data", data), named("key", key));
-    return CryptoUtil.verifyHmacWithNonce(buildDataMacPayload(requireKnownOpcode(data.getAuthOpcode()), data.getApplicationPayload().toByteArray()), data.getHmac().toByteArray(),
-        data.getNonce(), key);
+    return CryptoUtil.verifyHmacWithNonce(buildDataMacPayload(requireKnownOpcode(data.getAuthOpcode()), data.getApplicationPayload().toByteArray()), data.getHmac()
+        .toByteArray(), data.getNonce(), key);
   }
 
   private static byte[] buildHandshakeSignaturePayload(AuthOpcode opcode, long senderId, byte[] publicKeyBytes) {
@@ -127,4 +127,3 @@ public final class AuthenticatedPayloadUtil {
     };
   }
 }
-

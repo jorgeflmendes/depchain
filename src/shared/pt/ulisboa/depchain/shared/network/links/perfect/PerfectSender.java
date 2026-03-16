@@ -64,8 +64,8 @@ final class PerfectSender {
     }
 
     try {
-      DpchPacket packet = DpchPacket.newBuilder().setConnectionId(connectionId).setPacketType(DpchPacketType.DPCH_PACKET_TYPE_ACK).setHasAck(false).setSequenceNumber(sequenceNumber)
-          .setPayload(ByteString.copyFrom(ackPayload)).build();
+      DpchPacket packet = DpchPacket.newBuilder().setConnectionId(connectionId).setPacketType(DpchPacketType.DPCH_PACKET_TYPE_ACK).setHasAck(false)
+          .setSequenceNumber(sequenceNumber).setPayload(ByteString.copyFrom(ackPayload)).build();
       context.stubbornLink.send(PerfectContext.serializePacket(packet), remote);
     } catch (IOException | RuntimeException exception) {
       if (!context.isRunning()) {
@@ -98,11 +98,7 @@ final class PerfectSender {
 
     DpchPacket packet = DpchPacket.newBuilder().setConnectionId(connectionId).setPacketType(type).setHasAck(withAck).setSequenceNumber(sequenceNumber)
         .setPayload(ByteString.copyFrom(payload)).build();
-    context.stubbornLink.sendTrackedWithTerminalNotification(
-        new TrackedKey(connectionId, sequenceNumber, type.getNumber()),
-        PerfectContext.serializePacket(packet),
-        remoteEndpoint,
-        senderState::notifyWaiters);
+    context.stubbornLink.sendTrackedWithTerminalNotification(new TrackedKey(connectionId, sequenceNumber, type.getNumber()), PerfectContext
+        .serializePacket(packet), remoteEndpoint, senderState::notifyWaiters);
   }
 }
-

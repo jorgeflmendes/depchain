@@ -6,10 +6,10 @@ import java.security.KeyPair;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 
+import javax.crypto.SecretKey;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.crypto.SecretKey;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
@@ -257,4 +257,3 @@ final class AuthenticatedReceiver {
     return new CryptoUtil.KeyContext("SESSION_" + connectionKey.connectionId(), "HANDSHAKE");
   }
 }
-

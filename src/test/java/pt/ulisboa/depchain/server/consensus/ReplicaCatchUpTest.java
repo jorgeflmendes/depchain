@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
@@ -14,7 +15,11 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+import com.google.protobuf.ByteString;
+
 import pt.ulisboa.depchain.proto.AppendNodeCommand;
+import pt.ulisboa.depchain.proto.AppendRequest;
+import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.FetchNodeResponseMessage;
@@ -22,8 +27,10 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
+import pt.ulisboa.depchain.shared.utils.ClientRequestPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
@@ -65,7 +72,10 @@ class ReplicaCatchUpTest {
   void fetchNodeFromReplicasRejectsInvalidResponseAndFallsBackToAlternateReplica() throws Exception {
     HotStuffManager hotStuffManager = newHotStuffManager();
     Node parent = newNode(1, ConsensusUtil.GENESIS_NODE.getNodeHash(), 201L, "parent");
-    Node invalidParent = parent.toBuilder().setCommand(parent.getCommand().toBuilder().setAppend(parent.getCommand().getAppend().toBuilder().setValue("tampered"))).build();
+    ClientRequest tamperedRequest = parent.getCommand().getAppend().getClientRequest().toBuilder()
+        .setAppend(parent.getCommand().getAppend().getClientRequest().getAppend().toBuilder().setValue("tampered")).build();
+    Node invalidParent = parent.toBuilder().setCommand(parent.getCommand().toBuilder().setAppend(parent.getCommand().getAppend().toBuilder().setClientRequest(tamperedRequest)))
+        .build();
 
     hotStuffManager.onReplicaMessage(fetchNodeResponse(1, invalidParent));
     hotStuffManager.onReplicaMessage(fetchNodeResponse(2, parent));
@@ -110,9 +120,22 @@ class ReplicaCatchUpTest {
   }
 
   private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {
-    NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequestKey(requestKey(requestId)).setValue(value)).build();
+    NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(signedAppendRequest(requestId, value))).build();
     String nodeHash = CryptoUtil.sha256Hex(ConsensusPayloadUtil.nodeHashPayload(parentHash, viewNumber, command));
     return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
+  }
+
+  private static ClientRequest signedAppendRequest(long requestId, String value) {
+    try {
+      ConfigParser config = ConfigParser.load(configPath());
+      long clientSenderId = config.client().senderId();
+      PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
+      byte[] signature = CryptoUtil.signEcdsa(ClientRequestPayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
+      return ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder().setRequestKey(requestKey(requestId)).setValue(value).setSignature(ByteString.copyFrom(signature)))
+          .build();
+    } catch (Exception exception) {
+      throw new IllegalStateException("Could not create signed append request", exception);
+    }
   }
 
   private static ClientRequestKey requestKey(long requestId) {

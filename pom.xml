@@ -20,7 +20,6 @@
     <logback.version>1.5.17</logback.version>
     <bouncycastle.version>1.81</bouncycastle.version>
     <cluster.config.path>config/config.yaml</cluster.config.path>
-    <cluster.client.replicaId>server1</cluster.client.replicaId>
   </properties>
 
   <dependencies>
@@ -135,13 +134,6 @@
               <goal>compile</goal>
             </goals>
           </execution>
-          <execution>
-            <id>compile-test-protobuf</id>
-            <phase>generate-test-sources</phase>
-            <goals>
-              <goal>test-compile</goal>
-            </goals>
-          </execution>
         </executions>
       </plugin>
 
@@ -150,6 +142,13 @@
         <artifactId>impsort-maven-plugin</artifactId>
         <version>1.12.0</version>
         <configuration>
+          <directories>
+            <directory>${project.basedir}/src/populate</directory>
+            <directory>${project.basedir}/src/server</directory>
+            <directory>${project.basedir}/src/client</directory>
+            <directory>${project.basedir}/src/shared</directory>
+            <directory>${project.basedir}/src/test/java</directory>
+          </directories>
           <removeUnused>true</removeUnused>
           <groups>java.,javax.,org.,com.,pt.</groups>
           <excludes>
@@ -173,6 +172,13 @@
         <artifactId>formatter-maven-plugin</artifactId>
         <version>2.24.1</version>
         <configuration>
+          <directories>
+            <directory>${project.basedir}/src/populate</directory>
+            <directory>${project.basedir}/src/server</directory>
+            <directory>${project.basedir}/src/client</directory>
+            <directory>${project.basedir}/src/shared</directory>
+            <directory>${project.basedir}/src/test/java</directory>
+          </directories>
           <configFile>${project.basedir}/eclipse-java-formatter.xml</configFile>
           <lineEnding>LF</lineEnding>
           <excludes>
@@ -272,8 +278,6 @@
                 <argument>${project.basedir}</argument>
                 <argument>-ConfigPath</argument>
                 <argument>${cluster.config.path}</argument>
-                <argument>-ClientReplicaId</argument>
-                <argument>${cluster.client.replicaId}</argument>
               </arguments>
             </configuration>
           </execution>

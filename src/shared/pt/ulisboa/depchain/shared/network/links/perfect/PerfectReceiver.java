@@ -11,10 +11,10 @@ import org.slf4j.LoggerFactory;
 
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectReceiver {
@@ -117,4 +117,3 @@ final class PerfectReceiver {
     }
   }
 }
-

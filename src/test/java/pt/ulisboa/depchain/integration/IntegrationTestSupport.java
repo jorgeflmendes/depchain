@@ -18,9 +18,12 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -84,37 +87,35 @@ abstract class IntegrationTestSupport {
     assertEquals(0, populateResult.exitCode(), populateResult.output());
   }
 
-  protected static InboundPacket sendForgedClientRequest(Path configPath, String targetReplicaId, String command) throws Exception {
+  protected static InboundPacket sendForgedClientRequest(Path configPath, String replicaId, String command) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
     long clientSenderId = config.client().senderId();
     PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
     ClientRequest forgedRequest = forgedRequest(clientSenderId, command, clientPrivateKey);
-    byte[] payload = ProtoValidationUtil.requireValid(forgedRequest, "ClientRequest").toByteArray();
-    return sendClientRequestPayload(configPath, targetReplicaId, payload, Duration.ofSeconds(3));
+    return sendPayloadToClientPort(configPath, replicaId, clientSenderId, clientPrivateKey, PublicKeyLoader.loadStaticPublicKeys(config), ProtoValidationUtil
+        .requireValid(forgedRequest, "ClientRequest").toByteArray(), Duration.ofSeconds(3));
   }
 
-  protected static InboundPacket sendClientRequestPayload(Path configPath, String targetReplicaId, byte[] payload, Duration timeout) throws Exception {
+  protected static InboundPacket broadcastClientRequestPayload(Path configPath, byte[] payload, Duration timeout) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    ReplicaSection targetReplica = config.requireReplicaById(targetReplicaId);
     long clientSenderId = config.client().senderId();
     PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
     Map<Long, PublicKey> staticPublicKeys = PublicKeyLoader.loadStaticPublicKeys(config);
-    InetSocketAddress targetAddress = new InetSocketAddress(targetReplica.host(), targetReplica.clientPort());
-    return sendAuthenticatedPayload(targetAddress, clientSenderId, clientPrivateKey, staticPublicKeys, payload, timeout);
+    return broadcastAuthenticatedPayload(config, clientSenderId, clientPrivateKey, staticPublicKeys, payload, timeout);
   }
 
-  protected static InboundPacket sendPayloadToClientPort(Path configPath, String targetReplicaId, long senderId, PrivateKey privateKey, Map<Long, PublicKey> staticPublicKeys, byte[] payload, Duration timeout)
+  protected static InboundPacket sendPayloadToClientPort(Path configPath, String replicaId, long senderId, PrivateKey privateKey, Map<Long, PublicKey> staticPublicKeys, byte[] payload, Duration timeout)
       throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    ReplicaSection targetReplica = config.requireReplicaById(targetReplicaId);
+    ReplicaSection targetReplica = config.requireReplicaById(replicaId);
     InetSocketAddress targetAddress = new InetSocketAddress(targetReplica.host(), targetReplica.clientPort());
     return sendAuthenticatedPayload(targetAddress, senderId, privateKey, staticPublicKeys, payload, timeout);
   }
 
-  protected static InboundPacket sendPayloadToConsensusPort(Path configPath, String targetReplicaId, long senderId, PrivateKey privateKey, Map<Long, PublicKey> staticPublicKeys, byte[] payload, Duration timeout)
+  protected static InboundPacket sendPayloadToConsensusPort(Path configPath, String replicaId, long senderId, PrivateKey privateKey, Map<Long, PublicKey> staticPublicKeys, byte[] payload, Duration timeout)
       throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    ReplicaSection targetReplica = config.requireReplicaById(targetReplicaId);
+    ReplicaSection targetReplica = config.requireReplicaById(replicaId);
     InetSocketAddress targetAddress = new InetSocketAddress(targetReplica.host(), targetReplica.consensusPort());
     return sendAuthenticatedPayload(targetAddress, senderId, privateKey, staticPublicKeys, payload, timeout);
   }
@@ -163,24 +164,23 @@ abstract class IntegrationTestSupport {
     }
   }
 
-  protected static void assertRequestSucceeds(Path configPath, String targetReplicaId, String command, Duration timeout, List<StartedServer> servers, String message)
-      throws Exception {
+  protected static void assertRequestSucceeds(Path configPath, String command, Duration timeout, List<StartedServer> servers, String message) throws Exception {
     ClientRequest request = signedRequest(configPath, command);
     byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
-    InboundPacket response = sendClientRequestPayload(configPath, targetReplicaId, payload, timeout);
+    InboundPacket response = broadcastClientRequestPayload(configPath, payload, timeout);
     assertResponseNotNull(response, message, servers);
     assertEquals("Success: " + command, decodeClientResponse(response).getAppend().getMessage(), message);
   }
 
-  protected static void assertReplayIsIgnored(Path configPath, String targetReplicaId, String command, List<StartedServer> servers, String message) throws Exception {
+  protected static void assertReplayIsIgnored(Path configPath, String command, List<StartedServer> servers, String message) throws Exception {
     ClientRequest request = signedRequest(configPath, command);
     byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
-    InboundPacket firstResponse = sendClientRequestPayload(configPath, targetReplicaId, payload, Duration.ofSeconds(10));
+    InboundPacket firstResponse = broadcastClientRequestPayload(configPath, payload, Duration.ofSeconds(10));
     assertResponseNotNull(firstResponse, message + " (initial request)", servers);
     assertEquals("Success: " + command, decodeClientResponse(firstResponse).getAppend().getMessage(), message + " (initial request)");
 
     for (int i = 0; i < 3; i++) {
-      InboundPacket replayResponse = sendClientRequestPayload(configPath, targetReplicaId, payload, Duration.ofSeconds(3));
+      InboundPacket replayResponse = broadcastClientRequestPayload(configPath, payload, Duration.ofSeconds(3));
       assertNull(replayResponse, message + " (replay " + (i + 1) + ")");
     }
   }
@@ -243,6 +243,60 @@ abstract class IntegrationTestSupport {
         } catch (RuntimeException ignored) {
         }
       }
+    }
+  }
+
+  private static InboundPacket broadcastAuthenticatedPayload(ConfigParser config, long senderId, PrivateKey privateKey, Map<Long, PublicKey> staticPublicKeys, byte[] payload, Duration timeout)
+      throws Exception {
+    Map<Long, InetSocketAddress> endpointsByConnectionId = new LinkedHashMap<>();
+    int requiredReplyCount = config.system().f() + 1;
+
+    try (AuthenticatedLink transport = AuthenticatedLink.unbound(senderId, privateKey, staticPublicKeys)) {
+      for (ReplicaSection replica : config.replicas()) {
+        long connectionId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
+        InetSocketAddress endpoint = new InetSocketAddress(replica.host(), replica.clientPort());
+        try {
+          transport.send(connectionId, payload, endpoint);
+          endpointsByConnectionId.put(connectionId, endpoint);
+        } catch (RuntimeException exception) {
+          // Some adversarial tests intentionally leave replica client ports unavailable.
+        }
+      }
+
+      if (endpointsByConnectionId.isEmpty()) {
+        return null;
+      }
+
+      long deadlineMs = System.currentTimeMillis() + timeout.toMillis();
+      Set<Long> expectedReplicaSenderIds = PublicKeyLoader.loadReplicaPublicKeys(config).keySet();
+      Map<Long, String> responseKeyByReplicaSender = new HashMap<>();
+      Map<String, Integer> replyCounts = new HashMap<>();
+
+      while (System.currentTimeMillis() < deadlineMs) {
+        InboundPacket inbound = transport.receive(Math.max(1L, deadlineMs - System.currentTimeMillis()));
+        if (inbound == null || !endpointsByConnectionId.containsKey(inbound.packet().getConnectionId())) {
+          continue;
+        }
+
+        Long authenticatedSenderId = inbound.authenticatedSenderId();
+        if (authenticatedSenderId == null || !expectedReplicaSenderIds.contains(authenticatedSenderId) || responseKeyByReplicaSender.containsKey(authenticatedSenderId)) {
+          continue;
+        }
+
+        ClientResponse response = decodeClientResponse(inbound);
+        String responseKey = Base64.getEncoder().encodeToString(ProtoValidationUtil.requireValid(response, "ClientResponse").toByteArray());
+        responseKeyByReplicaSender.put(authenticatedSenderId, responseKey);
+
+        int replyCount = replyCounts.merge(responseKey, 1, Integer::sum);
+        if (replyCount >= requiredReplyCount) {
+          return inbound;
+        }
+      }
+
+      return null;
+    } finally {
+      // AuthenticatedLink.close() already tears down the sockets; per-connection shutdown is not
+      // needed in tests because the transport is short-lived and local to this helper.
     }
   }
 
@@ -468,10 +522,14 @@ abstract class IntegrationTestSupport {
     }
 
     private Node validLeafNode(int view, long requestId, String value) {
-      NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder()
-          .setClientRequestKey(ClientRequestKey.newBuilder().setClientSenderId(config.client().senderId()).setRequestId(requestId)).setValue(value)).build();
-      String nodeHash = CryptoUtil.sha256Hex(ConsensusPayloadUtil.nodeHashPayload(ConsensusUtil.GENESIS_NODE.getNodeHash(), view, command));
-      return Node.newBuilder().setParentNodeHash(ConsensusUtil.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(view).setCommand(command).build();
+      try {
+        ClientRequest request = signedAppendRequest(config.client().senderId(), requestId, value, PrivateKeyLoader.loadClientPrivateKey(config));
+        NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
+        String nodeHash = CryptoUtil.sha256Hex(ConsensusPayloadUtil.nodeHashPayload(ConsensusUtil.GENESIS_NODE.getNodeHash(), view, command));
+        return Node.newBuilder().setParentNodeHash(ConsensusUtil.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(view).setCommand(command).build();
+      } catch (Exception exception) {
+        throw new IllegalStateException("Could not build signed malicious test node", exception);
+      }
     }
 
     private String invalidSha256Hex(String originalHash) {

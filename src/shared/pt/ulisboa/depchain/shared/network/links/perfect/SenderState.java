@@ -12,9 +12,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 final class SenderState {
@@ -104,7 +104,8 @@ final class SenderState {
     return cancellations;
   }
 
-  synchronized boolean waitUntilNoPending(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType type, long deadlineMs) throws InterruptedException {
+  synchronized boolean waitUntilNoPending(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType type, long deadlineMs)
+      throws InterruptedException {
     while (context.isRunning() && hasPending(type)) {
       LinkFailureException failure = pollTerminalFailureForType(context, connectionId, remoteEndpoint, type);
       if (failure != null) {
@@ -148,4 +149,3 @@ final class SenderState {
     return null;
   }
 }
-

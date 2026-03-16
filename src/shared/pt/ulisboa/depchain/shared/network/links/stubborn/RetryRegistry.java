@@ -1,7 +1,7 @@
 package pt.ulisboa.depchain.shared.network.links.stubborn;
 
-import java.util.Comparator;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -68,4 +68,3 @@ public final class RetryRegistry {
     scheduledRetries.clear();
   }
 }
-

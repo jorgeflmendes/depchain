@@ -1,9 +1,9 @@
 package pt.ulisboa.depchain.server.consensus;
 
-import java.util.ArrayDeque;
-import java.util.Arrays;
 import java.security.PublicKey;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,7 +20,6 @@ import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.FetchNodeRequestMessage;
 import pt.ulisboa.depchain.proto.FetchNodeResponseMessage;
-import pt.ulisboa.depchain.proto.ForwardedRequestMessage;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
@@ -33,7 +32,6 @@ import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.utils.ConsensusPayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class HotStuffManager {
@@ -61,7 +59,7 @@ public class HotStuffManager {
   private ThresholdSignatureProtocol thresholdProtocol;
   private final Logger logger;
   private long totalViewChanges;
-  private long totalResubmittedRequests;
+  private long totalReenqueuedPendingRequests;
   private long totalFetchAttempts;
   private long totalFetchFailures;
 
@@ -115,11 +113,6 @@ public class HotStuffManager {
   }
 
   public void onReplicaMessage(Message msg) {
-    if (msg.getMessageType() == ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FORWARDED_REQUEST) {
-      clientCommunication.receiveForwardedRequest(msg.hasForwardedRequest() ? msg.getForwardedRequest().getClientRequest() : null, isLeader());
-      return;
-    }
-
     if (msg.getMessageType() == ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FETCH_NODE_REQUEST) {
       handleFetchNodeRequest(msg);
       return;
@@ -130,18 +123,7 @@ public class HotStuffManager {
   }
 
   public void onClientRequest(ClientRequest request, ConnectionKey key) {
-    clientCommunication.receiveClientRequest(request, key, isLeader(), this::forwardClientRequestToLeader);
-  }
-
-  private void forwardClientRequestToLeader(ClientRequest request) {
-    if (request == null || !request.hasAppend()) {
-      return;
-    }
-
-    Message forwardedRequest = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id)
-        .setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FORWARDED_REQUEST)
-        .setForwardedRequest(ForwardedRequestMessage.newBuilder().setClientRequest(request)).build();
-    sendToLeader(forwardedRequest);
+    clientCommunication.onClientRequest(request, key, isLeader());
   }
 
   private void onPrepare() {
@@ -163,9 +145,7 @@ public class HotStuffManager {
         throw new ViewChangeTimeoutException("Timed out waiting for client command");
       }
 
-      NodeCommand command = NodeCommand.newBuilder()
-          .setAppend(AppendNodeCommand.newBuilder().setClientRequestKey(request.getAppend().getRequestKey()).setValue(request.getAppend().getValue()))
-          .build();
+      NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
       currentProposal = createLeaf(selectedHighQC.getCertifiedNode().getNodeHash(), command);
       observeNode(currentProposal);
 
@@ -183,9 +163,10 @@ public class HotStuffManager {
 
       boolean hasValidJustify = justify != null && verifyQC(justify);
       boolean hasValidProposedNode = proposedNode != null && hasValidNode(proposedNode);
+      boolean hasAvailableProposedRequest = proposedNode != null && clientCommunication.observeProposedCommand(proposedNode.getCommand());
       boolean extendsJustifiedNode = justify != null && proposedNode != null && ConsensusUtil.extendsNode(proposedNode, justify.getCertifiedNode());
       boolean isSafeProposal = proposedNode != null && safeNode(proposedNode, justify);
-      if (hasValidJustify && hasValidProposedNode && extendsJustifiedNode && isSafeProposal) {
+      if (hasValidJustify && hasValidProposedNode && hasAvailableProposedRequest && extendsJustifiedNode && isSafeProposal) {
         observeQuorumCertificate(justify);
         observeNode(proposedNode);
         ensureDeliveredBranchOnPrepare(proposedNode, prepareMsg.getReplicaSenderId());
@@ -240,12 +221,13 @@ public class HotStuffManager {
   private void onNewView() {
     viewNumber++;
     totalViewChanges++;
-    int resubmittedRequests = clientCommunication.resubmitPendingRequests(isLeader(), this::forwardClientRequestToLeader);
+    int reenqueuedPendingRequests = clientCommunication.enqueuePendingKnownRequestsIfLeader(isLeader());
     if (logger.isDebugEnabled()) {
-      logger.debug("View change to {}. pendingRequests={}, enqueuedThisView={}, totalViewChanges={}, totalFetchAttempts={}, totalFetchFailures={}",
-          viewNumber, clientCommunication.pendingCount(), resubmittedRequests, totalViewChanges, totalFetchAttempts, totalFetchFailures);
+      logger
+          .debug("View change to {}. pendingRequests={}, reenqueuedThisView={}, totalViewChanges={}, totalFetchAttempts={}, totalFetchFailures={}", viewNumber, clientCommunication
+              .pendingCount(), reenqueuedPendingRequests, totalViewChanges, totalFetchAttempts, totalFetchFailures);
     }
-    totalResubmittedRequests += resubmittedRequests;
+    totalReenqueuedPendingRequests += reenqueuedPendingRequests;
     sendToLeader(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
   }
 
@@ -558,8 +540,7 @@ public class HotStuffManager {
     if (node == null) {
       return false;
     }
-    return isNodeOnJustifiedBranch(node, currentProposal)
-        || isNodeOnJustifiedBranch(node, highQC != null ? highQC.getCertifiedNode() : null)
+    return isNodeOnJustifiedBranch(node, currentProposal) || isNodeOnJustifiedBranch(node, highQC != null ? highQC.getCertifiedNode() : null)
         || isNodeOnJustifiedBranch(node, prepareQC != null ? prepareQC.getCertifiedNode() : null)
         || isNodeOnJustifiedBranch(node, lockedQC != null ? lockedQC.getCertifiedNode() : null);
   }

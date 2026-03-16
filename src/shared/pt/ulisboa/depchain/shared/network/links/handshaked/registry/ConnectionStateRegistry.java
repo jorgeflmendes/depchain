@@ -33,4 +33,3 @@ public final class ConnectionStateRegistry {
     return holder[0];
   }
 }
-

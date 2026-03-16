@@ -46,4 +46,3 @@ final class StubbornContext {
     return tracked.retryAttempt() >= StubbornLink.DEFAULT_MAX_RETRY_ATTEMPTS;
   }
 }
-

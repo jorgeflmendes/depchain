@@ -40,7 +40,7 @@ mvn exec:java@populate "-Dexec.args=config/config.yaml"
 
 Client entrypoint usage:
 ```text
-Main <targetReplicaId> <configPath>
+Main <configPath>
 ```
 
 Maven:

@@ -3,10 +3,7 @@ param(
   [string]$ProjectDir,
 
   [Parameter(Mandatory = $false)]
-  [string]$ConfigPath = "config/config.yaml",
-
-  [Parameter(Mandatory = $false)]
-  [string]$ClientReplicaId = "server1"
+  [string]$ConfigPath = "config/config.yaml"
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,8 +43,6 @@ Start-Process -FilePath "powershell.exe" -WorkingDirectory $ProjectDir -Argument
   "depchain-client",
   "-Role",
   "client",
-  "-ReplicaId",
-  $ClientReplicaId,
   "-ConfigPath",
   $ConfigPath
 )

@@ -27,7 +27,7 @@ class MaliciousReplicaSecTest extends IntegrationTestSupport {
 
         ClientRequest request = signedRequest(configPath, "byzantine-test");
         byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
-        var response = sendClientRequestPayload(configPath, LEADER_REPLICA_ID, payload, Duration.ofSeconds(10));
+        var response = broadcastClientRequestPayload(configPath, payload, Duration.ofSeconds(10));
         org.junit.jupiter.api.Assertions.assertNull(response, "Client request should time out when two Byzantine replicas prevent quorum");
         org.junit.jupiter.api.Assertions.assertTrue(byzantineReplica3.attackObserved(), "Byzantine replica server3 was not exercised");
         org.junit.jupiter.api.Assertions.assertTrue(byzantineReplica4.attackObserved(), "Byzantine replica server4 was not exercised");
@@ -101,11 +101,11 @@ class MaliciousReplicaSecTest extends IntegrationTestSupport {
       try (ByzantineReplicaHandle byzantineReplica = new ByzantineReplicaHandle(configPath, BYZANTINE_REPLICA_ID, attackMode)) {
         waitForServersStartup(servers, Duration.ofSeconds(15));
 
-        assertRequestSucceeds(configPath, LEADER_REPLICA_ID, "malicious-leader-" + attackMode.name().toLowerCase(), Duration.ofSeconds(60), servers, scenarioLabel
+        assertRequestSucceeds(configPath, "malicious-leader-" + attackMode.name().toLowerCase(), Duration.ofSeconds(60), servers, scenarioLabel
             + " should preserve leader-path liveness");
-        assertRequestSucceeds(configPath, FOLLOWER_REPLICA_ID, "malicious-follower-" + attackMode.name().toLowerCase(), Duration.ofSeconds(60), servers, scenarioLabel
-            + " should preserve forwarded-path liveness");
-        assertReplayIsIgnored(configPath, LEADER_REPLICA_ID, "malicious-replay-" + attackMode.name().toLowerCase(), servers, scenarioLabel + " should preserve replay protection");
+        assertRequestSucceeds(configPath, "malicious-broadcast-" + attackMode.name().toLowerCase(), Duration.ofSeconds(60), servers, scenarioLabel
+            + " should preserve broadcast-path liveness");
+        assertReplayIsIgnored(configPath, "malicious-replay-" + attackMode.name().toLowerCase(), servers, scenarioLabel + " should preserve replay protection");
         org.junit.jupiter.api.Assertions.assertTrue(byzantineReplica.attackObserved(), scenarioLabel + " was never exercised");
       }
     } finally {

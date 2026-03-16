@@ -9,7 +9,7 @@ param(
   [ValidateSet("server", "client")]
   [string]$Role,
 
-  [Parameter(Mandatory = $true)]
+  [Parameter(Mandatory = $false)]
   [string]$ReplicaId,
 
   [Parameter(Mandatory = $true)]
@@ -22,11 +22,8 @@ $Host.UI.RawUI.WindowTitle = $WindowTitle
 Set-Location -LiteralPath $ProjectDir
 
 $goal = if ($Role -eq "server") { "exec:java@server" } else { "exec:java@client" }
-$mavenArgs = @(
-  "-q",
-  $goal,
-  "-Dexec.args=$ReplicaId $ConfigPath"
-)
+$execArgs = if ($Role -eq "server") { "$ReplicaId $ConfigPath" } else { $ConfigPath }
+$mavenArgs = @("-q", $goal, "-Dexec.args=$execArgs")
 
 Write-Host "Running: mvn $($mavenArgs -join ' ')" -ForegroundColor Cyan
 & mvn @mavenArgs

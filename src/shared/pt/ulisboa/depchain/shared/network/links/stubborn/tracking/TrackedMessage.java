@@ -65,4 +65,3 @@ public final class TrackedMessage {
     onTerminal.run();
   }
 }
-

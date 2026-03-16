@@ -8,10 +8,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HandshakedReceiver {
@@ -153,4 +153,3 @@ final class HandshakedReceiver {
     return type == DpchPacketType.DPCH_PACKET_TYPE_SYN || type == DpchPacketType.DPCH_PACKET_TYPE_FIN || type == DpchPacketType.DPCH_PACKET_TYPE_DATA;
   }
 }
-
