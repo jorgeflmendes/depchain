@@ -29,6 +29,7 @@ message ClientRequest {
   oneof body {
     option (buf.validate.oneof).required = true;
     AppendRequest append = 1;
+    TransactionRequest transaction = 2;
   }
 }
 
@@ -36,5 +37,77 @@ message ClientResponse {
   oneof body {
     option (buf.validate.oneof).required = true;
     AppendResponse append = 1;
+    TransactionResponse transaction = 2;
   }
+}
+
+
+enum TransactionKind {
+  TRANSACTION_KIND_UNSPECIFIED = 0;
+  TRANSACTION_KIND_TRANSFER = 1;
+  TRANSACTION_KIND_CONTRACT_CALL = 2;
+}
+
+message TransactionRequest {
+
+  ClientRequestKey request_key = 1 [(buf.validate.field).required = true];
+
+  TransactionKind kind = 2 [(buf.validate.field).required = true];
+
+  string to = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  uint64 amount = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gt = 0
+  ];
+  uint64 nonce = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gte = 0
+  ];
+  uint64 gas_limit = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gt = 0
+  ];
+  uint64 gas_price = 7 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gt = 0
+  ];
+
+  bytes data = 8;
+
+  bytes signature = 9 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.min_len = 1
+  ];
+}
+
+
+message TransactionReceipt {
+  string transaction_hash = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  string node_hash = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  bool success = 3 [(buf.validate.field).required = true];
+  uint64 gas_used = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gte = 0
+  ];
+  optional string error_message = 5 [(buf.validate.field).string.min_len = 1];
+  
+  optional bytes return_data = 6 [(buf.validate.field).bytes.min_len = 1];
+}
+
+message TransactionResponse {
+  bool accepted = 1 [(buf.validate.field).required = true];
+  string message = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional TransactionReceipt receipt = 3;
 }
