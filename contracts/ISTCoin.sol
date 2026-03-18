@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 contract ISTCoin {
@@ -41,8 +42,8 @@ contract ISTCoin {
 
     // Protection against approval frontrunning.
     require(
-        current == 0 || value == 0,
-        "reset allowance to 0 first"
+      current == 0 || value == 0,
+      "reset allowance to 0 first"
     );
 
     allowances[msg.sender][spender] = value;
