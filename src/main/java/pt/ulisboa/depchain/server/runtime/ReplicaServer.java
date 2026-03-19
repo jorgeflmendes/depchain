@@ -21,6 +21,7 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffManager;
 import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.config.GenesisParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
@@ -38,6 +39,7 @@ public final class ReplicaServer {
   private final Map<Long, PublicKey> clientStaticPKeys;
   private final Map<Long, PublicKey> replicaStaticPKeys;
   private final Map<String, Long> replicaSenderIdByConsensusEndpoint;
+  private final GenesisParser genesis;
   private final HotStuffManager hotStuffManager;
 
   public ReplicaServer(String serverId, String configPath) throws Exception {
@@ -47,6 +49,7 @@ public final class ReplicaServer {
     this.clientStaticPKeys = Map.of(configParser.client().senderId(), PublicKeyLoader.loadClientPublicKey(configParser));
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
+    this.genesis = GenesisParser.loadDefaultResource();
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
@@ -64,6 +67,7 @@ public final class ReplicaServer {
 
       logger.info("Replica {} client listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       logger.info("Replica {} node listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
+      logger.info("Loaded genesis block height={} hash={} txs={} accounts={}", genesis.height(), shortHash(genesis.blockHash()), genesis.transactions().size(), genesis.state().size());
 
       // Set up the replica with the transports and start the hotstuff loop
       this.hotStuffManager.initNetwork(nodeTransport, clientTransport);
@@ -174,5 +178,13 @@ public final class ReplicaServer {
 
   private static String endpointKey(String host, int port) {
     return host + ":" + port;
+  }
+
+  private static String shortHash(String hash) {
+    if (hash == null || hash.length() < 12) {
+      return hash;
+    }
+
+    return hash.substring(0, 12);
   }
 }
