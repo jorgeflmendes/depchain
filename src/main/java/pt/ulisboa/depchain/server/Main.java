@@ -1,8 +1,9 @@
-package pt.ulisboa.depchain.integration.byzantine;
+package pt.ulisboa.depchain.server;
 
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
+import pt.ulisboa.depchain.server.runtime.ReplicaServer;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 import picocli.CommandLine;
@@ -10,36 +11,30 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
-public final class ByzantineReplicaMain {
-  private ByzantineReplicaMain() {
+public final class Main {
+  private Main() {
   }
 
   public static void main(String[] args) {
-    int exitCode = new CommandLine(new ByzantineReplicaCommand()).execute(args);
+    int exitCode = new CommandLine(new ServerCommand()).execute(args);
     if (exitCode != 0) {
       System.exit(exitCode);
     }
   }
 
-  @Command(name = "byzantine-replica", mixinStandardHelpOptions = true, description = "Run a byzantine test replica with the requested attack mode.")
-  private static final class ByzantineReplicaCommand implements Callable<Integer> {
+  @Command(name = "server", mixinStandardHelpOptions = true, description = "Run a DepChain replica server.")
+  private static final class ServerCommand implements Callable<Integer> {
     @Option(names = {"-i", "--id"}, description = "Replica identifier from the configuration file.")
     private String serverIdOption;
 
     @Option(names = {"-c", "--config"}, description = "Path to the cluster configuration file.")
     private Path configOption;
 
-    @Option(names = {"-a", "--attack-mode"}, description = "Byzantine attack mode to activate.")
-    private ByzantineAttackMode attackModeOption;
-
     @Parameters(index = "0", arity = "0..1", hidden = true, description = "Replica identifier from the configuration file.")
     private String serverIdParameter;
 
     @Parameters(index = "1", arity = "0..1", hidden = true, description = "Path to the cluster configuration file.")
     private Path configParameter;
-
-    @Parameters(index = "2", arity = "0..1", hidden = true, description = "Byzantine attack mode to activate.")
-    private ByzantineAttackMode attackModeParameter;
 
     @Override
     public Integer call() throws Exception {
@@ -51,15 +46,10 @@ public final class ByzantineReplicaMain {
       if (configOption != null) {
         configPath = configOption;
       }
-      ByzantineAttackMode attackMode = attackModeParameter;
-      if (attackModeOption != null) {
-        attackMode = attackModeOption;
-      }
       ValidationUtils.requireNonBlank(serverId, "id");
       ValidationUtils.requireNonNull(configPath, "config");
-      ValidationUtils.requireNonNull(attackMode, "attackMode");
 
-      ByzantineReplicaServer server = new ByzantineReplicaServer(serverId, configPath.toString(), attackMode);
+      ReplicaServer server = new ReplicaServer(serverId, configPath.toString());
       server.run();
       return 0;
     }

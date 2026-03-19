@@ -1,8 +1,6 @@
 package pt.ulisboa.depchain.server.consensus.hotstuff;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.LinkedBlockingDeque;
@@ -14,10 +12,13 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
+import pt.ulisboa.depchain.shared.utils.QuorumAccumulator;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class HotStuffInbox {
+  private static final Boolean MATCHING_GROUP = Boolean.TRUE;
+
   private final int localSenderId;
   private final BlockingDeque<Message> messageQueue;
   private final ThresholdSignatureProtocol thresholdProtocol;
@@ -37,36 +38,40 @@ final class HotStuffInbox {
   }
 
   List<Message> waitForQuorumMessagesUntil(ConsensusMessageType type, int view, int requiredCount, long deadlineNanos) {
-    LinkedHashMap<Integer, Message> messagesBySender = new LinkedHashMap<>();
+    QuorumAccumulator<Integer, Boolean, Message> messagesBySender = new QuorumAccumulator<>();
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
-      while (messagesBySender.size() < requiredCount) {
+      while (true) {
         Message message = pollMessageUntil(deadlineNanos, "waiting for " + type + " messages");
         if (matchingMessage(message, type, view) && !thresholdProtocol.isAuxiliaryMessage(message)) {
-          messagesBySender.putIfAbsent(message.getReplicaSenderId(), message);
+          List<Message> quorumMessages = messagesBySender.recordAndGetValuesIfQuorumReached(message.getReplicaSenderId(), MATCHING_GROUP, message, requiredCount);
+          if (!quorumMessages.isEmpty()) {
+            return quorumMessages;
+          }
         } else {
           deferredMessages.addLast(message);
         }
       }
-      return new ArrayList<>(messagesBySender.values());
     } finally {
       restoreDeferredMessages(deferredMessages);
     }
   }
 
   List<Message> waitForValidNewViewsUntil(int view, int requiredRemoteCount, long deadlineNanos, Predicate<QuorumCertificate> qcVerifier) {
-    LinkedHashMap<Integer, Message> messagesBySender = new LinkedHashMap<>();
+    QuorumAccumulator<Integer, Boolean, Message> messagesBySender = new QuorumAccumulator<>();
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
-      while (messagesBySender.size() < requiredRemoteCount) {
+      while (true) {
         Message message = pollMessageUntil(deadlineNanos, "waiting for valid NEW_VIEW messages");
         if (isValidRemoteNewView(message, view, qcVerifier)) {
-          messagesBySender.putIfAbsent(message.getReplicaSenderId(), message);
+          List<Message> quorumMessages = messagesBySender.recordAndGetValuesIfQuorumReached(message.getReplicaSenderId(), MATCHING_GROUP, message, requiredRemoteCount);
+          if (!quorumMessages.isEmpty()) {
+            return quorumMessages;
+          }
         } else {
           deferredMessages.addLast(message);
         }
       }
-      return new ArrayList<>(messagesBySender.values());
     } finally {
       restoreDeferredMessages(deferredMessages);
     }

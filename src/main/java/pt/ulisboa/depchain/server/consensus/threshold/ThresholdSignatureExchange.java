@@ -6,7 +6,6 @@ import java.net.InetSocketAddress;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,11 +32,13 @@ import pt.ulisboa.depchain.server.consensus.network.SerializedPeerSender;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
+import pt.ulisboa.depchain.shared.utils.QuorumAccumulator;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class ThresholdSignatureExchange {
   private static final Logger logger = LoggerFactory.getLogger(ThresholdSignatureExchange.class);
+  private static final Boolean MATCHING_GROUP = Boolean.TRUE;
 
   record ThresholdContext(byte[] aggregatedCommitment, Set<Integer> participantIndexes) {
   }
@@ -102,31 +103,31 @@ final class ThresholdSignatureExchange {
     ValidationUtils.requireAllNonNull(named("type", type), named("node", node), named("messageQueue", messageQueue));
 
     int maxRemoteCount = Math.max(0, config.system().n() - 1);
-    LinkedHashMap<Integer, RemoteCommitment> commitmentsBySender = new LinkedHashMap<>();
+    QuorumAccumulator<Integer, Boolean, RemoteCommitment> commitmentsBySender = new QuorumAccumulator<>();
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
-      while (commitmentsBySender.size() < minimumRemoteCount && !TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
+      while (commitmentsBySender.count(MATCHING_GROUP) < minimumRemoteCount && !TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
         Message msg = pollMessageUntilDeadlineOrNull(messageQueue, deadlineNanos);
         if (msg == null) {
           break;
         }
 
         if (isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.COMMITMENT)) {
-          commitmentsBySender.putIfAbsent(msg.getReplicaSenderId(), new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
+          commitmentsBySender.record(msg.getReplicaSenderId(), MATCHING_GROUP, new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
               msg.getCommitment().getThresholdSignatureCommitment().toByteArray()));
         } else {
           deferredMessages.addLast(msg);
         }
       }
 
-      while (commitmentsBySender.size() < maxRemoteCount) {
+      while (commitmentsBySender.count(MATCHING_GROUP) < maxRemoteCount) {
         Message msg = messageQueue.poll();
         if (msg == null) {
           break;
         }
 
         if (isMatchingThresholdMessage(msg, type, viewNumber, node, Message.BodyCase.COMMITMENT)) {
-          commitmentsBySender.putIfAbsent(msg.getReplicaSenderId(), new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
+          commitmentsBySender.record(msg.getReplicaSenderId(), MATCHING_GROUP, new RemoteCommitment(msg.getReplicaSenderId(), replicaIndexForSender(msg.getReplicaSenderId()),
               msg.getCommitment().getThresholdSignatureCommitment().toByteArray()));
         } else {
           deferredMessages.addLast(msg);
@@ -136,11 +137,11 @@ final class ThresholdSignatureExchange {
       restoreDeferredMessages(messageQueue, deferredMessages);
     }
 
-    if (commitmentsBySender.size() < minimumRemoteCount) {
+    if (!commitmentsBySender.hasCount(MATCHING_GROUP, minimumRemoteCount)) {
       throw new ConsensusTimeoutException("Timed out waiting for threshold commitments");
     }
 
-    return new ArrayList<>(commitmentsBySender.values());
+    return commitmentsBySender.values(MATCHING_GROUP);
   }
 
   void sendContextMessages(Set<Integer> participantSenders, int viewNumber, int senderId, ConsensusMessageType type, Node node, byte[] aggregatedCommitment, int[] participantIndexes)
@@ -210,19 +211,20 @@ final class ThresholdSignatureExchange {
     ValidationUtils.requireNonNegativeInt(expectedCount, "expectedCount");
     ValidationUtils.requireAllNonNull(named("messageQueue", messageQueue), named("matcher", matcher));
 
-    LinkedHashMap<Integer, Message> messagesBySender = new LinkedHashMap<>();
+    QuorumAccumulator<Integer, Boolean, Message> messagesBySender = new QuorumAccumulator<>();
     ArrayDeque<Message> deferredMessages = new ArrayDeque<>();
     try {
-      while (messagesBySender.size() < expectedCount) {
+      while (true) {
         Message msg = takeMessageUntilDeadline(messageQueue, deadlineNanos);
         if (matcher.test(msg)) {
-          messagesBySender.putIfAbsent(msg.getReplicaSenderId(), msg);
+          List<Message> matchingMessages = messagesBySender.recordAndGetValuesIfQuorumReached(msg.getReplicaSenderId(), MATCHING_GROUP, msg, expectedCount);
+          if (!matchingMessages.isEmpty()) {
+            return matchingMessages;
+          }
         } else {
           deferredMessages.addLast(msg);
         }
       }
-
-      return new ArrayList<>(messagesBySender.values());
     } finally {
       restoreDeferredMessages(messageQueue, deferredMessages);
     }

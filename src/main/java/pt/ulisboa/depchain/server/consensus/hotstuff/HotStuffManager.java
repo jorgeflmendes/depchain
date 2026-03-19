@@ -253,8 +253,12 @@ public class HotStuffManager {
       return;
     }
 
-    ClientResponse clientResponse = ClientResponse.newBuilder().setAppend(AppendResponse.newBuilder().setSuccess(true).setMessage("Success: " + clientCommand)).build();
+    ClientResponse clientResponse = ClientResponse.newBuilder().setAppend(AppendResponse.newBuilder().setSuccess(true).setMessage(successMessage(clientCommand))).build();
     clientCommunication.replyToClient(executionResult.replyTarget(), clientResponse);
+  }
+
+  private static String successMessage(String clientCommand) {
+    return "Request completed successfully: " + clientCommand;
   }
 
   private void broadcast(Message msg) {

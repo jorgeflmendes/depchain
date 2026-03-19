@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.server.consensus.hotstuff;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,6 +10,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -94,12 +96,7 @@ class HotStuffCatchUpTest {
     putKnownNode(hotStuffManager, child);
 
     Thread.ofVirtual().start(() -> {
-      try {
-        Thread.sleep(50);
-        hotStuffManager.onReplicaMessage(fetchNodeResponse(1, parent));
-      } catch (InterruptedException interrupted) {
-        Thread.currentThread().interrupt();
-      }
+      await().pollDelay(Duration.ofMillis(50)).atMost(Duration.ofSeconds(1)).untilAsserted(() -> hotStuffManager.onReplicaMessage(fetchNodeResponse(1, parent)));
     });
 
     invokeEnsureDeliveredBranch(hotStuffManager, child, 1);

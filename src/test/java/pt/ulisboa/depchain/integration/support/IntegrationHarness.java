@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.integration.support;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -30,6 +31,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -113,10 +115,8 @@ public abstract class IntegrationHarness {
   }
 
   protected static void waitForServersStartup(List<StartedServer> servers, Duration timeout) throws InterruptedException {
-    long deadlineMs = System.currentTimeMillis() + timeout.toMillis();
     for (StartedServer server : servers) {
-      long remainingMs = Math.max(1L, deadlineMs - System.currentTimeMillis());
-      assertTrue(server.awaitReady(Duration.ofMillis(remainingMs)), "Server did not become ready: " + server.describeState());
+      await().alias("server startup for " + server.replicaId()).atMost(timeout).until(server::isReady);
     }
   }
 
@@ -125,7 +125,7 @@ public abstract class IntegrationHarness {
     byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
     InboundPacket response = broadcastClientRequestPayload(configPath, payload, timeout);
     assertResponseNotNull(response, message, servers);
-    assertEquals("Success: " + command, decodeClientResponse(response).getAppend().getMessage(), message);
+    assertEquals(successMessage(command), decodeClientResponse(response).getAppend().getMessage(), message);
   }
 
   protected static void assertReplayIsIgnored(Path configPath, String command, List<StartedServer> servers, String message) throws Exception {
@@ -133,7 +133,7 @@ public abstract class IntegrationHarness {
     byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
     InboundPacket firstResponse = broadcastClientRequestPayload(configPath, payload, REPLAY_INITIAL_TIMEOUT);
     assertResponseNotNull(firstResponse, message + " (initial request)", servers);
-    assertEquals("Success: " + command, decodeClientResponse(firstResponse).getAppend().getMessage(), message + " (initial request)");
+    assertEquals(successMessage(command), decodeClientResponse(firstResponse).getAppend().getMessage(), message + " (initial request)");
 
     for (int i = 0; i < 3; i++) {
       InboundPacket replayResponse = broadcastClientRequestPayload(configPath, payload, REPLAY_RESPONSE_TIMEOUT);
@@ -143,6 +143,7 @@ public abstract class IntegrationHarness {
 
   protected static void assertByzantineAttackObserved(StartedServer byzantineServer, ByzantineAttackMode attackMode, String message) {
     String marker = ByzantineReplicaServer.ATTACK_MARKER + " " + attackMode;
+    await().alias("byzantine attack marker " + attackMode).atMost(EXPECTED_TIMEOUT).until(() -> byzantineServer.outputContains(marker));
     assertTrue(byzantineServer.outputContains(marker), message + System.lineSeparator() + byzantineServer.describeState());
   }
 
@@ -206,6 +207,10 @@ public abstract class IntegrationHarness {
     }
   }
 
+  private static String successMessage(String command) {
+    return "Request completed successfully: " + command;
+  }
+
   protected static InboundPacket broadcastClientRequestPayload(Path configPath, byte[] payload, Duration timeout) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
     long clientSenderId = config.client().senderId();
@@ -226,9 +231,9 @@ public abstract class IntegrationHarness {
       }
 
       try {
-        if (!process.waitFor(2, TimeUnit.SECONDS)) {
+        if (!awaitProcessExit(process, Duration.ofSeconds(2))) {
           process.destroyForcibly();
-          process.waitFor(2, TimeUnit.SECONDS);
+          awaitProcessExit(process, Duration.ofSeconds(2));
         }
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
@@ -249,9 +254,9 @@ public abstract class IntegrationHarness {
 
     process.destroy();
     try {
-      if (!process.waitFor(2, TimeUnit.SECONDS)) {
+      if (!awaitProcessExit(process, Duration.ofSeconds(2))) {
         process.destroyForcibly();
-        process.waitFor(2, TimeUnit.SECONDS);
+        awaitProcessExit(process, Duration.ofSeconds(2));
       }
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
@@ -311,15 +316,21 @@ public abstract class IntegrationHarness {
       transport.send(connectionId, payload, targetAddress);
 
       try {
-        long deadlineMs = System.currentTimeMillis() + timeout.toMillis();
-        while (System.currentTimeMillis() < deadlineMs) {
-          InboundPacket inbound = transport.receive(Math.max(1L, deadlineMs - System.currentTimeMillis()));
-          if (inbound != null && inbound.packet().getConnectionId() == connectionId) {
-            return inbound;
-          }
+        AtomicReference<InboundPacket> responseRef = new AtomicReference<>();
+        try {
+          await().atMost(timeout).until(() -> {
+            InboundPacket inbound = transport.receive(Math.max(1L, timeout.toMillis()));
+            if (inbound != null && inbound.packet().getConnectionId() == connectionId) {
+              responseRef.set(inbound);
+              return true;
+            }
+            return false;
+          });
+        } catch (org.awaitility.core.ConditionTimeoutException ignored) {
+          return null;
         }
 
-        return null;
+        return responseRef.get();
       } finally {
         try {
           transport.closeConnection(connectionId, targetAddress);
@@ -350,33 +361,39 @@ public abstract class IntegrationHarness {
         return null;
       }
 
-      long deadlineMs = System.currentTimeMillis() + timeout.toMillis();
       Set<Long> expectedReplicaSenderIds = PublicKeyLoader.loadReplicaPublicKeys(config).keySet();
       Map<Long, String> responseKeyByReplicaSender = new HashMap<>();
       Map<String, Integer> replyCounts = new HashMap<>();
+      AtomicReference<InboundPacket> coherentResponseRef = new AtomicReference<>();
 
-      while (System.currentTimeMillis() < deadlineMs) {
-        InboundPacket inbound = transport.receive(Math.max(1L, deadlineMs - System.currentTimeMillis()));
-        if (inbound == null || !endpointsByConnectionId.containsKey(inbound.packet().getConnectionId())) {
-          continue;
-        }
+      try {
+        await().atMost(timeout).until(() -> {
+          InboundPacket inbound = transport.receive(Math.max(1L, timeout.toMillis()));
+          if (inbound == null || !endpointsByConnectionId.containsKey(inbound.packet().getConnectionId())) {
+            return false;
+          }
 
-        Long authenticatedSenderId = inbound.authenticatedSenderId();
-        if (authenticatedSenderId == null || !expectedReplicaSenderIds.contains(authenticatedSenderId) || responseKeyByReplicaSender.containsKey(authenticatedSenderId)) {
-          continue;
-        }
+          Long authenticatedSenderId = inbound.authenticatedSenderId();
+          if (authenticatedSenderId == null || !expectedReplicaSenderIds.contains(authenticatedSenderId) || responseKeyByReplicaSender.containsKey(authenticatedSenderId)) {
+            return false;
+          }
 
-        ClientResponse response = decodeClientResponse(inbound);
-        String responseKey = Base64.getEncoder().encodeToString(ProtoValidationUtil.requireValid(response, "ClientResponse").toByteArray());
-        responseKeyByReplicaSender.put(authenticatedSenderId, responseKey);
+          ClientResponse response = decodeClientResponse(inbound);
+          String responseKey = Base64.getEncoder().encodeToString(ProtoValidationUtil.requireValid(response, "ClientResponse").toByteArray());
+          responseKeyByReplicaSender.put(authenticatedSenderId, responseKey);
 
-        int replyCount = replyCounts.merge(responseKey, 1, Integer::sum);
-        if (replyCount >= requiredReplyCount) {
-          return inbound;
-        }
+          int replyCount = replyCounts.merge(responseKey, 1, Integer::sum);
+          if (replyCount >= requiredReplyCount) {
+            coherentResponseRef.set(inbound);
+            return true;
+          }
+          return false;
+        });
+      } catch (org.awaitility.core.ConditionTimeoutException ignored) {
+        return null;
       }
 
-      return null;
+      return coherentResponseRef.get();
     }
   }
 
@@ -414,7 +431,7 @@ public abstract class IntegrationHarness {
     processBuilder.redirectErrorStream(true);
 
     Process process = processBuilder.start();
-    boolean finished = process.waitFor(Duration.ofSeconds(20).toMillis(), TimeUnit.MILLISECONDS);
+    boolean finished = awaitProcessExit(process, Duration.ofSeconds(20));
     if (!finished) {
       process.destroyForcibly();
       return new ProcessResult(124, "Populate timeout");
@@ -438,6 +455,15 @@ public abstract class IntegrationHarness {
     return output.toString(StandardCharsets.UTF_8);
   }
 
+  private static boolean awaitProcessExit(Process process, Duration timeout) throws InterruptedException {
+    try {
+      await().atMost(timeout).until(() -> !process.isAlive());
+      return true;
+    } catch (org.awaitility.core.ConditionTimeoutException ignored) {
+      return false;
+    }
+  }
+
   public static final class StartedServer {
     private static final String CLIENT_LISTENER_MARKER = " client listener: ";
     private static final String NODE_LISTENER_MARKER = " node listener: ";
@@ -458,6 +484,14 @@ public abstract class IntegrationHarness {
 
     public Process process() {
       return process;
+    }
+
+    public String replicaId() {
+      return replicaId;
+    }
+
+    public boolean isReady() {
+      return ready.getCount() == 0L && process.isAlive();
     }
 
     public boolean awaitReady(Duration timeout) throws InterruptedException {
