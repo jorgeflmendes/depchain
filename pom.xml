@@ -12,6 +12,7 @@
     <junit.version>6.0.3</junit.version>
     <awaitility.version>4.3.0</awaitility.version>
     <picocli.version>4.7.7</picocli.version>
+    <netty.version>4.2.9.Final</netty.version>
     <surefire.version>3.5.5</surefire.version>
     <protobuf.version>4.34.0</protobuf.version>
     <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
@@ -127,6 +128,11 @@
       <groupId>info.picocli</groupId>
       <artifactId>picocli</artifactId>
       <version>${picocli.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-all</artifactId>
+      <version>${netty.version}</version>
     </dependency>
   </dependencies>
 
