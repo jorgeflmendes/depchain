@@ -10,6 +10,8 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jackson.version>2.21.1</jackson.version>
     <junit.version>6.0.3</junit.version>
+    <awaitility.version>4.3.0</awaitility.version>
+    <picocli.version>4.7.7</picocli.version>
     <surefire.version>3.5.5</surefire.version>
     <protobuf.version>4.34.0</protobuf.version>
     <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
@@ -24,7 +26,6 @@
     <besu.datatypes.version>25.6.0</besu.datatypes.version>
     <tuweni.version>2.3.1</tuweni.version>
     <jdt.annotation.version>2.4.100</jdt.annotation.version>
-    <build.helper.version>3.6.1</build.helper.version>
     <compiler.plugin.version>3.15.0</compiler.plugin.version>
     <impsort.plugin.version>1.13.0</impsort.plugin.version>
     <formatter.plugin.version>2.29.0</formatter.plugin.version>
@@ -49,6 +50,12 @@
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
       <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.awaitility</groupId>
+      <artifactId>awaitility</artifactId>
+      <version>${awaitility.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -116,6 +123,11 @@
       <artifactId>tuweni-units</artifactId>
       <version>${tuweni.version}</version>
     </dependency>
+    <dependency>
+      <groupId>info.picocli</groupId>
+      <artifactId>picocli</artifactId>
+      <version>${picocli.version}</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -125,29 +137,6 @@
         <artifactId>os-maven-plugin</artifactId>
         <version>${os.maven.version}</version>
         <extensions>true</extensions>
-      </plugin>
-
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>build-helper-maven-plugin</artifactId>
-        <version>${build.helper.version}</version>
-        <executions>
-          <execution>
-            <id>add-main-sources</id>
-            <phase>generate-sources</phase>
-            <goals>
-              <goal>add-source</goal>
-            </goals>
-            <configuration>
-              <sources>
-                <source>src/populate</source>
-                <source>src/server</source>
-                <source>src/client</source>
-                <source>src/shared</source>
-              </sources>
-            </configuration>
-          </execution>
-        </executions>
       </plugin>
 
       <plugin>
@@ -165,7 +154,7 @@
         <version>${protobuf.plugin.version}</version>
         <configuration>
           <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
-          <protoSourceRoot>${project.basedir}/proto</protoSourceRoot>
+          <protoSourceRoot>${project.basedir}/src/main/proto</protoSourceRoot>
           <checkStaleness>true</checkStaleness>
         </configuration>
         <executions>
@@ -185,10 +174,7 @@
         <version>${impsort.plugin.version}</version>
         <configuration>
           <directories>
-            <directory>${project.basedir}/src/populate</directory>
-            <directory>${project.basedir}/src/server</directory>
-            <directory>${project.basedir}/src/client</directory>
-            <directory>${project.basedir}/src/shared</directory>
+            <directory>${project.basedir}/src/main/java</directory>
             <directory>${project.basedir}/src/test/java</directory>
           </directories>
           <removeUnused>true</removeUnused>
@@ -215,10 +201,7 @@
         <version>${formatter.plugin.version}</version>
         <configuration>
           <directories>
-            <directory>${project.basedir}/src/populate</directory>
-            <directory>${project.basedir}/src/server</directory>
-            <directory>${project.basedir}/src/client</directory>
-            <directory>${project.basedir}/src/shared</directory>
+            <directory>${project.basedir}/src/main/java</directory>
             <directory>${project.basedir}/src/test/java</directory>
           </directories>
           <configFile>${project.basedir}/eclipse-java-formatter.xml</configFile>

@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.server.consensus.hotstuff;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,6 +10,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -27,6 +29,7 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
+import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -94,12 +97,7 @@ class HotStuffCatchUpTest {
     putKnownNode(hotStuffManager, child);
 
     Thread.ofVirtual().start(() -> {
-      try {
-        Thread.sleep(50);
-        hotStuffManager.onReplicaMessage(fetchNodeResponse(1, parent));
-      } catch (InterruptedException interrupted) {
-        Thread.currentThread().interrupt();
-      }
+      await().pollDelay(Duration.ofMillis(50)).atMost(Duration.ofSeconds(1)).untilAsserted(() -> hotStuffManager.onReplicaMessage(fetchNodeResponse(1, parent)));
     });
 
     invokeEnsureDeliveredBranch(hotStuffManager, child, 1);
@@ -116,7 +114,7 @@ class HotStuffCatchUpTest {
     ConfigParser config = ConfigParser.load(configPath());
     PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(config);
     return new HotStuffManager(0, config, ThresholdKeyLoader.loadReplicaThresholdPrivateShare(config, 0L), ThresholdKeyLoader.loadReplicaThresholdPublicKey(config, 0L),
-        clientPublicKey);
+        clientPublicKey, new EvmService());
   }
 
   private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {
