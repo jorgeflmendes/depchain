@@ -119,6 +119,10 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
         throw new IllegalArgumentException("TRANSFER transactions must set transaction.to");
       }
 
+      if (normalizedType.equals("CONTRACT_CALL") && (to == null || to.isBlank())) {
+        throw new IllegalArgumentException("CONTRACT_CALL transactions must set transaction.to");
+      }
+
       if (normalizedType.equals("CONTRACT_DEPLOY") && to != null && !to.isBlank()) {
         throw new IllegalArgumentException("CONTRACT_DEPLOY transactions must not set transaction.to");
       }
