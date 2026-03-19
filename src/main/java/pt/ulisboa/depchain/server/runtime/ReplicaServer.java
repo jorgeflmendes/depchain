@@ -57,6 +57,7 @@ public final class ReplicaServer {
     this.genesis = GenesisParser.loadDefaultResource();
     this.evmService = new EvmService();
     applyGenesisState(evmService, genesis);
+    applyGenesisTransactions(evmService, genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
@@ -199,13 +200,70 @@ public final class ReplicaServer {
     for (Map.Entry<String, GenesisParser.GenesisAccount> entry : genesis.state().entrySet()) {
       String addressHex = entry.getKey();
       GenesisParser.GenesisAccount genesisAccount = entry.getValue();
-      Address address = Address.fromHexString("0x" + addressHex);
+      Address address = parseAddress(addressHex, "state address");
       Wei balance = Wei.of(new BigInteger(genesisAccount.balance()));
       var account = evmService.createAccount(address, genesisAccount.nonce(), balance);
 
       if (genesisAccount.code() != null && !genesisAccount.code().isBlank()) {
         account.setCode(Bytes.fromHexString(genesisAccount.code()));
       }
+    }
+  }
+
+  private static void applyGenesisTransactions(EvmService evmService, GenesisParser genesis) {
+    for (int i = 0; i < genesis.transactions().size(); i++) {
+      GenesisParser.GenesisTransaction tx = genesis.transactions().get(i);
+      try {
+        applyGenesisTransaction(evmService, tx);
+      } catch (RuntimeException exception) {
+        throw new IllegalArgumentException("Failed to execute genesis transaction at index " + i + ": " + exception.getMessage(), exception);
+      }
+    }
+  }
+
+  private static void applyGenesisTransaction(EvmService evmService, GenesisParser.GenesisTransaction tx) {
+    Address from = parseAddress(tx.from(), "transaction.from");
+    Wei amount = Wei.of(new BigInteger(tx.amount()));
+    Wei gasPrice = Wei.of(tx.gasPrice());
+
+    switch (tx.type()) {
+      case "TRANSFER": {
+        Address to = parseAddress(tx.to(), "transaction.to");
+        EvmService.TransactionResult result = evmService.transferNative(from, to, amount, tx.nonce(), tx.gasLimit(), gasPrice);
+        if (!result.success()) {
+          throw new IllegalArgumentException(result.errorMessage());
+        }
+        break;
+      }
+      case "CONTRACT_CALL": {
+        Address to = parseAddress(tx.to(), "transaction.to");
+        EvmService.TransactionResult result = evmService.callContract(from, to, parseHexBytes(tx.input(), "transaction.input"), amount, tx.nonce(), tx.gasLimit(), gasPrice);
+        if (!result.success()) {
+          throw new IllegalArgumentException(result.errorMessage());
+        }
+        break;
+      }
+      case "CONTRACT_DEPLOY": {
+        evmService.deployContract(from, parseHexBytes(tx.input(), "transaction.input"));
+        break;
+      }
+      default:
+        throw new IllegalArgumentException("unsupported transaction type: " + tx.type());
+    }
+  }
+
+  private static Address parseAddress(String addressHex, String fieldName) {
+    if (addressHex == null || addressHex.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " must be a 40-char hex address");
+    }
+    return Address.fromHexString("0x" + addressHex);
+  }
+
+  private static Bytes parseHexBytes(String value, String fieldName) {
+    try {
+      return Bytes.fromHexString(value);
+    } catch (RuntimeException exception) {
+      throw new IllegalArgumentException(fieldName + " is not a valid hex payload", exception);
     }
   }
 }
