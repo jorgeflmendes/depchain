@@ -5,7 +5,7 @@
     "gas_used": 0,
     "transactions": [
         {
-            "type": "CONTRACT_CALL",
+            "type": "CONTRACT_DEPLOY",
             "from": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "to": null,
             "amount": "0",
