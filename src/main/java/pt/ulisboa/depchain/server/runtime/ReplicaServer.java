@@ -5,11 +5,15 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.apache.tuweni.bytes.Bytes;
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Wei;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,6 +44,7 @@ public final class ReplicaServer {
   private final Map<Long, PublicKey> replicaStaticPKeys;
   private final Map<String, Long> replicaSenderIdByConsensusEndpoint;
   private final GenesisParser genesis;
+  private final EvmService evmService;
   private final HotStuffManager hotStuffManager;
 
   public ReplicaServer(String serverId, String configPath) throws Exception {
@@ -50,10 +55,12 @@ public final class ReplicaServer {
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
     this.genesis = GenesisParser.loadDefaultResource();
+    this.evmService = new EvmService();
+    applyGenesisState(evmService, genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
-        new EvmService());
+      evmService);
   }
 
   public void run() throws Exception {
@@ -186,5 +193,19 @@ public final class ReplicaServer {
     }
 
     return hash.substring(0, 12);
+  }
+
+  private static void applyGenesisState(EvmService evmService, GenesisParser genesis) {
+    for (Map.Entry<String, GenesisParser.GenesisAccount> entry : genesis.state().entrySet()) {
+      String addressHex = entry.getKey();
+      GenesisParser.GenesisAccount genesisAccount = entry.getValue();
+      Address address = Address.fromHexString("0x" + addressHex);
+      Wei balance = Wei.of(new BigInteger(genesisAccount.balance()));
+      var account = evmService.createAccount(address, genesisAccount.nonce(), balance);
+
+      if (genesisAccount.code() != null && !genesisAccount.code().isBlank()) {
+        account.setCode(Bytes.fromHexString(genesisAccount.code()));
+      }
+    }
   }
 }
