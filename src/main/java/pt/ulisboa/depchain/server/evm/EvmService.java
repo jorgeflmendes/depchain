@@ -2,6 +2,8 @@ package pt.ulisboa.depchain.server.evm;
 
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
+import java.math.BigInteger;
+
 import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
@@ -90,12 +92,15 @@ public final class EvmService {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "invalid transaction nonce");
     }
 
-    if (senderAccount.getBalance().compareTo(amount) < 0) {
-      return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance");
+    Wei maxFee = calculateFee(gasPrice, gasLimit, gasLimit);
+    Wei requiredBalance = sumWei(amount, maxFee);
+    if (senderAccount.getBalance().compareTo(requiredBalance) < 0) {
+      return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance for amount plus gas fee");
     }
 
     if (gasLimit < TRANSFER_GAS_USED) {
-      // TODO: charge the native transaction fee using the project gas formula.
+      Wei chargedFee = calculateFee(gasPrice, gasLimit, gasLimit);
+      senderAccount.decrementBalance(chargedFee);
       senderAccount.incrementNonce();
       return new TransactionResult(false, gasLimit, Bytes.EMPTY, "insufficient gas for native transfer");
     }
@@ -108,7 +113,8 @@ public final class EvmService {
 
     senderAccount.decrementBalance(amount);
     recipientAccount.incrementBalance(amount);
-    // TODO: charge the native transaction fee using the project gas formula.
+    Wei chargedFee = calculateFee(gasPrice, gasLimit, TRANSFER_GAS_USED);
+    senderAccount.decrementBalance(chargedFee);
     senderAccount.incrementNonce();
     return new TransactionResult(true, TRANSFER_GAS_USED, Bytes.EMPTY, null);
   }
@@ -129,18 +135,31 @@ public final class EvmService {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "unknown contract account");
     }
 
-    if (senderAccount.getBalance().compareTo(amount) < 0) {
-      return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance");
+    Wei maxFee = calculateFee(gasPrice, gasLimit, gasLimit);
+    Wei requiredBalance = sumWei(amount, maxFee);
+    if (senderAccount.getBalance().compareTo(requiredBalance) < 0) {
+      return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance for amount plus gas fee");
     }
 
     TransactionResult execution = execute(sender, contractAddress, contractAddress, contractAccount
         .getCode(), callData, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
-    // TODO: charge the native transaction fee using the project gas formula.
+    Wei chargedFee = calculateFee(gasPrice, gasLimit, execution.gasUsed());
+    senderAccount.decrementBalance(chargedFee);
     senderAccount.incrementNonce();
     if (!execution.success()) {
       return new TransactionResult(false, execution.gasUsed(), execution.returnData(), execution.errorMessage());
     }
     return new TransactionResult(true, execution.gasUsed(), execution.returnData(), null);
+  }
+
+  private static Wei calculateFee(Wei gasPrice, long gasLimit, long gasUsed) {
+    long boundedGasUsed = Math.max(gasUsed, 0L);
+    long chargedGasUnits = Math.min(gasLimit, boundedGasUsed);
+    return Wei.of(gasPrice.toBigInteger().multiply(BigInteger.valueOf(chargedGasUnits)));
+  }
+
+  private static Wei sumWei(Wei left, Wei right) {
+    return Wei.of(left.toBigInteger().add(right.toBigInteger()));
   }
 
   private TransactionResult execute(Address sender, Address receiver, Address contractAddress, Bytes code, Bytes callData, Wei value, long gasLimit, Wei gasPrice, MessageFrame.Type frameType) {
