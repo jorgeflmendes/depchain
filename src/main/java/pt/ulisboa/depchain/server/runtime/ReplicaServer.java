@@ -19,6 +19,7 @@ import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffManager;
+import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -48,7 +49,8 @@ public final class ReplicaServer {
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
-    this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey);
+    this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
+        new EvmService());
   }
 
   public void run() throws Exception {

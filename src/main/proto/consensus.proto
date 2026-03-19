@@ -24,6 +24,10 @@ message AppendNodeCommand {
   depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
 }
 
+message TransactionNodeCommand {
+  depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
+}
+
 message NoOpCommand {}
 
 message GenesisCommand {}
@@ -34,6 +38,7 @@ message NodeCommand {
     AppendNodeCommand append = 1;
     NoOpCommand no_op = 2;
     GenesisCommand genesis = 3;
+    TransactionNodeCommand transaction = 4;
   }
 }
 

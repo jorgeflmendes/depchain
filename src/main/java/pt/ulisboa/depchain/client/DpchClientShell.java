@@ -125,6 +125,7 @@ public final class DpchClientShell {
     private CommandLine commandLine() {
       CommandLine commandLine = new CommandLine(this);
       commandLine.addSubcommand("append", new AppendCommand());
+      // TODO: add a transaction shell command wired to the client-side TransactionRequest flow.
       commandLine.addSubcommand("exit", new ExitCommand());
       commandLine.addSubcommand("help", new CommandLine.HelpCommand());
       commandLine.setOut(out);

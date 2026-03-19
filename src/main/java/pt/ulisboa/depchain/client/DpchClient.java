@@ -62,6 +62,7 @@ public final class DpchClient implements AutoCloseable {
     return new DpchClient(configPath);
   }
 
+  // TODO: implement the client-side transaction command flow using TransactionRequest/TransactionResponse.
   public String requestAppend(String value) throws Exception {
     long nonce = nextRequestNonce.getAndIncrement();
     byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, nonce, value), clientPrivateKey);

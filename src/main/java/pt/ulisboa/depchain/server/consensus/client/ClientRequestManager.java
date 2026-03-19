@@ -15,6 +15,7 @@ import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
+import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
@@ -54,11 +55,10 @@ public final class ClientRequestManager {
   }
 
   public boolean observeProposedCommand(NodeCommand command) {
-    if (command == null || !command.hasAppend()) {
+    ClientRequest request = clientRequestOrNull(command);
+    if (request == null) {
       return true;
     }
-
-    ClientRequest request = command.getAppend().getClientRequest();
     return registerKnownRequest(request, null) != null;
   }
 
@@ -80,7 +80,7 @@ public final class ClientRequestManager {
         return null;
       }
 
-      ClientRequestKey requestKey = nextRequest.getAppend().getRequestKey();
+      ClientRequestKey requestKey = requestKeyOrNull(nextRequest);
       queuedRequestIds.remove(requestKey);
       if (!completedRequestIds.contains(requestKey) && pendingRequests.containsKey(requestKey)) {
         return nextRequest;
@@ -89,7 +89,10 @@ public final class ClientRequestManager {
   }
 
   private boolean enqueueIfNotQueued(ClientRequest request) {
-    ClientRequestKey requestKey = request.getAppend().getRequestKey();
+    ClientRequestKey requestKey = requestKeyOrNull(request);
+    if (requestKey == null) {
+      return false;
+    }
     if (completedRequestIds.contains(requestKey)) {
       return false;
     }
@@ -103,16 +106,16 @@ public final class ClientRequestManager {
 
   public ExecutionResult markExecuted(Node node) {
     NodeCommand command = node.getCommand();
-    String commandValue = HotStuffSupport.commandValue(command);
+    String commandSummary = HotStuffSupport.commandSummary(command);
     ClientRequestKey requestKey = requestKeyOrNull(command);
     if (requestKey == null) {
-      return new ExecutionResult(commandValue, null);
+      return new ExecutionResult(commandSummary, null);
     }
 
     completedRequestIds.add(requestKey);
     pendingRequests.remove(requestKey);
     queuedRequestIds.remove(requestKey);
-    return new ExecutionResult(commandValue, clientContexts.remove(requestKey));
+    return new ExecutionResult(commandSummary, clientContexts.remove(requestKey));
   }
 
   public void replyToClient(ConnectionKey key, ClientResponse response) {
@@ -129,11 +132,11 @@ public final class ClientRequestManager {
   }
 
   private ClientRequest registerKnownRequest(ClientRequest request, ConnectionKey key) {
-    if (request == null || !request.hasAppend()) {
+    ClientRequestKey requestKey = requestKeyOrNull(request);
+    if (requestKey == null) {
       return null;
     }
 
-    ClientRequestKey requestKey = request.getAppend().getRequestKey();
     if (completedRequestIds.contains(requestKey)) {
       return null;
     }
@@ -187,30 +190,66 @@ public final class ClientRequestManager {
   }
 
   private boolean hasValidClientRequest(ClientRequest request) {
-    if (request == null || !request.hasAppend()) {
+    ClientRequestKey requestKey = requestKeyOrNull(request);
+    if (request == null || requestKey == null) {
       return false;
     }
-
-    ClientRequestKey requestKey = request.getAppend().getRequestKey();
     if (requestKey.getClientSenderId() != expectedClientSenderId) {
       return false;
     }
 
     try {
-      byte[] payload = ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), request.getAppend().getValue());
-      return CryptoUtil.verifyEcdsa(payload, request.getAppend().getSignature().toByteArray(), clientPublicKey);
+      if (request.hasAppend()) {
+        byte[] payload = ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), request.getAppend().getValue());
+        return CryptoUtil.verifyEcdsa(payload, request.getAppend().getSignature().toByteArray(), clientPublicKey);
+      }
+
+      if (request.hasTransaction()) {
+        TransactionRequest transaction = request.getTransaction();
+        byte[] data = null;
+        if (transaction.hasData()) {
+          data = transaction.getData().toByteArray();
+        }
+        byte[] payload = ClientRequestSignaturePayloadUtil.signedTransactionRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), transaction
+            .getType(), transaction.getTo(), transaction.getAmount(), transaction.getNonce(), transaction.getGasLimit(), transaction.getGasPrice(), data);
+        return CryptoUtil.verifyEcdsa(payload, transaction.getSignature().toByteArray(), clientPublicKey);
+      }
     } catch (Exception exception) {
       return false;
     }
+    return false;
   }
 
   private static ClientRequestKey requestKeyOrNull(NodeCommand command) {
-    if (command == null || !command.hasAppend() || !command.getAppend().hasClientRequest() || !command.getAppend().getClientRequest().hasAppend()) {
-      return null;
-    }
-    return command.getAppend().getClientRequest().getAppend().getRequestKey();
+    return requestKeyOrNull(clientRequestOrNull(command));
   }
 
-  public record ExecutionResult(String commandValue, ConnectionKey replyTarget) {
+  private static ClientRequestKey requestKeyOrNull(ClientRequest request) {
+    if (request == null) {
+      return null;
+    }
+    if (request.hasAppend()) {
+      return request.getAppend().getRequestKey();
+    }
+    if (request.hasTransaction()) {
+      return request.getTransaction().getRequestKey();
+    }
+    return null;
+  }
+
+  private static ClientRequest clientRequestOrNull(NodeCommand command) {
+    if (command == null) {
+      return null;
+    }
+    if (command.hasAppend() && command.getAppend().hasClientRequest()) {
+      return command.getAppend().getClientRequest();
+    }
+    if (command.hasTransaction() && command.getTransaction().hasClientRequest()) {
+      return command.getTransaction().getClientRequest();
+    }
+    return null;
+  }
+
+  public record ExecutionResult(String commandSummary, ConnectionKey replyTarget) {
   }
 }

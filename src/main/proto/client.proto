@@ -45,7 +45,7 @@ message TransactionRequest {
   option (buf.validate.message).cel = {
     id: "transaction.transfer.requires-positive-amount"
     message: "transfer transactions must use a positive amount"
-    expression: "this.type == 1 ? this.amount > 0 : true"
+    expression: "this.type == 1 ? this.amount > 0u : true"
   };
   option (buf.validate.message).cel = {
     id: "transaction.transfer.disallows-data"
@@ -60,7 +60,7 @@ message TransactionRequest {
   option (buf.validate.message).cel = {
     id: "transaction.contract-call.allows-zero-amount"
     message: "contract call transactions must not use a negative amount"
-    expression: "this.type == 2 ? this.amount >= 0 : true"
+    expression: "this.type == 2 ? this.amount >= 0u : true"
   };
 
   ClientRequestKey request_key = 1 [(buf.validate.field).required = true];

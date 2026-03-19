@@ -22,17 +22,29 @@ public final class HotStuffSupport {
     return command.hasNoOp();
   }
 
-  public static String commandValue(NodeCommand command) {
+  public static String commandSummary(NodeCommand command) {
     ValidationUtils.requireNonNull(command, "command");
     if (command.hasAppend()) {
       return command.getAppend().getClientRequest().getAppend().getValue();
     }
+    if (command.hasTransaction()) {
+      var transaction = command.getTransaction().getClientRequest().getTransaction();
+      if (transaction.getTypeValue() == 1) {
+        return "transfer to=%s amount=%d nonce=%d".formatted(transaction.getTo(), transaction.getAmount(), transaction.getNonce());
+      } else if (transaction.hasData()) {
+        return "contract_call to=%s nonce=%d data_len=%d".formatted(transaction.getTo(), transaction.getNonce(), transaction.getData().size());
+      }
+      
+      return "contract_call to=%s nonce=%d".formatted(transaction.getTo(), transaction.getNonce());
+    }
     if (command.hasNoOp()) {
       return NO_OP_VALUE;
     }
+
     if (command.hasGenesis()) {
       return GENESIS_VALUE;
     }
+
     throw new IllegalArgumentException("Node command body is not set");
   }
 

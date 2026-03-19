@@ -29,6 +29,7 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
+import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -113,7 +114,7 @@ class HotStuffCatchUpTest {
     ConfigParser config = ConfigParser.load(configPath());
     PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(config);
     return new HotStuffManager(0, config, ThresholdKeyLoader.loadReplicaThresholdPrivateShare(config, 0L), ThresholdKeyLoader.loadReplicaThresholdPublicKey(config, 0L),
-        clientPublicKey);
+        clientPublicKey, new EvmService());
   }
 
   private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {

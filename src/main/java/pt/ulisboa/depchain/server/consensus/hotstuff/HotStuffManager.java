@@ -10,9 +10,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.tuweni.bytes.Bytes;
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Wei;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.protobuf.ByteString;
 import com.weavechain.curve25519.Scalar;
 
 import pt.ulisboa.depchain.proto.AppendNodeCommand;
@@ -28,10 +32,16 @@ import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
 import pt.ulisboa.depchain.proto.ProposalMessage;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionReceipt;
+import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionResponse;
+import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
 import pt.ulisboa.depchain.server.consensus.network.ReplicaMessenger;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
+import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
@@ -39,9 +49,13 @@ import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class HotStuffManager {
+  private static final Wei INITIAL_CLIENT_BALANCE = Wei.of(1_000_000_000L);
+
   private final ClientRequestManager clientCommunication;
   private final ReplicaMessenger replicaCommunication;
   private final Set<String> executedNodeHashes;
+  private final EvmService evmService;
+  private final Address clientAccountAddress;
 
   private int id;
   private int n;
@@ -66,7 +80,7 @@ public class HotStuffManager {
   private long totalFetchAttempts;
   private long totalFetchFailures;
 
-  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey) {
+  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService) {
     this.id = id;
     this.logger = LoggerFactory.getLogger(HotStuffManager.class);
     this.n = config.system().n();
@@ -87,6 +101,11 @@ public class HotStuffManager {
     this.replicaCommunication = new ReplicaMessenger(id, config, logger);
     this.executedNodeHashes = ConcurrentHashMap.newKeySet();
     this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
+    this.evmService = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(evmService, "evmService");
+    this.clientAccountAddress = clientAddress(clientPublicKey);
+    if (this.evmService.account(clientAccountAddress) == null) {
+      this.evmService.createAccount(clientAccountAddress, 0L, INITIAL_CLIENT_BALANCE);
+    }
 
     blockTree.put(HotStuffSupport.GENESIS_NODE.getNodeHash(), HotStuffSupport.GENESIS_NODE);
     executedNodeHashes.add(HotStuffSupport.GENESIS_NODE.getNodeHash());
@@ -148,7 +167,7 @@ public class HotStuffManager {
         throw new ConsensusTimeoutException("Timed out waiting for client command");
       }
 
-      NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
+      NodeCommand command = nodeCommandForRequest(request);
       currentProposal = createLeaf(selectedHighQC.getCertifiedNode().getNodeHash(), command);
       observeNode(currentProposal);
 
@@ -242,7 +261,7 @@ public class HotStuffManager {
   private void executeCommand(Node node) {
     NodeCommand command = node.getCommand();
     ClientRequestManager.ExecutionResult executionResult = clientCommunication.markExecuted(node);
-    String clientCommand = executionResult.commandValue();
+    String clientCommand = executionResult.commandSummary();
 
     if (!HotStuffSupport.isNoOp(command)) {
       logger.debug("Executing command: {}", clientCommand);
@@ -253,12 +272,80 @@ public class HotStuffManager {
       return;
     }
 
-    ClientResponse clientResponse = ClientResponse.newBuilder().setAppend(AppendResponse.newBuilder().setSuccess(true).setMessage(successMessage(clientCommand))).build();
+    ClientResponse clientResponse = clientResponseForExecution(node, clientCommand);
     clientCommunication.replyToClient(executionResult.replyTarget(), clientResponse);
+  }
+
+  private NodeCommand nodeCommandForRequest(ClientRequest request) {
+    if (request.hasAppend()) {
+      return NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
+    }
+    if (request.hasTransaction()) {
+      return NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(request)).build();
+    }
+    throw new IllegalArgumentException("ClientRequest body is not set");
+  }
+
+  private ClientResponse clientResponseForExecution(Node node, String clientCommand) {
+    NodeCommand command = node.getCommand();
+    if (command.hasAppend()) {
+      return ClientResponse.newBuilder().setAppend(AppendResponse.newBuilder().setSuccess(true).setMessage(successMessage(clientCommand))).build();
+    }
+    if (command.hasTransaction()) {
+      return transactionResponse(node, command.getTransaction().getClientRequest().getTransaction());
+    }
+    throw new IllegalArgumentException("Node command body is not executable");
+  }
+
+  private ClientResponse transactionResponse(Node node, TransactionRequest transaction) {
+    String transactionHash = CryptoUtil.sha256Hex(transaction.toByteArray());
+    TransactionReceipt.Builder receipt = TransactionReceipt.newBuilder().setTransactionHash(transactionHash).setNodeHash(node.getNodeHash());
+
+    try {
+      Address recipient = Address.fromHexString("0x" + transaction.getTo());
+      EvmService.TransactionResult execution;
+      if (transaction.getType() == TransactionType.TRANSACTION_TYPE_TRANSFER) {
+        execution = evmService
+            .transferNative(clientAccountAddress, recipient, Wei.of(transaction.getAmount()), transaction.getNonce(), transaction.getGasLimit(), Wei.of(transaction.getGasPrice()));
+      } else {
+        Bytes callData = Bytes.EMPTY;
+        if (transaction.hasData()) {
+          callData = Bytes.wrap(transaction.getData().toByteArray());
+        }
+        execution = evmService.callContract(clientAccountAddress, recipient, callData, Wei.of(transaction.getAmount()), transaction.getNonce(), transaction.getGasLimit(), Wei
+            .of(transaction.getGasPrice()));
+      }
+
+      receipt.setSuccess(execution.success()).setGasUsed(execution.gasUsed());
+      if (execution.errorMessage() != null && !execution.errorMessage().isBlank()) {
+        receipt.setErrorMessage(execution.errorMessage());
+      }
+      if (execution.returnData() != null && !execution.returnData().isEmpty()) {
+        receipt.setReturnData(ByteString.copyFrom(execution.returnData().toArrayUnsafe()));
+      }
+
+      String message = "Transaction executed successfully";
+      if (!execution.success()) {
+        message = "Transaction execution failed";
+      }
+      return ClientResponse.newBuilder().setTransaction(TransactionResponse.newBuilder().setAccepted(true).setMessage(message).setReceipt(receipt)).build();
+    } catch (RuntimeException exception) {
+      String errorMessage = exception.getMessage();
+      if (errorMessage == null || errorMessage.isBlank()) {
+        errorMessage = "unexpected transaction execution error";
+      }
+      receipt.setSuccess(false).setGasUsed(0L).setErrorMessage(errorMessage);
+      return ClientResponse.newBuilder().setTransaction(TransactionResponse.newBuilder().setAccepted(true).setMessage("Transaction execution failed").setReceipt(receipt)).build();
+    }
   }
 
   private static String successMessage(String clientCommand) {
     return "Request completed successfully: " + clientCommand;
+  }
+
+  private static Address clientAddress(PublicKey clientPublicKey) {
+    String publicKeyHash = CryptoUtil.sha256Hex(clientPublicKey.getEncoded());
+    return Address.fromHexString("0x" + publicKeyHash.substring(publicKeyHash.length() - 40));
   }
 
   private void broadcast(Message msg) {
