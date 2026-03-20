@@ -12,7 +12,6 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
-import pt.ulisboa.depchain.proto.AuthenticatedEnvelope;
 import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
@@ -33,19 +32,18 @@ public final class AuthenticatedPayloadUtil {
     byte[] signature = CryptoUtil.signEcdsa(signedData, privateKey);
     AuthenticatedHandshakeEnvelope handshake = AuthenticatedHandshakeEnvelope.newBuilder().setAuthOpcode(opcode).setSenderId(senderId)
         .setEphemeralPublicKeyBytes(ByteString.copyFrom(publicKeyBytes)).setSignature(ByteString.copyFrom(signature)).build();
-    AuthenticatedEnvelope envelope = AuthenticatedEnvelope.newBuilder().setHandshake(handshake).build();
-    return ProtoValidationUtil.requireValid(envelope, "AuthenticatedEnvelope").toByteArray();
+    return ProtoValidationUtil.requireValid(handshake, "AuthenticatedHandshakeEnvelope").toByteArray();
   }
 
   public static AuthenticatedHandshakeEnvelope decodeEcdsa(byte[] bytes) {
     ValidationUtils.requireNonNull(bytes, "bytes");
-    try {
-      AuthenticatedEnvelope envelope = ProtoValidationUtil.requireValid(AuthenticatedEnvelope.parseFrom(bytes), "AuthenticatedEnvelope");
-      if (!envelope.hasHandshake()) {
-        throw new IllegalArgumentException("Authenticated envelope does not carry a handshake payload");
-      }
+    return decodeEcdsa(ByteString.copyFrom(bytes));
+  }
 
-      AuthenticatedHandshakeEnvelope handshake = envelope.getHandshake();
+  public static AuthenticatedHandshakeEnvelope decodeEcdsa(ByteString bytes) {
+    ValidationUtils.requireNonNull(bytes, "bytes");
+    try {
+      AuthenticatedHandshakeEnvelope handshake = ProtoValidationUtil.requireValid(AuthenticatedHandshakeEnvelope.parseFrom(bytes), "AuthenticatedHandshakeEnvelope");
       requireKnownOpcode(handshake.getAuthOpcode());
       ValidationUtils.requirePositiveInt(handshake.getEphemeralPublicKeyBytes().size(), "ephemeralPublicKeyBytes.length");
       ValidationUtils.requirePositiveInt(handshake.getSignature().size(), "signature.length");
@@ -74,19 +72,18 @@ public final class AuthenticatedPayloadUtil {
     byte[] hmac = CryptoUtil.signHmacWithNonce(signablePayload, key, nonce);
     AuthenticatedDataEnvelope data = AuthenticatedDataEnvelope.newBuilder().setAuthOpcode(opcode).setApplicationPayload(ByteString.copyFrom(payload)).setNonce(nonce)
         .setHmac(ByteString.copyFrom(hmac)).build();
-    AuthenticatedEnvelope envelope = AuthenticatedEnvelope.newBuilder().setData(data).build();
-    return ProtoValidationUtil.requireValid(envelope, "AuthenticatedEnvelope").toByteArray();
+    return ProtoValidationUtil.requireValid(data, "AuthenticatedDataEnvelope").toByteArray();
   }
 
   public static AuthenticatedDataEnvelope decodeHmac(byte[] bytes) {
     ValidationUtils.requireNonNull(bytes, "bytes");
-    try {
-      AuthenticatedEnvelope envelope = ProtoValidationUtil.requireValid(AuthenticatedEnvelope.parseFrom(bytes), "AuthenticatedEnvelope");
-      if (!envelope.hasData()) {
-        throw new IllegalArgumentException("Authenticated envelope does not carry a data payload");
-      }
+    return decodeHmac(ByteString.copyFrom(bytes));
+  }
 
-      AuthenticatedDataEnvelope data = envelope.getData();
+  public static AuthenticatedDataEnvelope decodeHmac(ByteString bytes) {
+    ValidationUtils.requireNonNull(bytes, "bytes");
+    try {
+      AuthenticatedDataEnvelope data = ProtoValidationUtil.requireValid(AuthenticatedDataEnvelope.parseFrom(bytes), "AuthenticatedDataEnvelope");
       requireKnownOpcode(data.getAuthOpcode());
       ValidationUtils.requireExactInt(data.getHmac().size(), HMAC_BYTES, "hmac.length");
       return data;

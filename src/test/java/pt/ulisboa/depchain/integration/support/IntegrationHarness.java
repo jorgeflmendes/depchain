@@ -201,7 +201,7 @@ public abstract class IntegrationHarness {
 
   protected static ClientResponse decodeClientResponse(InboundPacket response) {
     try {
-      return ProtoValidationUtil.requireValid(ClientResponse.parseFrom(response.packet().getPayload()), "ClientResponse");
+      return ProtoValidationUtil.requireValid(ClientResponse.parseFrom(response.payload()), "ClientResponse");
     } catch (InvalidProtocolBufferException exception) {
       throw new IllegalArgumentException("Invalid protobuf client response payload", exception);
     }

@@ -1,14 +1,14 @@
 package pt.ulisboa.depchain.shared.network.links.perfect;
 
-import java.util.NavigableMap;
-import java.util.TreeMap;
+import java.util.HashMap;
+import java.util.Map;
 
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
 
 final class ReceiverState {
   private int nextExpectedSeq;
-  private final NavigableMap<Integer, InboundPacket> bufferedBySeq = new TreeMap<>();
+  private final Map<Integer, InboundPacket> bufferedBySeq = new HashMap<>();
 
   ReceiverState(int nextExpectedSeq) {
     this.nextExpectedSeq = Math.max(0, nextExpectedSeq);
@@ -19,21 +19,15 @@ final class ReceiverState {
   }
 
   boolean bufferIfNew(int sequenceNumber, InboundPacket inbound) {
-    if (bufferedBySeq.containsKey(sequenceNumber)) {
-      return false;
-    }
-
-    bufferedBySeq.put(sequenceNumber, inbound);
-    return true;
+    return bufferedBySeq.putIfAbsent(sequenceNumber, inbound) == null;
   }
 
   InboundPacket pollNextInOrder() {
-    var nextEntry = bufferedBySeq.pollFirstEntry();
-    if (nextEntry == null || nextEntry.getKey() != nextExpectedSeq) {
+    InboundPacket delivered = bufferedBySeq.remove(nextExpectedSeq);
+    if (delivered == null) {
       throw new IllegalStateException("No in-order message available for delivery");
     }
 
-    InboundPacket delivered = nextEntry.getValue();
     if (nextExpectedSeq > DpchPacketUtil.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Receiver sequence number exhausted for stream");
     }
@@ -43,10 +37,6 @@ final class ReceiverState {
   }
 
   boolean hasNextInOrderReady() {
-    return !bufferedBySeq.isEmpty() && bufferedBySeq.firstKey() == nextExpectedSeq;
-  }
-
-  int nextExpectedSequence() {
-    return nextExpectedSeq;
+    return bufferedBySeq.containsKey(nextExpectedSeq);
   }
 }

@@ -1,7 +1,5 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
-
 import java.security.PrivateKey;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,12 +22,6 @@ final class AuthenticatedConnectionState {
 
   enum HandshakeAction {
     USE_REPLY, RESTART, IGNORE
-  }
-
-  record SendPlan(SendAction action) {
-    SendPlan {
-      ValidationUtils.requireNonNull(action, "action");
-    }
   }
 
   record SecureSendContext(SecretKey sharedSecret, long nonce) {
@@ -67,22 +59,22 @@ final class AuthenticatedConnectionState {
     return phase == Phase.ESTABLISHED && sharedSecret != null;
   }
 
-  synchronized SendPlan planSend(byte[] payload) {
-    ValidationUtils.requireAllNonNull(named("payload", payload));
+  synchronized SendAction planSend(byte[] payload) {
+    ValidationUtils.requireNonNull(payload, "payload");
     if (phase == Phase.CLOSING || phase == Phase.CLOSED) {
       throw new IllegalStateException("Connection is closed");
     }
 
     if (phase == Phase.ESTABLISHED && sharedSecret != null) {
-      return new SendPlan(SendAction.SEND);
+      return SendAction.SEND;
     }
 
     pendingPayloads.add(Arrays.copyOf(payload, payload.length));
     if (phase == Phase.NEW) {
-      return new SendPlan(SendAction.START_HANDSHAKE);
+      return SendAction.START_HANDSHAKE;
     }
 
-    return new SendPlan(SendAction.WAIT);
+    return SendAction.WAIT;
   }
 
   synchronized ReceiveMode receiveMode() {
@@ -95,18 +87,6 @@ final class AuthenticatedConnectionState {
     }
 
     return ReceiveMode.INIT;
-  }
-
-  synchronized boolean canReceive() {
-    return (phase == Phase.ESTABLISHED || phase == Phase.CLOSING) && sharedSecret != null;
-  }
-
-  synchronized boolean canSend() {
-    return phase == Phase.ESTABLISHED;
-  }
-
-  synchronized boolean hasHandshakeInFlight() {
-    return phase == Phase.INITIATED && ephemeralPrivateKey != null;
   }
 
   synchronized boolean tryMarkHandshakeInitiated(PrivateKey privateKey) {
@@ -182,7 +162,7 @@ final class AuthenticatedConnectionState {
   }
 
   synchronized boolean validateAndIncrementReceivedNonce(long nonce) {
-    if (!canReceive()) {
+    if ((phase != Phase.ESTABLISHED && phase != Phase.CLOSING) || sharedSecret == null) {
       return false;
     }
 
@@ -216,10 +196,6 @@ final class AuthenticatedConnectionState {
     authenticatedRemoteSenderId = null;
     pendingPayloads.clear();
     onTerminal.run();
-  }
-
-  synchronized List<byte[]> takePendingPayloads() {
-    return new ArrayList<>(takePendingPayloadsLocked());
   }
 
   private List<byte[]> takePendingPayloadsLocked() {

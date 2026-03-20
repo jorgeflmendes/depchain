@@ -19,13 +19,12 @@ import org.slf4j.LoggerFactory;
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
 import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
-import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
-import pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink;
+import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
@@ -37,8 +36,8 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   private final AuthenticatedSender sender;
   private final Thread workerThread;
 
-  private AuthenticatedLink(HandshakedPerfectLink handshakedLink, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) {
-    this.context = new AuthenticatedContext(handshakedLink, localSenderId, localStaticSKey, staticPKeys);
+  private AuthenticatedLink(PerfectLink perfectLink, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) {
+    this.context = new AuthenticatedContext(perfectLink, localSenderId, localStaticSKey, staticPKeys);
     this.sender = new AuthenticatedSender(context);
     this.workerThread = Thread.ofVirtual().name("authenticated-link").start(this::runInboundLoop);
   }
@@ -46,15 +45,15 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   public static AuthenticatedLink bind(InetSocketAddress bindEndpoint, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) throws IOException {
     ValidationUtils.requireAllNonNull(named("bindEndpoint", bindEndpoint), named("localStaticSKey", localStaticSKey), named("staticPKeys", staticPKeys));
 
-    HandshakedPerfectLink handshaked = HandshakedPerfectLink.bind(bindEndpoint);
-    return new AuthenticatedLink(handshaked, localSenderId, localStaticSKey, staticPKeys);
+    PerfectLink perfectLink = PerfectLink.bind(bindEndpoint);
+    return new AuthenticatedLink(perfectLink, localSenderId, localStaticSKey, staticPKeys);
   }
 
   public static AuthenticatedLink unbound(long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) throws IOException {
     ValidationUtils.requireAllNonNull(named("localStaticSKey", localStaticSKey), named("staticPKeys", staticPKeys));
 
-    HandshakedPerfectLink handshaked = HandshakedPerfectLink.unbound();
-    return new AuthenticatedLink(handshaked, localSenderId, localStaticSKey, staticPKeys);
+    PerfectLink perfectLink = PerfectLink.unbound();
+    return new AuthenticatedLink(perfectLink, localSenderId, localStaticSKey, staticPKeys);
   }
 
   public void send(long connectionId, byte[] payload, InetSocketAddress remoteEndpoint) {
@@ -78,7 +77,7 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   private void runInboundLoop() {
     while (context.isRunning()) {
       try {
-        InboundPacket inbound = context.handshakedLink.receive();
+        InboundPacket inbound = context.perfectLink.receive();
         InboundPacket packet = receivePacket(inbound);
         if (packet != null) {
           context.offer(packet);
@@ -96,81 +95,72 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
         }
         Thread.currentThread().interrupt();
         break;
+      } catch (Exception exception) {
+        if (!context.isRunning()) {
+          break;
+        }
+        logger.debug("AuthenticatedLink worker error", exception);
       }
     }
   }
 
   private InboundPacket receivePacket(InboundPacket inbound) {
-    if (inbound == null) {
+    if (inbound == null || inbound.packet().getPacketType() != DpchPacketType.DPCH_PACKET_TYPE_DATA) {
       return null;
     }
 
     ConnectionKey connectionKey = new ConnectionKey(inbound.sender(), inbound.packet().getConnectionId());
     AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
-    if (connectionState != null && connectionState.receiveMode() == AuthenticatedConnectionState.ReceiveMode.DATA) {
+    AuthenticatedConnectionState.ReceiveMode receiveMode = connectionState == null ? AuthenticatedConnectionState.ReceiveMode.INIT : connectionState.receiveMode();
+    if (receiveMode == AuthenticatedConnectionState.ReceiveMode.DATA) {
       return handleData(connectionState, inbound);
     }
-    if (connectionState != null && connectionState.receiveMode() == AuthenticatedConnectionState.ReceiveMode.HANDSHAKE) {
-      return handleHandshake(connectionKey, connectionState, inbound);
-    }
-
-    if (inbound.packet().getPacketType() != DpchPacketType.DPCH_PACKET_TYPE_DATA) {
-      return null;
-    }
 
     AuthenticatedHandshakeEnvelope decodedPayload;
     try {
-      decodedPayload = AuthenticatedPayloadUtil.decodeEcdsa(inbound.packet().getPayload().toByteArray());
+      decodedPayload = AuthenticatedPayloadUtil.decodeEcdsa(inbound.payload());
     } catch (IllegalArgumentException ignored) {
       return null;
     }
-    return handleInit(connectionKey, inbound, decodedPayload);
+    if (receiveMode == AuthenticatedConnectionState.ReceiveMode.HANDSHAKE) {
+      handleHandshake(connectionKey, connectionState, inbound, decodedPayload);
+      return null;
+    }
+    handleInit(connectionKey, inbound, decodedPayload);
+    return null;
   }
 
-  private InboundPacket handleHandshake(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InboundPacket inbound) {
-    AuthenticatedHandshakeEnvelope decodedPayload;
-    if (inbound.packet().getPacketType() != DpchPacketType.DPCH_PACKET_TYPE_DATA) {
-      return null;
-    }
-    try {
-      decodedPayload = AuthenticatedPayloadUtil.decodeEcdsa(inbound.packet().getPayload().toByteArray());
-    } catch (IllegalArgumentException ignored) {
-      return null;
-    }
-
-    if (decodedPayload == null) {
-      return null;
-    }
-
-    return switch (connectionState.decideHandshake(decodedPayload.getAuthOpcode(), decodedPayload.getSenderId(), context.localSenderId)) {
+  private void handleHandshake(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {
+    switch (connectionState.decideHandshake(decodedPayload.getAuthOpcode(), decodedPayload.getSenderId(), context.localSenderId)) {
       case USE_REPLY -> handleReply(connectionKey, inbound, decodedPayload);
       case RESTART -> handleInit(connectionKey, inbound, decodedPayload);
-      case IGNORE -> null;
-    };
+      case IGNORE -> {
+      }
+    }
   }
 
-  private InboundPacket handleInit(ConnectionKey connectionKey, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {
-    if (decodedPayload == null || decodedPayload.getAuthOpcode() != AuthOpcode.AUTH_OPCODE_INIT) {
-      return null;
+  private void handleInit(ConnectionKey connectionKey, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {
+    if (decodedPayload.getAuthOpcode() != AuthOpcode.AUTH_OPCODE_INIT) {
+      return;
     }
 
     PublicKey senderStaticPublicKey = context.getStaticPublicKey(decodedPayload.getSenderId());
     if (senderStaticPublicKey == null) {
-      return null;
+      return;
     }
     try {
       if (!AuthenticatedPayloadUtil.verifyEcdsa(decodedPayload, senderStaticPublicKey)) {
-        return null;
+        return;
       }
     } catch (Exception ignored) {
-      return null;
+      return;
     }
 
     PublicKey peerEphemeralPublicKey;
     try {
       peerEphemeralPublicKey = PublicKeyLoader.decodePublicKey(decodedPayload.getEphemeralPublicKeyBytes().toByteArray());
     } catch (Exception ignored) {
-      return null;
+      return;
     }
 
     KeyPair localEphemeralKeys;
@@ -191,41 +181,40 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
     AuthenticatedConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
     List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, decodedPayload.getSenderId());
     sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
-    return null;
   }
 
-  private InboundPacket handleReply(ConnectionKey connectionKey, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {
+  private void handleReply(ConnectionKey connectionKey, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {
     if (decodedPayload.getAuthOpcode() != AuthOpcode.AUTH_OPCODE_REPLY) {
-      return null;
+      return;
     }
 
     PublicKey responderStaticPublicKey = context.getStaticPublicKey(decodedPayload.getSenderId());
     if (responderStaticPublicKey == null) {
-      return null;
+      return;
     }
     try {
       if (!AuthenticatedPayloadUtil.verifyEcdsa(decodedPayload, responderStaticPublicKey)) {
-        return null;
+        return;
       }
     } catch (Exception ignored) {
-      return null;
+      return;
     }
 
     PublicKey peerEphemeralPublicKey;
     try {
       peerEphemeralPublicKey = PublicKeyLoader.decodePublicKey(decodedPayload.getEphemeralPublicKeyBytes().toByteArray());
     } catch (Exception ignored) {
-      return null;
+      return;
     }
 
     AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
     if (connectionState == null) {
-      return null;
+      return;
     }
 
     PrivateKey localEphemeralPrivateKey = connectionState.ephemeralPrivateKey();
     if (localEphemeralPrivateKey == null) {
-      return null;
+      return;
     }
 
     SecretKey sharedSecret;
@@ -237,17 +226,12 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
     }
     List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, decodedPayload.getSenderId());
     sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
-    return null;
   }
 
   private InboundPacket handleData(AuthenticatedConnectionState connectionState, InboundPacket inbound) {
-    if (inbound.packet().getPacketType() != DpchPacketType.DPCH_PACKET_TYPE_DATA) {
-      return null;
-    }
-
     AuthenticatedDataEnvelope decodedPayload;
     try {
-      decodedPayload = AuthenticatedPayloadUtil.decodeHmac(inbound.packet().getPayload().toByteArray());
+      decodedPayload = AuthenticatedPayloadUtil.decodeHmac(inbound.payload());
     } catch (IllegalArgumentException ignored) {
       return null;
     }
@@ -266,9 +250,7 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
       return null;
     }
 
-    DpchPacket decodedPacket = DpchPacket.newBuilder().setConnectionId(inbound.packet().getConnectionId()).setPacketType(DpchPacketType.DPCH_PACKET_TYPE_DATA).setHasAck(false)
-        .setSequenceNumber(inbound.packet().getSequenceNumber()).setPayload(decodedPayload.getApplicationPayload()).build();
-    return new InboundPacket(inbound.sender(), decodedPacket, connectionState.authenticatedRemoteSenderId());
+    return new InboundPacket(inbound.sender(), inbound.packet(), decodedPayload.getApplicationPayload(), connectionState.authenticatedRemoteSenderId());
   }
 
   @Override
@@ -280,7 +262,7 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
       context.shutdown();
       workerThread.interrupt();
       context.closeAllConnectionStates();
-      context.handshakedLink.close();
+      context.perfectLink.close();
     } finally {
       LinkThreadUtil.awaitStop(workerThread, "authenticated-link");
     }

@@ -8,22 +8,22 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import pt.ulisboa.depchain.shared.network.links.AsyncLinkContext;
-import pt.ulisboa.depchain.shared.network.links.handshaked.HandshakedPerfectLink;
+import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class AuthenticatedContext extends AsyncLinkContext<InboundPacket> {
-  final HandshakedPerfectLink handshakedLink;
+  final PerfectLink perfectLink;
 
   final long localSenderId;
   final PrivateKey localStaticSKey;
   final Map<Long, PublicKey> staticPKeys;
   final Map<ConnectionKey, AuthenticatedConnectionState> connectionStates = new ConcurrentHashMap<>();
 
-  AuthenticatedContext(HandshakedPerfectLink handshakedLink, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) {
-    ValidationUtils.requireAllNonNull(named("handshakedLink", handshakedLink), named("localStaticSKey", localStaticSKey), named("staticPKeys", staticPKeys));
-    this.handshakedLink = handshakedLink;
+  AuthenticatedContext(PerfectLink perfectLink, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) {
+    ValidationUtils.requireAllNonNull(named("perfectLink", perfectLink), named("localStaticSKey", localStaticSKey), named("staticPKeys", staticPKeys));
+    this.perfectLink = perfectLink;
     this.localSenderId = ValidationUtils.requireNonNegativeLong(localSenderId, "localSenderId");
     this.localStaticSKey = localStaticSKey;
     this.staticPKeys = Map.copyOf(staticPKeys);

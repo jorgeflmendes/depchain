@@ -12,100 +12,97 @@ import org.slf4j.LoggerFactory;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
-import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
+import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
+import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public final class PerfectLink implements BlockingLink<InboundPacket> {
   private static final Logger logger = LoggerFactory.getLogger(PerfectLink.class);
 
   public static final int MAX_PACKET_SIZE = FairLossLink.MAX_PACKET_SIZE;
-  private static final byte[] EMPTY_CONTROL_PAYLOAD = new byte[0];
 
   private final PerfectContext context;
   private final PerfectSender sender;
-  private final Thread workerThread;
 
   public PerfectLink(StubbornLink stubbornLink) {
     this.context = new PerfectContext(stubbornLink);
     this.sender = new PerfectSender(context);
-    this.workerThread = Thread.ofVirtual().name("perfect-link").start(this::runInboundLoop);
   }
 
   public static PerfectLink bind(InetSocketAddress bindEndpoint) throws IOException {
-    StubbornLink stubbornLink = StubbornLink.bind(bindEndpoint);
-    return new PerfectLink(stubbornLink);
+    return new PerfectLink(StubbornLink.bind(bindEndpoint));
   }
 
   public static PerfectLink unbound() throws IOException {
-    StubbornLink stubbornLink = StubbornLink.unbound();
-    return new PerfectLink(stubbornLink);
+    return new PerfectLink(StubbornLink.unbound());
   }
 
-  public void sendData(long connectionId, byte[] payload, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_DATA, false, payload, remoteEndpoint);
-  }
-
-  public void sendSyn(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_SYN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
-  }
-
-  public void sendSynAck(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_SYN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
-  }
-
-  public void sendFin(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_FIN, false, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
-  }
-
-  public void sendFinAck(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.send(connectionId, DpchPacketType.DPCH_PACKET_TYPE_FIN, true, EMPTY_CONTROL_PAYLOAD, remoteEndpoint);
-  }
-
-  public void sendAck(long connectionId, int acknowledgedSequence, DpchPacketType acknowledgedType, InetSocketAddress remoteEndpoint) {
-    sender.sendAck(connectionId, acknowledgedSequence, acknowledgedType, remoteEndpoint);
+  public void send(long connectionId, byte[] payload, InetSocketAddress remoteEndpoint) {
+    sender.sendData(connectionId, payload, remoteEndpoint);
   }
 
   @Override
-  public InboundPacket receive() throws InterruptedException {
-    return context.receive();
+  public InboundPacket receive() throws Exception {
+    InboundPacket ready = context.pollReady();
+    if (ready != null) {
+      return ready;
+    }
+
+    while (context.isRunning()) {
+      InboundPacket delivered = processDatagram(context.stubbornLink.receive());
+      if (delivered != null) {
+        return delivered;
+      }
+    }
+
+    ready = context.pollReady();
+    if (ready != null) {
+      return ready;
+    }
+    throw new LinkClosedException("PerfectLink is closed");
   }
 
   @Override
-  public @Nullable InboundPacket receive(long timeoutMs) throws InterruptedException {
-    return context.receive(timeoutMs);
-  }
+  public @Nullable InboundPacket receive(long timeoutMs) throws Exception {
+    InboundPacket ready = context.pollReady();
+    if (ready != null) {
+      return ready;
+    }
 
-  public boolean awaitNoPendingSyn(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_SYN, timeoutMs);
-  }
+    long deadlineMs = TimeUtil.deadlineAfter(TimeUtil.nowMs(), timeoutMs);
+    while (context.isRunning()) {
+      long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
+      if (remainingMs <= 0L) {
+        return null;
+      }
 
-  public boolean awaitNoPendingFin(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_FIN, timeoutMs);
+      InboundPacket delivered = processDatagram(context.stubbornLink.receive(remainingMs));
+      if (delivered != null) {
+        return delivered;
+      }
+    }
+
+    return context.pollReady();
   }
 
   public boolean awaitNoPendingData(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_DATA, timeoutMs);
+    return sender.awaitNoPendingData(connectionId, remoteEndpoint, timeoutMs);
   }
 
   public void cancelPendingData(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.cancelPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_DATA);
-  }
-
-  public void cancelPendingControl(long connectionId, InetSocketAddress remoteEndpoint) {
-    sender.cancelPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_SYN);
-    sender.cancelPendingType(connectionId, remoteEndpoint, DpchPacketType.DPCH_PACKET_TYPE_FIN);
+    sender.cancelPendingData(connectionId, remoteEndpoint);
   }
 
   public void releaseConnection(long connectionId, InetSocketAddress remoteEndpoint) {
     ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, connectionId);
     PerfectConnectionState connectionState = context.connectionStates.remove(connectionKey);
     if (connectionState != null) {
-      for (TrackedKey trackedKey : connectionState.senderState().takeAllTracked(connectionId)) {
+      for (TrackedKey trackedKey : connectionState.senderState().cancelPendingData(connectionId)) {
         context.stubbornLink.cancelTracked(trackedKey, remoteEndpoint);
       }
     }
@@ -117,100 +114,93 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
       return;
     }
 
+    context.shutdown();
+    context.stubbornLink.close();
+  }
+
+  private @Nullable InboundPacket processDatagram(@Nullable InboundBytes datagram) throws IOException {
+    if (datagram == null) {
+      return null;
+    }
+
     try {
-      context.shutdown();
-      workerThread.interrupt();
-      context.stubbornLink.close();
-    } finally {
-      LinkThreadUtil.awaitStop(workerThread, "perfect-link");
-    }
-  }
-
-  private void runInboundLoop() {
-    while (context.isRunning()) {
-      try {
-        InboundPacket inbound = PerfectContext.decodeInboundPacket(context.stubbornLink.receive());
-        if (inbound == null) {
-          if (!context.isRunning()) {
-            break;
-          }
-          continue;
-        }
-        receivePacket(inbound);
-      } catch (IOException exception) {
-        if (!context.isRunning()) {
-          break;
-        }
-        logger.debug("PerfectLink worker error", exception);
+      InboundPacket inbound = PerfectContext.decodeInboundPacket(datagram);
+      if (inbound == null) {
+        return null;
       }
+      return receivePacket(inbound);
+    } catch (IOException exception) {
+      if (!context.isRunning()) {
+        return null;
+      }
+      logger.debug("PerfectLink receive error", exception);
+      return null;
     }
   }
 
-  private void receivePacket(InboundPacket inbound) {
+  private @Nullable InboundPacket receivePacket(InboundPacket inbound) {
     DpchPacket packet = inbound.packet();
     InetSocketAddress remoteEndpoint = inbound.sender();
     ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, packet.getConnectionId());
 
-    DpchPacketType reliableType = DpchPacketUtil.reliableTypeOrNull(packet);
-    if (DpchPacketUtil.hasType(packet, DpchPacketType.DPCH_PACKET_TYPE_ACK)) {
-      handleAck(packet, reliableType, connectionKey, remoteEndpoint);
+    if (packet.getPacketType() == DpchPacketType.DPCH_PACKET_TYPE_ACK) {
+      handleAck(packet, connectionKey, remoteEndpoint);
+      return null;
     }
-    if (reliableType != null) {
-      handleReliable(inbound, packet, reliableType, connectionKey);
+    if (packet.getPacketType() == DpchPacketType.DPCH_PACKET_TYPE_DATA) {
+      return handleData(inbound, packet, connectionKey);
     }
+    return null;
   }
 
-  private void handleAck(DpchPacket ackPacket, DpchPacketType fallbackAcknowledgedType, ConnectionKey connectionKey, InetSocketAddress remoteEndpoint) {
-    DpchPacketType acknowledgedType = PerfectContext.decodeAcknowledgedType(ackPacket.getPayload().toByteArray(), fallbackAcknowledgedType);
+  private void handleAck(DpchPacket ackPacket, ConnectionKey connectionKey, InetSocketAddress remoteEndpoint) {
     int acknowledgedSequence = ackPacket.getSequenceNumber();
-    if (acknowledgedType == null || acknowledgedSequence < 0) {
+    if (acknowledgedSequence < 0) {
       return;
     }
 
-    List<TrackedKey> cancellations = new ArrayList<>(1);
-    context.connectionStates.computeIfPresent(connectionKey, (ignored, connectionState) -> {
-      cancellations.addAll(connectionState.senderState().acknowledge(ackPacket.getConnectionId(), acknowledgedSequence, acknowledgedType));
-      return connectionState;
-    });
-    for (TrackedKey trackedKey : cancellations) {
+    PerfectConnectionState connectionState = context.connectionStates.get(connectionKey);
+    if (connectionState == null) {
+      return;
+    }
+
+    TrackedKey trackedKey = connectionState.senderState().acknowledge(ackPacket.getConnectionId(), acknowledgedSequence);
+    if (trackedKey != null) {
       context.stubbornLink.cancelTracked(trackedKey, remoteEndpoint);
     }
   }
 
-  private void handleReliable(InboundPacket inbound, DpchPacket packet, DpchPacketType reliableType, ConnectionKey connectionKey) {
-    List<InboundPacket> readyToDeliver = new ArrayList<>(1);
-    boolean shouldAckData = false;
+  private @Nullable InboundPacket handleData(InboundPacket inbound, DpchPacket packet, ConnectionKey connectionKey) {
+    InboundPacket firstReady = null;
+    List<InboundPacket> overflowReady = null;
     PerfectConnectionState connectionState = context.connectionStates.computeIfAbsent(connectionKey, ignored -> new PerfectConnectionState());
     ReceiverState receiverState = connectionState.receiverState();
 
     synchronized (receiverState) {
       int sequenceNumber = packet.getSequenceNumber();
       if (sequenceNumber < 0) {
-        return;
+        return null;
       }
 
-      if (receiverState.isAlreadyDelivered(sequenceNumber)) {
-        if (reliableType == DpchPacketType.DPCH_PACKET_TYPE_DATA) {
-          shouldAckData = true;
-        } else {
-          readyToDeliver.add(inbound);
-        }
-      } else {
-        if (reliableType == DpchPacketType.DPCH_PACKET_TYPE_DATA) {
-          shouldAckData = true;
-        }
-        if (receiverState.bufferIfNew(sequenceNumber, inbound)) {
-          while (receiverState.hasNextInOrderReady()) {
-            readyToDeliver.add(receiverState.pollNextInOrder());
+      if (!receiverState.isAlreadyDelivered(sequenceNumber) && receiverState.bufferIfNew(sequenceNumber, inbound)) {
+        while (receiverState.hasNextInOrderReady()) {
+          InboundPacket readyPacket = receiverState.pollNextInOrder();
+          if (firstReady == null) {
+            firstReady = readyPacket;
+          } else {
+            if (overflowReady == null) {
+              overflowReady = new ArrayList<>(1);
+            }
+            overflowReady.add(readyPacket);
           }
         }
       }
     }
 
-    readyToDeliver.forEach(context::offer);
-
-    if (shouldAckData) {
-      sender.sendAckBestEffort(packet.getConnectionId(), packet.getSequenceNumber(), inbound.sender(), PerfectContext.ACK_DATA);
+    if (overflowReady != null) {
+      overflowReady.forEach(context::offerReady);
     }
+    sender.sendAck(packet.getConnectionId(), packet.getSequenceNumber(), inbound.sender());
+    return firstReady;
   }
 }
