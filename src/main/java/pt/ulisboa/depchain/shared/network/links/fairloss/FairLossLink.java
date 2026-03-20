@@ -167,15 +167,12 @@ public final class FairLossLink extends SimpleChannelInboundHandler<DatagramPack
   @Override
   public void exceptionCaught(ChannelHandlerContext context, Throwable cause) {
     if (transportFailure == null) {
-      transportFailure = asIoException(cause);
+      if (cause instanceof IOException ioException) {
+        transportFailure = ioException;
+      } else {
+        transportFailure = new IOException("Netty UDP transport failure", cause);
+      }
     }
     context.close();
-  }
-
-  private static IOException asIoException(Throwable cause) {
-    if (cause instanceof IOException ioException) {
-      return ioException;
-    }
-    return new IOException("Netty UDP transport failure", cause);
   }
 }

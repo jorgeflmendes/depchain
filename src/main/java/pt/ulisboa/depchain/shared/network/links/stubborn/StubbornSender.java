@@ -4,6 +4,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.concurrent.TimeUnit;
 
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
@@ -11,6 +12,8 @@ import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedTargetKey;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+
+import io.netty.util.Timeout;
 
 final class StubbornSender {
   private final StubbornContext context;
@@ -27,7 +30,7 @@ final class StubbornSender {
   }
 
   // Sends a message (one time only) without tracking, ignoring any exceptions.
-  void sendBestEffort(byte[] payload, InetSocketAddress endpoint, TrackedKey key) {
+  private void sendBestEffort(byte[] payload, InetSocketAddress endpoint, TrackedKey key) {
     try {
       context.fairLossLink.send(payload, endpoint);
     } catch (IOException exception) {
@@ -44,29 +47,74 @@ final class StubbornSender {
     TrackedMessage tracked;
     TrackedTargetKey targetKey = new TrackedTargetKey(remoteEndpoint, key);
 
-    synchronized (context.stateLock) {
+    synchronized (context.retryLock) {
       context.ensureOpen();
-      long nextRetryAtMs = TimeUtil.deadlineAfter(now, context.computeRetryDelayMs(0));
+      long nextRetryAtMs = TimeUtil.deadlineAfter(now, context.retryDelayMs(0));
       tracked = new TrackedMessage(key, payload, 0, now, nextRetryAtMs, onTerminalState);
-      context.retryRegistry.putTrackedMessage(targetKey, tracked);
-      context.stateLock.notifyAll();
+      context.trackedMessagesByTarget.put(targetKey, tracked);
+      scheduleRetry(targetKey, tracked);
     }
 
     try {
       sendBestEffort(tracked.payloadView(), remoteEndpoint, tracked.key());
     } catch (RuntimeException exception) {
-      TrackedMessage removedTracked;
-      synchronized (context.stateLock) {
-        removedTracked = context.retryRegistry.removeTrackedMessage(targetKey);
-        context.retryRegistry.recordTerminalFailure(targetKey, new LinkFailureException("Tracked message failed to send: " + targetKey));
-        context.stateLock.notifyAll();
-      }
-      if (removedTracked != null) {
-        removedTracked.notifyTerminalState();
-      }
+      notifyTrackedSendFailure(targetKey, exception);
       throw exception;
     }
     return tracked.key();
+  }
+
+    private void scheduleRetry(TrackedTargetKey targetKey, TrackedMessage tracked) {
+    long delayMs = Math.max(1L, TimeUtil.remainingMsUntil(tracked.nextRetryAtMs(), TimeUtil.nowMs()));
+    Timeout timeout = context.retryTimer.newTimeout(ignored -> retryTracked(targetKey), delayMs, TimeUnit.MILLISECONDS);
+    context.replaceRetryTimeout(targetKey, timeout);
+  }
+
+  private void retryTracked(TrackedTargetKey targetKey) {
+    TrackedMessage tracked;
+    TrackedMessage terminalTracked = null;
+
+    synchronized (context.retryLock) {
+      if (!context.running.get()) {
+        return;
+      }
+
+      tracked = context.trackedMessagesByTarget.get(targetKey);
+      if (tracked == null) {
+        return;
+      }
+
+      if (context.reachedRetryLimit(tracked)) {
+        terminalTracked = context.removeTrackedMessage(targetKey);
+        context.terminalFailuresByTarget.put(targetKey, new LinkFailureException("Tracked message failed after max retries: " + targetKey));
+      } else {
+        long now = TimeUtil.nowMs();
+        tracked.markRetried(TimeUtil.deadlineAfter(now, context.retryDelayMs(tracked.retryAttempt() + 1)));
+        scheduleRetry(targetKey, tracked);
+      }
+    }
+
+    if (terminalTracked != null) {
+      terminalTracked.notifyTerminalState();
+      return;
+    }
+
+    try {
+      sendBestEffort(tracked.payloadView(), targetKey.endpoint(), tracked.key());
+    } catch (RuntimeException exception) {
+      notifyTrackedSendFailure(targetKey, exception);
+    }
+  }
+
+  private void notifyTrackedSendFailure(TrackedTargetKey targetKey, RuntimeException exception) {
+    TrackedMessage removedTracked;
+    synchronized (context.retryLock) {
+      removedTracked = context.removeTrackedMessage(targetKey);
+      context.terminalFailuresByTarget.put(targetKey, new LinkFailureException("Tracked message failed to send: " + targetKey, exception));
+    }
+    if (removedTracked != null) {
+      removedTracked.notifyTerminalState();
+    }
   }
 
   // Cancels the tracking of a message, preventing any future retries.
@@ -76,21 +124,20 @@ final class StubbornSender {
       return;
     }
 
-    synchronized (context.stateLock) {
+    synchronized (context.retryLock) {
       if (!context.running.get()) {
         return;
       }
 
       TrackedTargetKey targetKey = new TrackedTargetKey(remoteEndpoint, key);
-      context.retryRegistry.removeTrackedMessage(targetKey);
-      context.stateLock.notifyAll();
+      context.removeTrackedMessage(targetKey);
     }
   }
 
   LinkFailureException pollTerminalFailure(TrackedKey key, InetSocketAddress remoteEndpoint) {
     ValidationUtils.requireAllNonNull(named("key", key), named("remoteEndpoint", remoteEndpoint));
-    synchronized (context.stateLock) {
-      return context.retryRegistry.pollTerminalFailure(new TrackedTargetKey(remoteEndpoint, key));
+    synchronized (context.retryLock) {
+      return context.pollTerminalFailure(new TrackedTargetKey(remoteEndpoint, key));
     }
   }
 }

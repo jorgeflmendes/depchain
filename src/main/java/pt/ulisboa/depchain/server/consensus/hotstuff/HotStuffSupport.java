@@ -34,7 +34,7 @@ public final class HotStuffSupport {
       } else if (transaction.hasData()) {
         return "contract_call to=%s nonce=%d data_len=%d".formatted(transaction.getTo(), transaction.getNonce(), transaction.getData().size());
       }
-      
+
       return "contract_call to=%s nonce=%d".formatted(transaction.getTo(), transaction.getNonce());
     }
     if (command.hasNoOp()) {

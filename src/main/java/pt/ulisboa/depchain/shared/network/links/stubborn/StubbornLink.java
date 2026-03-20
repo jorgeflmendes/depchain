@@ -2,15 +2,16 @@ package pt.ulisboa.depchain.shared.network.links.stubborn;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.List;
 
 import org.eclipse.jdt.annotation.Nullable;
 
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
-import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
+import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
 
 public final class StubbornLink implements BlockingLink<InboundBytes> {
   public static final long DEFAULT_BASE_DELAY_MS = 80L;
@@ -20,17 +21,10 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
 
   private final StubbornContext context;
   private final StubbornSender sender;
-  private final StubbornReceiver receiver;
-  private final StubbornRetryEngine retryEngine;
-  private final Thread retryLoopThread;
 
   private StubbornLink(FairLossLink fairLossLink) {
     this.context = new StubbornContext(fairLossLink);
     this.sender = new StubbornSender(context);
-    this.receiver = new StubbornReceiver(context);
-    this.retryEngine = new StubbornRetryEngine(context, sender);
-
-    this.retryLoopThread = Thread.ofVirtual().name("stubborn-link").start(retryEngine::runRetryLoop);
   }
 
   public static StubbornLink bind(InetSocketAddress bindEndpoint) throws IOException {
@@ -64,12 +58,34 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
 
   @Override
   public InboundBytes receive() throws IOException {
-    return receiver.receive();
+    if (!context.running.get()) {
+      return null;
+    }
+    
+    try {
+      return context.fairLossLink.receive();
+    } catch (IOException exception) {
+      if (!context.running.get()) {
+        return null;
+      }
+      throw exception;
+    }
   }
 
   @Override
   public @Nullable InboundBytes receive(long timeoutMs) throws IOException {
-    return receiver.receive(timeoutMs);
+    if (!context.running.get()) {
+      return null;
+    }
+
+    try {
+      return context.fairLossLink.receive(timeoutMs);
+    } catch (IOException exception) {
+      if (!context.running.get()) {
+        return null;
+      }
+      throw exception;
+    }
   }
 
   @Override
@@ -78,12 +94,17 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
       return;
     }
 
-    synchronized (context.stateLock) {
-      context.stateLock.notifyAll();
+    List<TrackedMessage> remainingTracked;
+    synchronized (context.retryLock) {
+      remainingTracked = List.copyOf(context.trackedMessagesByTarget.values());
+      context.trackedMessagesByTarget.clear();
+      context.retryTimeoutsByTarget.values().forEach(io.netty.util.Timeout::cancel);
+      context.retryTimeoutsByTarget.clear();
+      context.terminalFailuresByTarget.clear();
     }
 
+    context.retryTimer.stop();
     context.fairLossLink.close();
-    retryLoopThread.interrupt();
-    LinkThreadUtil.awaitStop(retryLoopThread, "stubborn-link");
+    remainingTracked.forEach(TrackedMessage::notifyTerminalState);
   }
 }

@@ -5,4 +5,8 @@ public class LinkFailureException extends RuntimeException {
   public LinkFailureException(String message) {
     super(message);
   }
+
+  public LinkFailureException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }
