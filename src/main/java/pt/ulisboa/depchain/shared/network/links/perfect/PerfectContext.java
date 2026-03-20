@@ -70,7 +70,7 @@ final class PerfectContext extends AsyncLinkContext<InboundPacket> {
       return null;
     }
     try {
-      DpchPacket packet = ProtoValidationUtil.requireValid(DpchPacket.parseFrom(datagram.payload()), "DpchPacket");
+      DpchPacket packet = ProtoValidationUtil.requireValid(DpchPacket.parseFrom(datagram.payloadView(), 0, datagram.payloadLength()), "DpchPacket");
       return new InboundPacket(datagram.sender(), packet);
     } catch (InvalidProtocolBufferException | IllegalArgumentException exception) {
       throw new IOException("Invalid protobuf DPCH packet", exception);

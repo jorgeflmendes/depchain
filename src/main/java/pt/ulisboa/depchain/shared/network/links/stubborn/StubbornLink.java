@@ -25,6 +25,7 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
   private StubbornLink(FairLossLink fairLossLink) {
     this.context = new StubbornContext(fairLossLink);
     this.sender = new StubbornSender(context);
+    this.context.startRetrySweep(sender);
   }
 
   public static StubbornLink bind(InetSocketAddress bindEndpoint) throws IOException {
@@ -96,11 +97,9 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
 
     List<TrackedMessage> remainingTracked;
     synchronized (context.retryLock) {
-      remainingTracked = List.copyOf(context.trackedMessagesByTarget.values());
-      context.trackedMessagesByTarget.clear();
-      context.retryTimeoutsByTarget.values().forEach(io.netty.util.Timeout::cancel);
-      context.retryTimeoutsByTarget.clear();
-      context.terminalFailuresByTarget.clear();
+      remainingTracked = context.retryStatesByEndpoint.values().stream().flatMap(retryState -> retryState.trackedMessagesByKey.values().stream()).toList();
+      context.retryStatesByEndpoint.clear();
+      context.cancelRetrySweep();
     }
 
     context.retryTimer.stop();
