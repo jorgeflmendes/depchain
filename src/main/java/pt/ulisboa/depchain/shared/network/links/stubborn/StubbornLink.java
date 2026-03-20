@@ -61,7 +61,7 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
     if (!context.running.get()) {
       return null;
     }
-    
+
     try {
       return context.fairLossLink.receive();
     } catch (IOException exception) {

@@ -64,7 +64,7 @@ final class StubbornSender {
     return tracked.key();
   }
 
-    private void scheduleRetry(TrackedTargetKey targetKey, TrackedMessage tracked) {
+  private void scheduleRetry(TrackedTargetKey targetKey, TrackedMessage tracked) {
     long delayMs = Math.max(1L, TimeUtil.remainingMsUntil(tracked.nextRetryAtMs(), TimeUtil.nowMs()));
     Timeout timeout = context.retryTimer.newTimeout(ignored -> retryTracked(targetKey), delayMs, TimeUnit.MILLISECONDS);
     context.replaceRetryTimeout(targetKey, timeout);
