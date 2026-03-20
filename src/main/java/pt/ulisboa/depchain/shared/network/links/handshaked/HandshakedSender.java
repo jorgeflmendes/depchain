@@ -23,7 +23,7 @@ final class HandshakedSender {
   void send(long connectionId, byte[] payload, InetSocketAddress remote) {
     ValidationUtils.requireAllNonNull(named("payload", payload), named("remote", remote));
     ConnectionKey connectionKey = new ConnectionKey(remote, connectionId);
-    ConnectionState connectionState = context.connectionStateRegistry.getOrCreate(connectionKey);
+    ConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
 
     startHandshakeAndSend(connectionState, connectionId, payload, remote);
   }
@@ -78,7 +78,7 @@ final class HandshakedSender {
   void closeConnection(long connectionId, InetSocketAddress remote) {
     ValidationUtils.requireNonNull(remote, "remote");
     ConnectionKey connectionKey = new ConnectionKey(remote, connectionId);
-    ConnectionState connectionState = context.connectionStateRegistry.get(connectionKey);
+    ConnectionState connectionState = context.getConnectionState(connectionKey);
 
     // If there's no state
     if (connectionState == null) {
@@ -99,7 +99,7 @@ final class HandshakedSender {
       }
     }
 
-    awaitPendingDataClearance(connectionId, remote, "Interrupted while waiting for pending DATA");
+    awaitPendingClearance(DpchPacketType.DPCH_PACKET_TYPE_DATA, connectionId, remote, "Interrupted while waiting for pending DATA");
 
     synchronized (connectionState) {
       if (connectionState.shouldSendFin()) {
@@ -108,7 +108,7 @@ final class HandshakedSender {
       }
     }
 
-    awaitPendingFinClearance(connectionId, remote, "Interrupted while waiting for pending FIN");
+    awaitPendingClearance(DpchPacketType.DPCH_PACKET_TYPE_FIN, connectionId, remote, "Interrupted while waiting for pending FIN");
 
     waitUntilCloseConverged(connectionState);
     context.perfectLink.releaseConnection(connectionId, remote);
@@ -117,15 +117,21 @@ final class HandshakedSender {
   private void closeStatelessConnection(long connectionId, InetSocketAddress remote) {
     try {
       context.perfectLink.sendFin(connectionId, remote);
-      awaitPendingFinClearance(connectionId, remote, "Interrupted while waiting for stateless FIN");
+      awaitPendingClearance(DpchPacketType.DPCH_PACKET_TYPE_FIN, connectionId, remote, "Interrupted while waiting for stateless FIN");
     } finally {
       context.perfectLink.releaseConnection(connectionId, remote);
     }
   }
 
   private void waitUntilFullyEstablished(ConnectionState connectionState, long connectionId, InetSocketAddress remote, boolean shouldWaitForSyn) {
-    if (shouldWaitForSyn || hasPendingHandshake(connectionState)) {
-      awaitPendingSynClearance(connectionId, remote, "Interrupted while waiting for handshake SYN");
+    boolean mustWaitForSyn = shouldWaitForSyn;
+    synchronized (connectionState) {
+      if (!mustWaitForSyn) {
+        mustWaitForSyn = !connectionState.isFullyEstablished() && !connectionState.isClosing();
+      }
+    }
+    if (mustWaitForSyn) {
+      awaitPendingClearance(DpchPacketType.DPCH_PACKET_TYPE_SYN, connectionId, remote, "Interrupted while waiting for handshake SYN");
     }
 
     waitOnConnectionState(connectionState, connectionState::isFullyEstablished, "Connection closed during handshake", "Interrupted while waiting for handshake");
@@ -136,21 +142,18 @@ final class HandshakedSender {
     ensureRunning();
   }
 
-  private void awaitPendingDataClearance(long connectionId, InetSocketAddress remote, String interruptedMessage) {
-    awaitPendingClearance(() -> context.perfectLink.awaitNoPendingData(connectionId, remote, Long.MAX_VALUE), interruptedMessage);
-  }
-
-  private void awaitPendingSynClearance(long connectionId, InetSocketAddress remote, String interruptedMessage) {
-    awaitPendingClearance(() -> context.perfectLink.awaitNoPendingSyn(connectionId, remote, Long.MAX_VALUE), interruptedMessage);
-  }
-
-  private void awaitPendingFinClearance(long connectionId, InetSocketAddress remote, String interruptedMessage) {
-    awaitPendingClearance(() -> context.perfectLink.awaitNoPendingFin(connectionId, remote, Long.MAX_VALUE), interruptedMessage);
-  }
-
-  private void awaitPendingClearance(InterruptiblePendingWait waitOperation, String interruptedMessage) {
+  private void awaitPendingClearance(DpchPacketType packetType, long connectionId, InetSocketAddress remote, String interruptedMessage) {
     try {
-      if (!waitOperation.await()) {
+      boolean cleared;
+      if (packetType == DpchPacketType.DPCH_PACKET_TYPE_SYN) {
+        cleared = context.perfectLink.awaitNoPendingSyn(connectionId, remote, Long.MAX_VALUE);
+      } else if (packetType == DpchPacketType.DPCH_PACKET_TYPE_FIN) {
+        cleared = context.perfectLink.awaitNoPendingFin(connectionId, remote, Long.MAX_VALUE);
+      } else {
+        cleared = context.perfectLink.awaitNoPendingData(connectionId, remote, Long.MAX_VALUE);
+      }
+
+      if (!cleared) {
         ensureRunning();
       }
     } catch (InterruptedException interruptedException) {
@@ -162,12 +165,6 @@ final class HandshakedSender {
   private void ensureRunning() {
     if (!context.isRunning()) {
       throw new IllegalStateException("HandshakedPerfectLink is closed");
-    }
-  }
-
-  private boolean hasPendingHandshake(ConnectionState connectionState) {
-    synchronized (connectionState) {
-      return !connectionState.isFullyEstablished() && !connectionState.isClosing();
     }
   }
 
@@ -187,10 +184,5 @@ final class HandshakedSender {
         }
       }
     }
-  }
-
-  @FunctionalInterface
-  private interface InterruptiblePendingWait {
-    boolean await() throws InterruptedException;
   }
 }
