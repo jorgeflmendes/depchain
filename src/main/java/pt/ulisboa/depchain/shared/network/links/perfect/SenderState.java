@@ -106,10 +106,21 @@ final class SenderState {
 
   synchronized boolean waitUntilNoPending(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType type, long deadlineMs)
       throws InterruptedException {
-    while (context.isRunning() && hasPending(type)) {
+    while (context.isRunning()) {
       LinkFailureException failure = pollTerminalFailureForType(context, connectionId, remoteEndpoint, type);
       if (failure != null) {
         throw failure;
+      }
+
+      boolean hasPendingType = false;
+      for (DpchPacketType inFlightType : inFlightBySeq.values()) {
+        if (inFlightType == type) {
+          hasPendingType = true;
+          break;
+        }
+      }
+      if (!hasPendingType) {
+        return true;
       }
 
       long remainingMs = TimeUtil.remainingMsUntil(deadlineMs);
@@ -118,20 +129,16 @@ final class SenderState {
       }
       wait(remainingMs);
     }
-    return !hasPending(type);
+    for (DpchPacketType inFlightType : inFlightBySeq.values()) {
+      if (inFlightType == type) {
+        return false;
+      }
+    }
+    return true;
   }
 
   synchronized void notifyWaiters() {
     notifyAll();
-  }
-
-  private boolean hasPending(DpchPacketType type) {
-    for (DpchPacketType inFlightType : inFlightBySeq.values()) {
-      if (inFlightType == type) {
-        return true;
-      }
-    }
-    return false;
   }
 
   synchronized LinkFailureException pollTerminalFailureForType(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType type) {
@@ -140,7 +147,7 @@ final class SenderState {
         continue;
       }
 
-      LinkFailureException failure = context.pollTerminalFailure(connectionId, remoteEndpoint, entry.getKey(), entry.getValue());
+      LinkFailureException failure = context.stubbornLink.pollTerminalFailure(new TrackedKey(connectionId, entry.getKey(), entry.getValue().getNumber()), remoteEndpoint);
       if (failure != null) {
         return failure;
       }

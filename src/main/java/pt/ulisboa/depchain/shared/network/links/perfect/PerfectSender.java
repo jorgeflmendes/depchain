@@ -1,5 +1,7 @@
 package pt.ulisboa.depchain.shared.network.links.perfect;
 
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -14,6 +16,7 @@ import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.DpchPacketType;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
+import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 final class PerfectSender {
@@ -43,7 +46,23 @@ final class PerfectSender {
   }
 
   boolean awaitNoPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType packetType, long timeoutMs) throws InterruptedException {
-    return context.awaitNoPendingType(connectionId, remoteEndpoint, packetType, timeoutMs);
+    ValidationUtils.requireAllNonNull(named("remoteEndpoint", remoteEndpoint), named("packetType", packetType));
+    if (packetType == DpchPacketType.DPCH_PACKET_TYPE_ACK) {
+      throw new IllegalArgumentException("ACK packets are not tracked");
+    }
+
+    long checkedTimeoutMs = ValidationUtils.requireNonNegativeLong(timeoutMs, "timeoutMs");
+    long nowMs = TimeUtil.nowMs();
+    long deadlineMs = Long.MAX_VALUE;
+    if (checkedTimeoutMs < Long.MAX_VALUE - nowMs) {
+      deadlineMs = TimeUtil.deadlineAfter(nowMs, checkedTimeoutMs);
+    }
+    if (!context.isRunning()) {
+      return false;
+    }
+
+    PerfectConnectionState connectionState = context.connectionStates.get(new ConnectionKey(remoteEndpoint, connectionId));
+    return connectionState == null || connectionState.senderState().waitUntilNoPending(context, connectionId, remoteEndpoint, packetType, deadlineMs);
   }
 
   void cancelPendingType(long connectionId, InetSocketAddress remoteEndpoint, DpchPacketType packetType) {
@@ -55,7 +74,9 @@ final class PerfectSender {
       cancellations.addAll(connectionState.senderState().cancelPendingType(connectionId, packetType));
       return connectionState;
     });
-    context.cancelTrackedBatch(cancellations, remoteEndpoint);
+    for (TrackedKey trackedKey : cancellations) {
+      context.stubbornLink.cancelTracked(trackedKey, remoteEndpoint);
+    }
   }
 
   void sendAckBestEffort(long connectionId, int sequenceNumber, InetSocketAddress remote, byte[] ackPayload) {
