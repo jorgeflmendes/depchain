@@ -316,34 +316,52 @@ public final class ReplicaServer {
   }
 
   private LinkedHashMap<String, GenesisParser.GenesisAccount> snapshotKnownAccounts(List<GenesisParser.GenesisTransaction> persistedTransactions) {
-    LinkedHashSet<String> addresses = new LinkedHashSet<>(genesis.state().keySet());
-
-    for (GenesisParser.GenesisTransaction tx : persistedTransactions) {
-      if (tx.from() != null && !tx.from().isBlank()) {
-        addresses.add(tx.from());
-      }
-      if (tx.to() != null && !tx.to().isBlank()) {
-        addresses.add(tx.to());
-      }
-    }
+    // Track all genesis accounts plus transaction participants to keep persisted snapshots bounded and
+    // deterministic.
+    LinkedHashSet<String> addresses = collectTrackedAddresses(persistedTransactions);
 
     LinkedHashMap<String, GenesisParser.GenesisAccount> snapshot = new LinkedHashMap<>();
     for (String addressHex : addresses) {
-      Address address = parseAddress(addressHex, "snapshot address");
-      var account = evmService.account(address);
-      if (account == null) {
-        continue;
+      GenesisParser.GenesisAccount accountSnapshot = snapshotAccount(addressHex);
+      if (accountSnapshot != null) {
+        snapshot.put(addressHex, accountSnapshot);
       }
-
-      String code = null;
-      if (account.getCode() != null && !account.getCode().isEmpty()) {
-        code = account.getCode().toHexString();
-      }
-      LinkedHashMap<String, String> storage = new LinkedHashMap<>();
-      account.getUpdatedStorage().forEach((key, value) -> storage.put(key.toHexString(), value.toHexString()));
-      snapshot.put(addressHex, new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, storage));
     }
     return snapshot;
+  }
+
+  private LinkedHashSet<String> collectTrackedAddresses(List<GenesisParser.GenesisTransaction> persistedTransactions) {
+    LinkedHashSet<String> addresses = new LinkedHashSet<>(genesis.state().keySet());
+    for (GenesisParser.GenesisTransaction tx : persistedTransactions) {
+      addAddressIfPresent(addresses, tx.from());
+      addAddressIfPresent(addresses, tx.to());
+    }
+    return addresses;
+  }
+
+  private static void addAddressIfPresent(LinkedHashSet<String> addresses, String addressHex) {
+    if (addressHex != null && !addressHex.isBlank()) {
+      addresses.add(addressHex);
+    }
+  }
+
+  private GenesisParser.GenesisAccount snapshotAccount(String addressHex) {
+    Address address = parseAddress(addressHex, "snapshot address");
+    var account = evmService.account(address);
+    if (account == null) {
+      return null;
+    }
+
+    String code = null;
+    if (account.getCode() != null && !account.getCode().isEmpty()) {
+      code = account.getCode().toHexString();
+    }
+
+    // SimpleWorld exposes updated storage entries; this captures the touched keys for persisted
+    // snapshots.
+    LinkedHashMap<String, String> storage = new LinkedHashMap<>();
+    account.getUpdatedStorage().forEach((key, value) -> storage.put(key.toHexString(), value.toHexString()));
+    return new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, storage);
   }
 
   private static GenesisParser.GenesisTransaction toPersistedTransaction(TransactionRequest tx, Address fromAddress) {
