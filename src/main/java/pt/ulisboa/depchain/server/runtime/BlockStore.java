@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,7 +41,12 @@ public final class BlockStore {
 
     Path genesisBlockPath = blockFilePath(0L);
     if (Files.exists(genesisBlockPath)) {
-      return readBlock(genesisBlockPath);
+      try {
+        return readBlock(genesisBlockPath);
+      } catch (IOException exception) {
+        // Another replica may have been writing genesis concurrently.
+        // Regenerate deterministic genesis content and overwrite atomically.
+      }
     }
 
     GenesisParser genesis = GenesisParser.loadDefaultResource();
@@ -97,9 +103,11 @@ public final class BlockStore {
 
   private void writeBlock(BlockDocument block) throws IOException {
     Path blockPath = blockFilePath(block.height());
-    try (OutputStream output = Files.newOutputStream(blockPath)) {
+    Path temporaryPath = Files.createTempFile(blocksDirectory, blockPath.getFileName() + ".tmp-", ".json");
+    try (OutputStream output = Files.newOutputStream(temporaryPath)) {
       JSON.writeValue(output, block);
     }
+    Files.move(temporaryPath, blockPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
   }
 
   private BlockDocument readBlock(Path blockPath) throws IOException {
