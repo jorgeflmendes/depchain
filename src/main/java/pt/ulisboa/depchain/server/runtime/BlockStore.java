@@ -90,8 +90,7 @@ public final class BlockStore {
 
     Optional<Path> latestPath;
     try (var paths = Files.list(blocksDirectory)) {
-      latestPath = paths.filter(path -> path.getFileName().toString().startsWith(BLOCK_FILE_PREFIX) && path.getFileName().toString().endsWith(BLOCK_FILE_SUFFIX))
-          .max(Comparator.comparingLong(BlockStore::parseHeightFromPath));
+      latestPath = paths.filter(BlockStore::isBlockFile).max(Comparator.comparingLong(BlockStore::parseHeightFromPath));
     }
 
     if (latestPath.isEmpty()) {
@@ -125,6 +124,11 @@ public final class BlockStore {
     String fileName = path.getFileName().toString();
     String numericPart = fileName.substring(BLOCK_FILE_PREFIX.length(), fileName.length() - BLOCK_FILE_SUFFIX.length());
     return Long.parseLong(numericPart);
+  }
+
+  private static boolean isBlockFile(Path path) {
+    String fileName = path.getFileName().toString();
+    return fileName.startsWith(BLOCK_FILE_PREFIX) && fileName.endsWith(BLOCK_FILE_SUFFIX);
   }
 
   public record BlockDocument(long height, @JsonProperty("block_hash") String blockHash, @JsonProperty("previous_block_hash") @Nullable String previousBlockHash,

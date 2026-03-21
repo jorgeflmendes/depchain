@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
@@ -106,25 +107,23 @@ public final class ReplicaServer {
 
   // Loop for handling messages from clients
   private void runClientLoop(AuthenticatedLink transport) {
-    while (true) {
-      InboundPacket request = receiveNextInbound(transport);
-      if (request == null) {
-        continue;
-      }
-
-      handleClientRequest(request);
-    }
+    runInboundLoop(transport, this::handleClientRequest);
   }
 
   // Loop for handling messages from other replicas
   private void runNodeLoop(AuthenticatedLink transport) {
+    runInboundLoop(transport, this::handleNodeRequest);
+  }
+
+  // Shared inbound loop used by both client and replica channels.
+  private void runInboundLoop(AuthenticatedLink transport, Consumer<InboundPacket> handler) {
     while (true) {
       InboundPacket request = receiveNextInbound(transport);
       if (request == null) {
         continue;
       }
 
-      handleNodeRequest(request);
+      handler.accept(request);
     }
   }
 
@@ -289,6 +288,7 @@ public final class ReplicaServer {
     logger.debug("Executed node hook received node={} view={}", shortHash(node.getNodeHash()), node.getViewNumber());
 
     try {
+      // Each committed node is materialized as the next persisted block in the local chain.
       Optional<BlockStore.BlockDocument> latest = blockStore.loadLatest();
       long nextHeight = latest.map(block -> block.height() + 1L).orElse(0L);
       String previousHash = latest.map(BlockStore.BlockDocument::blockHash).orElse(null);
