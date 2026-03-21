@@ -1,4 +1,4 @@
-package pt.ulisboa.depchain.shared.config;
+package main.java.pt.ulisboa.depchain.shared.config;
 
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
