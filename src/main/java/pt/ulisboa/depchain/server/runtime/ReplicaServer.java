@@ -38,6 +38,7 @@ import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
+import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
 public final class ReplicaServer {
@@ -53,6 +54,7 @@ public final class ReplicaServer {
   private final BlockStore blockStore;
   private final BlockStore.BlockDocument persistedGenesisBlock;
   private final EvmService evmService;
+  private final Address clientAccountAddress;
   private final HotStuffManager hotStuffManager;
 
   public ReplicaServer(String serverId, String configPath) throws Exception {
@@ -70,6 +72,7 @@ public final class ReplicaServer {
     applyGenesisTransactions(evmService, genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
+    this.clientAccountAddress = clientAddress(clientPublicKey);
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
         evmService, this::onExecutedNode);
   }
@@ -309,7 +312,7 @@ public final class ReplicaServer {
     }
 
     TransactionRequest tx = node.getCommand().getTransaction().getClientRequest().getTransaction();
-    return List.of(toPersistedTransaction(tx));
+    return List.of(toPersistedTransaction(tx, clientAccountAddress));
   }
 
   private LinkedHashMap<String, GenesisParser.GenesisAccount> snapshotKnownAccounts(List<GenesisParser.GenesisTransaction> persistedTransactions) {
@@ -341,7 +344,7 @@ public final class ReplicaServer {
     return snapshot;
   }
 
-  private static GenesisParser.GenesisTransaction toPersistedTransaction(TransactionRequest tx) {
+  private static GenesisParser.GenesisTransaction toPersistedTransaction(TransactionRequest tx, Address fromAddress) {
     String type;
     switch (tx.getType()) {
       case TRANSACTION_TYPE_TRANSFER -> type = "TRANSFER";
@@ -366,11 +369,12 @@ public final class ReplicaServer {
       signature = Bytes.wrap(tx.getSignature().toByteArray()).toHexString();
     }
 
-    return new GenesisParser.GenesisTransaction(type, senderIdToAddressHex(tx.getRequestKey().getClientSenderId()), to, Long.toString(tx.getAmount()), tx.getNonce(),
-        tx.getGasLimit(), tx.getGasPrice(), input, signature);
+    String from = fromAddress.toHexString().substring(2);
+    return new GenesisParser.GenesisTransaction(type, from, to, Long.toString(tx.getAmount()), tx.getNonce(), tx.getGasLimit(), tx.getGasPrice(), input, signature);
   }
 
-  private static String senderIdToAddressHex(long senderId) {
-    return String.format("%040x", senderId);
+  private static Address clientAddress(PublicKey clientPublicKey) {
+    String publicKeyHash = CryptoUtil.sha256Hex(clientPublicKey.getEncoded());
+    return Address.fromHexString("0x" + publicKeyHash.substring(publicKeyHash.length() - 40));
   }
 }
