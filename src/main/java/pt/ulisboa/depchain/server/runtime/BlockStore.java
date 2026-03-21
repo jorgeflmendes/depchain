@@ -53,7 +53,29 @@ public final class BlockStore {
         ValidationUtils.requireNonNull(block, "block");
         Files.createDirectories(blocksDirectory);
 
-        // TODO: enforce previous-block linkage and hash verification before writing.
+        Optional<BlockDocument> latest = loadLatest();
+        if (latest.isEmpty()) {
+            if (block.height() != 0L) {
+                throw new IllegalArgumentException("first persisted block must have height 0");
+            }
+            if (block.previousBlockHash() != null) {
+                throw new IllegalArgumentException("genesis persisted block must not set previous_block_hash");
+            }
+        } else {
+            BlockDocument latestBlock = latest.get();
+            long expectedHeight = latestBlock.height() + 1L;
+            if (block.height() != expectedHeight) {
+                throw new IllegalArgumentException("expected next block height " + expectedHeight + " but got " + block.height());
+            }
+            if (block.previousBlockHash() == null || !block.previousBlockHash().equals(latestBlock.blockHash())) {
+                throw new IllegalArgumentException("block previous_block_hash must match latest block hash");
+            }
+        }
+
+        if (Files.exists(blockFilePath(block.height()))) {
+            throw new IllegalStateException("block height " + block.height() + " already exists");
+        }
+
         writeBlock(block);
     }
 
