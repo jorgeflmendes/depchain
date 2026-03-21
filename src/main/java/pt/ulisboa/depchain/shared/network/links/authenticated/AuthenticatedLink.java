@@ -32,6 +32,7 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   private static final Logger logger = LoggerFactory.getLogger(AuthenticatedLink.class);
+  private static final long RECEIVE_MODE_RECHECK_MS = 50L;
   private final AuthenticatedContext context;
   private final AuthenticatedSender sender;
   private final Thread workerThread;
@@ -62,24 +63,30 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
   @Override
   public InboundPacket receive() throws InterruptedException {
-    InboundPacket delivered = pollDelivered();
-    if (delivered != null) {
-      return delivered;
-    }
-    if (!context.tryEnterDirectReceive()) {
-      return context.receive();
-    }
-
-    try {
-      delivered = receiveDirectLoop(Long.MAX_VALUE);
+    while (context.isRunning()) {
+      InboundPacket delivered = pollDelivered();
       if (delivered != null) {
         return delivered;
       }
-    } finally {
-      context.exitDirectReceive();
+      if (context.tryEnterDirectReceive()) {
+        try {
+          delivered = receiveDirectLoop(Long.MAX_VALUE);
+          if (delivered != null) {
+            return delivered;
+          }
+        } finally {
+          context.exitDirectReceive();
+        }
+        continue;
+      }
+
+      delivered = context.receive(RECEIVE_MODE_RECHECK_MS);
+      if (delivered != null) {
+        return delivered;
+      }
     }
 
-    delivered = pollDelivered();
+    InboundPacket delivered = pollDelivered();
     if (delivered != null) {
       return delivered;
     }
@@ -88,20 +95,39 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
   @Override
   public @Nullable InboundPacket receive(long timeoutMs) throws InterruptedException {
-    InboundPacket delivered = pollDelivered();
-    if (delivered != null) {
-      return delivered;
-    }
-    if (!context.tryEnterDirectReceive()) {
-      return context.receive(timeoutMs);
+    long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+    while (context.isRunning()) {
+      InboundPacket delivered = pollDelivered();
+      if (delivered != null) {
+        return delivered;
+      }
+      if (context.tryEnterDirectReceive()) {
+        try {
+          return receiveDirectLoop(deadlineNanos);
+        } finally {
+          context.exitDirectReceive();
+        }
+      }
+
+      long remainingNanos = deadlineNanos - System.nanoTime();
+      if (remainingNanos <= 0L) {
+        return pollDelivered();
+      }
+
+      long waitMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+      if (waitMs > RECEIVE_MODE_RECHECK_MS) {
+        waitMs = RECEIVE_MODE_RECHECK_MS;
+      } else if (waitMs <= 0L) {
+        waitMs = 1L;
+      }
+
+      delivered = context.receive(waitMs);
+      if (delivered != null) {
+        return delivered;
+      }
     }
 
-    long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
-    try {
-      return receiveDirectLoop(deadlineNanos);
-    } finally {
-      context.exitDirectReceive();
-    }
+    return pollDelivered();
   }
 
   public void closeConnection(long connectionId, InetSocketAddress remoteEndpoint) {

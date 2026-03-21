@@ -114,6 +114,20 @@ public abstract class IntegrationHarness {
     return startProcess(replicaId, "pt.ulisboa.depchain.integration.byzantine.ByzantineReplicaMain", configPath.toString(), attackMode.name());
   }
 
+  protected static ManagedCluster startManagedCluster(List<String> replicaIds) throws Exception {
+    Path configPath = integrationConfigPath();
+    populateConfig(configPath);
+
+    List<StartedServer> servers = startServers(replicaIds, configPath);
+    try {
+      waitForServersStartup(servers, STARTUP_TIMEOUT);
+      return new ManagedCluster(configPath, servers, TestClientSession.open(configPath));
+    } catch (Exception exception) {
+      stopProcesses(servers);
+      throw exception;
+    }
+  }
+
   protected static void waitForServersStartup(List<StartedServer> servers, Duration timeout) throws InterruptedException {
     for (StartedServer server : servers) {
       await().alias("server startup for " + server.replicaId()).atMost(timeout).until(server::isReady);
@@ -461,6 +475,252 @@ public abstract class IntegrationHarness {
       return true;
     } catch (org.awaitility.core.ConditionTimeoutException ignored) {
       return false;
+    }
+  }
+
+  public static final class ManagedCluster implements AutoCloseable {
+    private final Path configPath;
+    private final List<StartedServer> servers;
+    private final TestClientSession clientSession;
+
+    private ManagedCluster(Path configPath, List<StartedServer> servers, TestClientSession clientSession) {
+      this.configPath = configPath;
+      this.servers = List.copyOf(servers);
+      this.clientSession = clientSession;
+    }
+
+    public Path configPath() {
+      return configPath;
+    }
+
+    public List<StartedServer> servers() {
+      return servers;
+    }
+
+    public long clientSenderId() {
+      return clientSession.clientSenderId();
+    }
+
+    public PrivateKey clientPrivateKey() {
+      return clientSession.clientPrivateKey();
+    }
+
+    public Map<Long, PublicKey> staticPublicKeys() {
+      return clientSession.staticPublicKeys();
+    }
+
+    public Map<Long, PublicKey> replicaPublicKeys() {
+      return clientSession.replicaPublicKeys();
+    }
+
+    public ClientRequest signedRequest(String command) throws Exception {
+      return clientSession.signedRequest(command);
+    }
+
+    public void assertRequestSucceeds(String command, Duration timeout, String message) throws Exception {
+      ClientRequest request = clientSession.signedRequest(command);
+      byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
+      InboundPacket response = clientSession.broadcastPayload(payload, timeout);
+      assertResponseNotNull(response, message, servers);
+      assertEquals(successMessage(command), decodeClientResponse(response).getAppend().getMessage(), message);
+    }
+
+    public void assertReplayIsIgnored(String command, String message) throws Exception {
+      ClientRequest request = clientSession.signedRequest(command);
+      byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
+      InboundPacket firstResponse = clientSession.broadcastPayload(payload, REPLAY_INITIAL_TIMEOUT);
+      assertResponseNotNull(firstResponse, message + " (initial request)", servers);
+      assertEquals(successMessage(command), decodeClientResponse(firstResponse).getAppend().getMessage(), message + " (initial request)");
+
+      for (int i = 0; i < 3; i++) {
+        InboundPacket replayResponse = clientSession.broadcastPayload(payload, REPLAY_RESPONSE_TIMEOUT);
+        assertNull(replayResponse, message + " (replay " + (i + 1) + ")");
+      }
+    }
+
+    public InboundPacket sendForgedClientRequest(String replicaId, String command) throws Exception {
+      ClientRequest forgedRequest = forgedRequest(clientSession.clientSenderId(), command, clientSession.clientPrivateKey());
+      byte[] payload = ProtoValidationUtil.requireValid(forgedRequest, "ClientRequest").toByteArray();
+      return clientSession.sendPayloadToClientPort(replicaId, payload, Duration.ofSeconds(3));
+    }
+
+    public InboundPacket sendPayloadToClientPort(String replicaId, byte[] payload, Duration timeout) throws Exception {
+      return clientSession.sendPayloadToClientPort(replicaId, payload, timeout);
+    }
+
+    public InboundPacket sendPayloadToConsensusPort(String replicaId, byte[] payload, Duration timeout) throws Exception {
+      return clientSession.sendPayloadToConsensusPort(replicaId, payload, timeout);
+    }
+
+    @Override
+    public void close() throws Exception {
+      try {
+        clientSession.close();
+      } finally {
+        stopProcesses(servers);
+      }
+    }
+  }
+
+  private static final class TestClientSession implements AutoCloseable {
+    private final ConfigParser config;
+    private final long clientSenderId;
+    private final PrivateKey clientPrivateKey;
+    private final Map<Long, PublicKey> staticPublicKeys;
+    private final Map<Long, PublicKey> replicaPublicKeys;
+    private final AuthenticatedLink transport;
+
+    private TestClientSession(ConfigParser config, long clientSenderId, PrivateKey clientPrivateKey, Map<Long, PublicKey> staticPublicKeys, Map<Long, PublicKey> replicaPublicKeys,
+        AuthenticatedLink transport) {
+      this.config = config;
+      this.clientSenderId = clientSenderId;
+      this.clientPrivateKey = clientPrivateKey;
+      this.staticPublicKeys = staticPublicKeys;
+      this.replicaPublicKeys = replicaPublicKeys;
+      this.transport = transport;
+    }
+
+    static TestClientSession open(Path configPath) throws Exception {
+      ConfigParser config = ConfigParser.load(configPath);
+      long clientSenderId = config.client().senderId();
+      PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
+      Map<Long, PublicKey> staticPublicKeys = PublicKeyLoader.loadStaticPublicKeys(config);
+      Map<Long, PublicKey> replicaPublicKeys = PublicKeyLoader.loadReplicaPublicKeys(config);
+      AuthenticatedLink transport = AuthenticatedLink.unbound(clientSenderId, clientPrivateKey, staticPublicKeys);
+      return new TestClientSession(config, clientSenderId, clientPrivateKey, staticPublicKeys, replicaPublicKeys, transport);
+    }
+
+    long clientSenderId() {
+      return clientSenderId;
+    }
+
+    PrivateKey clientPrivateKey() {
+      return clientPrivateKey;
+    }
+
+    Map<Long, PublicKey> staticPublicKeys() {
+      return staticPublicKeys;
+    }
+
+    Map<Long, PublicKey> replicaPublicKeys() {
+      return replicaPublicKeys;
+    }
+
+    ClientRequest signedRequest(String command) throws Exception {
+      long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
+      return signedAppendRequest(clientSenderId, requestId, command, clientPrivateKey);
+    }
+
+    InboundPacket sendPayloadToClientPort(String replicaId, byte[] payload, Duration timeout) throws Exception {
+      ReplicaSection targetReplica = config.requireReplicaById(replicaId);
+      InetSocketAddress targetAddress = new InetSocketAddress(targetReplica.host(), targetReplica.clientPort());
+      return sendPayload(targetAddress, payload, timeout);
+    }
+
+    InboundPacket sendPayloadToConsensusPort(String replicaId, byte[] payload, Duration timeout) throws Exception {
+      ReplicaSection targetReplica = config.requireReplicaById(replicaId);
+      InetSocketAddress targetAddress = new InetSocketAddress(targetReplica.host(), targetReplica.consensusPort());
+      return sendPayload(targetAddress, payload, timeout);
+    }
+
+    InboundPacket broadcastPayload(byte[] payload, Duration timeout) throws Exception {
+      Map<Long, InetSocketAddress> endpointsByConnectionId = new LinkedHashMap<>();
+      int requiredReplyCount = config.system().f() + 1;
+
+      for (ReplicaSection replica : config.replicas()) {
+        long connectionId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
+        InetSocketAddress endpoint = new InetSocketAddress(replica.host(), replica.clientPort());
+        try {
+          transport.send(connectionId, payload, endpoint);
+          endpointsByConnectionId.put(connectionId, endpoint);
+        } catch (RuntimeException exception) {
+          // Some adversarial tests intentionally leave replica client ports unavailable.
+        }
+      }
+
+      if (endpointsByConnectionId.isEmpty()) {
+        return null;
+      }
+
+      Map<Long, String> responseKeyByReplicaSender = new HashMap<>();
+      Map<String, Integer> replyCounts = new HashMap<>();
+      AtomicReference<InboundPacket> coherentResponseRef = new AtomicReference<>();
+
+      try {
+        try {
+          await().atMost(timeout).until(() -> {
+            InboundPacket inbound = transport.receive(Math.max(1L, timeout.toMillis()));
+            if (inbound == null || !endpointsByConnectionId.containsKey(inbound.packet().getConnectionId())) {
+              return false;
+            }
+
+            Long authenticatedSenderId = inbound.authenticatedSenderId();
+            if (authenticatedSenderId == null || !replicaPublicKeys.containsKey(authenticatedSenderId) || responseKeyByReplicaSender.containsKey(authenticatedSenderId)) {
+              return false;
+            }
+
+            ClientResponse response = decodeClientResponse(inbound);
+            String responseKey = Base64.getEncoder().encodeToString(ProtoValidationUtil.requireValid(response, "ClientResponse").toByteArray());
+            responseKeyByReplicaSender.put(authenticatedSenderId, responseKey);
+
+            int replyCount = replyCounts.merge(responseKey, 1, Integer::sum);
+            if (replyCount >= requiredReplyCount) {
+              coherentResponseRef.set(inbound);
+              return true;
+            }
+            return false;
+          });
+        } catch (org.awaitility.core.ConditionTimeoutException ignored) {
+          return null;
+        }
+
+        return coherentResponseRef.get();
+      } finally {
+        closeConnections(endpointsByConnectionId);
+      }
+    }
+
+    @Override
+    public void close() throws Exception {
+      transport.close();
+    }
+
+    private InboundPacket sendPayload(InetSocketAddress targetAddress, byte[] payload, Duration timeout) throws Exception {
+      long connectionId = ThreadLocalRandom.current().nextLong();
+      transport.send(connectionId, payload, targetAddress);
+
+      try {
+        AtomicReference<InboundPacket> responseRef = new AtomicReference<>();
+        try {
+          await().atMost(timeout).until(() -> {
+            InboundPacket inbound = transport.receive(Math.max(1L, timeout.toMillis()));
+            if (inbound != null && inbound.packet().getConnectionId() == connectionId) {
+              responseRef.set(inbound);
+              return true;
+            }
+            return false;
+          });
+        } catch (org.awaitility.core.ConditionTimeoutException ignored) {
+          return null;
+        }
+
+        return responseRef.get();
+      } finally {
+        closeConnection(connectionId, targetAddress);
+      }
+    }
+
+    private void closeConnections(Map<Long, InetSocketAddress> endpointsByConnectionId) {
+      for (Map.Entry<Long, InetSocketAddress> entry : endpointsByConnectionId.entrySet()) {
+        closeConnection(entry.getKey(), entry.getValue());
+      }
+    }
+
+    private void closeConnection(long connectionId, InetSocketAddress targetAddress) {
+      try {
+        transport.closeConnection(connectionId, targetAddress);
+      } catch (RuntimeException ignored) {
+      }
     }
   }
 
