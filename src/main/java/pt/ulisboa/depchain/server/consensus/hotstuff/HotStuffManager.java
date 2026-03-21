@@ -277,6 +277,10 @@ public class HotStuffManager {
     }
     observeNode(node);
     executedNodeHashes.add(node.getNodeHash());
+
+    // Execute state transitions even when there is no reply target (e.g., catch-up paths).
+    ClientResponse clientResponse = clientResponseForExecution(node, clientCommand);
+
     try {
       onNodeExecuted.accept(node);
     } catch (RuntimeException exception) {
@@ -285,8 +289,6 @@ public class HotStuffManager {
     if (executionResult.replyTarget() == null) {
       return;
     }
-
-    ClientResponse clientResponse = clientResponseForExecution(node, clientCommand);
     clientCommunication.replyToClient(executionResult.replyTarget(), clientResponse);
   }
 
