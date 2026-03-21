@@ -1,9 +1,5 @@
 # Stage 2 Blockchain Status and Code Map
 
-## Short Answer
-- Step 3 (genesis, transactions, gas, execution, append + persistence): YES, implemented.
-- Step 4 (consensus decides order of transactions to execute and append): YES, implemented in the core flow.
-
 ## What Is Implemented
 
 ### 1) Genesis block concept
