@@ -7,7 +7,10 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.math.BigInteger;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -22,6 +25,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
+import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffManager;
 import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -65,7 +69,7 @@ public final class ReplicaServer {
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
-      evmService);
+      evmService, this::onExecutedNode);
   }
 
   public void run() throws Exception {
@@ -272,6 +276,25 @@ public final class ReplicaServer {
       return Bytes.fromHexString(value);
     } catch (RuntimeException exception) {
       throw new IllegalArgumentException(fieldName + " is not a valid hex payload", exception);
+    }
+  }
+
+  private void onExecutedNode(Node node) {
+    logger.debug("Executed node hook received node={} view={}", shortHash(node.getNodeHash()), node.getViewNumber());
+
+    try {
+      Optional<BlockStore.BlockDocument> latest = blockStore.loadLatest();
+      long nextHeight = latest.map(block -> block.height() + 1L).orElse(0L);
+      String previousHash = latest.map(BlockStore.BlockDocument::blockHash).orElse(null);
+      long gasUsed = node.hasGasUsed() ? node.getGasUsed() : 0L;
+
+      // Minimal persistence path: metadata-first block document.
+      // TODO: include executed transactions and full world-state snapshot.
+      BlockStore.BlockDocument blockToPersist = new BlockStore.BlockDocument(nextHeight, node.getNodeHash(), previousHash, gasUsed, List.of(), new LinkedHashMap<>());
+      blockStore.append(blockToPersist);
+      logger.info("Persisted block height={} hash={} parent={}", blockToPersist.height(), shortHash(blockToPersist.blockHash()), shortHash(previousHash));
+    } catch (Exception exception) {
+      logger.error("Failed to persist executed node {}", node.getNodeHash(), exception);
     }
   }
 }
