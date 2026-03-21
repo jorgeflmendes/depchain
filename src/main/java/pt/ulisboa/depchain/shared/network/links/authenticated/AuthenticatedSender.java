@@ -37,6 +37,9 @@ final class AuthenticatedSender {
     ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, connectionId);
     AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
     if (connectionState != null) {
+      if (connectionState.isAwaitingReply()) {
+        context.signalAsyncHandshakeCompleted();
+      }
       connectionState.beginClose();
     }
     try {
@@ -62,11 +65,13 @@ final class AuthenticatedSender {
     if (!connectionState.tryMarkHandshakeInitiated(localEKeys.getPrivate())) {
       return;
     }
+    context.signalAsyncHandshakeStarted();
 
     try {
       byte[] initPayload = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_INIT, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
       context.perfectLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
     } catch (Exception exception) {
+      context.signalAsyncHandshakeCompleted();
       connectionState.rollbackHandshake(localEKeys.getPrivate());
       connectionState.close();
       throw new IllegalStateException("Failed to send authenticated init", exception);

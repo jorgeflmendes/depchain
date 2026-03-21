@@ -89,6 +89,10 @@ final class AuthenticatedConnectionState {
     return ReceiveMode.INIT;
   }
 
+  synchronized boolean isAwaitingReply() {
+    return phase == Phase.INITIATED && ephemeralPrivateKey != null;
+  }
+
   synchronized boolean tryMarkHandshakeInitiated(PrivateKey privateKey) {
     if (phase != Phase.NEW) {
       return false;
@@ -122,7 +126,7 @@ final class AuthenticatedConnectionState {
     authenticatedRemoteSenderId = remoteSenderId;
     ephemeralPrivateKey = null;
     phase = Phase.ESTABLISHED;
-    return List.copyOf(takePendingPayloadsLocked());
+    return List.copyOf(drainPendingPayloads());
   }
 
   synchronized SecretKey sharedSecret() {
@@ -149,7 +153,7 @@ final class AuthenticatedConnectionState {
       return HandshakeAction.IGNORE;
     }
 
-    resetHandshakeLocked();
+    resetHandshakeState();
     return HandshakeAction.RESTART;
   }
 
@@ -198,13 +202,13 @@ final class AuthenticatedConnectionState {
     onTerminal.run();
   }
 
-  private List<byte[]> takePendingPayloadsLocked() {
+  private List<byte[]> drainPendingPayloads() {
     List<byte[]> queuedPayloads = new ArrayList<>(pendingPayloads);
     pendingPayloads.clear();
     return queuedPayloads;
   }
 
-  private void resetHandshakeLocked() {
+  private void resetHandshakeState() {
     if (phase == Phase.CLOSED) {
       return;
     }

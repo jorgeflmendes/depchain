@@ -27,11 +27,11 @@ final class PerfectSender {
     ValidationUtils.requireNonNull(remoteEndpoint, "remoteEndpoint");
 
     ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, connectionId);
-    SenderState senderState = context.connectionStates.computeIfAbsent(connectionKey, ignored -> new PerfectConnectionState()).senderState();
+    SenderState senderState = context.getOrCreateState(connectionKey).senderState();
     int sequenceNumber = senderState.nextSequence();
-    DpchPacket packet = PerfectContext.newDataPacket(connectionId, sequenceNumber, payload);
+    DpchPacket packet = PerfectContext.buildDataPacket(connectionId, sequenceNumber, payload);
     context.stubbornLink.sendTrackedWithTerminalNotification(new TrackedKey(connectionId, sequenceNumber, DpchPacketType.DPCH_PACKET_TYPE_DATA.getNumber()), PerfectContext
-        .serializePacket(packet), remoteEndpoint, senderState::notifyWaiters);
+        .encodePacket(packet), remoteEndpoint, senderState.terminalNotifier());
   }
 
   void sendAck(long connectionId, int acknowledgedSequence, InetSocketAddress remoteEndpoint) {
@@ -40,7 +40,7 @@ final class PerfectSender {
     }
 
     try {
-      context.stubbornLink.send(PerfectContext.serializePacket(PerfectContext.newAckPacket(connectionId, acknowledgedSequence)), remoteEndpoint);
+      context.stubbornLink.send(PerfectContext.encodePacket(PerfectContext.buildAckPacket(connectionId, acknowledgedSequence)), remoteEndpoint);
     } catch (IOException | RuntimeException exception) {
       if (!context.isRunning()) {
         return;

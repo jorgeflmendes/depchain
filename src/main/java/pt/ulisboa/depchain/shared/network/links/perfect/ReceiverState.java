@@ -18,25 +18,28 @@ final class ReceiverState {
     return sequenceNumber < nextExpectedSeq;
   }
 
+  boolean isNextExpected(int sequenceNumber) {
+    return sequenceNumber == nextExpectedSeq;
+  }
+
   boolean bufferIfNew(int sequenceNumber, InboundPacket inbound) {
     return bufferedBySeq.putIfAbsent(sequenceNumber, inbound) == null;
   }
 
-  InboundPacket pollNextInOrder() {
-    InboundPacket delivered = bufferedBySeq.remove(nextExpectedSeq);
-    if (delivered == null) {
-      throw new IllegalStateException("No in-order message available for delivery");
-    }
-
+  void markNextDelivered() {
     if (nextExpectedSeq > DpchPacketUtil.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Receiver sequence number exhausted for stream");
     }
-
     nextExpectedSeq++;
-    return delivered;
   }
 
-  boolean hasNextInOrderReady() {
-    return bufferedBySeq.containsKey(nextExpectedSeq);
+  InboundPacket pollBufferedNextInOrder() {
+    InboundPacket delivered = bufferedBySeq.remove(nextExpectedSeq);
+    if (delivered == null) {
+      return null;
+    }
+
+    markNextDelivered();
+    return delivered;
   }
 }

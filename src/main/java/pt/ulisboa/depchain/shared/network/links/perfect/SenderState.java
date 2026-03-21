@@ -19,6 +19,7 @@ final class SenderState {
   private static final int DATA_PACKET_TYPE_NUMBER = DpchPacketType.DPCH_PACKET_TYPE_DATA.getNumber();
   private static final int NEAR_EXHAUSTION_THRESHOLD = 1024;
 
+  private final Runnable terminalNotifier = this::notifyWaiters;
   private int nextSequence;
   private final BitSet inFlightSequences = new BitSet();
   private int inFlightCount;
@@ -86,6 +87,10 @@ final class SenderState {
 
   synchronized void notifyWaiters() {
     notifyAll();
+  }
+
+  Runnable terminalNotifier() {
+    return terminalNotifier;
   }
 
   synchronized LinkFailureException pollTerminalFailure(PerfectContext context, long connectionId, InetSocketAddress remoteEndpoint) {
