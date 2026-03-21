@@ -339,7 +339,9 @@ public final class ReplicaServer {
       if (account.getCode() != null && !account.getCode().isEmpty()) {
         code = account.getCode().toHexString();
       }
-      snapshot.put(addressHex, new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, new LinkedHashMap<>()));
+      LinkedHashMap<String, String> storage = new LinkedHashMap<>();
+      account.getUpdatedStorage().forEach((key, value) -> storage.put(key.toHexString(), value.toHexString()));
+      snapshot.put(addressHex, new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, storage));
     }
     return snapshot;
   }

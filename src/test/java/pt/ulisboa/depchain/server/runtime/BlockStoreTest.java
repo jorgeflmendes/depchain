@@ -12,6 +12,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import pt.ulisboa.depchain.shared.config.GenesisParser;
+
 class BlockStoreTest {
 
   @Test
@@ -48,6 +50,23 @@ class BlockStoreTest {
     assertTrue(latest.isPresent());
     assertEquals(1L, latest.get().height());
     assertEquals("hash-1", latest.get().blockHash());
+  }
+
+  @Test
+  void appendAndLoadPreservesAccountStorage(@TempDir Path tempDir) throws IOException {
+    BlockStore store = new BlockStore(tempDir);
+
+    LinkedHashMap<String, String> storage = new LinkedHashMap<>();
+    storage.put("0x01", "0x02");
+    LinkedHashMap<String, GenesisParser.GenesisAccount> state = new LinkedHashMap<>();
+    state.put("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new GenesisParser.GenesisAccount("100", 1L, "0x6000", storage));
+
+    BlockStore.BlockDocument block = new BlockStore.BlockDocument(0L, "hash-0", null, 21_000L, List.of(), state);
+    store.append(block);
+
+    var latest = store.loadLatest();
+    assertTrue(latest.isPresent());
+    assertEquals("0x02", latest.get().state().get("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").storage().get("0x01"));
   }
 
   private static BlockStore.BlockDocument block(long height, String hash, String previousHash) {
