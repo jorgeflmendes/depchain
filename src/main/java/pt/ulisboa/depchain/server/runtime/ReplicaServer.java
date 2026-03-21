@@ -44,6 +44,8 @@ public final class ReplicaServer {
   private final Map<Long, PublicKey> replicaStaticPKeys;
   private final Map<String, Long> replicaSenderIdByConsensusEndpoint;
   private final GenesisParser genesis;
+  private final BlockStore blockStore;
+  private final BlockStore.BlockDocument persistedGenesisBlock;
   private final EvmService evmService;
   private final HotStuffManager hotStuffManager;
 
@@ -55,6 +57,8 @@ public final class ReplicaServer {
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
     this.genesis = GenesisParser.loadDefaultResource();
+    this.blockStore = BlockStore.defaultStore();
+    this.persistedGenesisBlock = blockStore.ensureGenesisPersisted();
     this.evmService = new EvmService();
     applyGenesisState(evmService, genesis);
     applyGenesisTransactions(evmService, genesis);
@@ -76,6 +80,7 @@ public final class ReplicaServer {
       logger.info("Replica {} client listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       logger.info("Replica {} node listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
       logger.info("Loaded genesis block height={} hash={} txs={} accounts={}", genesis.height(), shortHash(genesis.blockHash()), genesis.transactions().size(), genesis.state().size());
+      logger.info("Persisted genesis block height={} hash={}", persistedGenesisBlock.height(), shortHash(persistedGenesisBlock.blockHash()));
 
       // Set up the replica with the transports and start the hotstuff loop
       this.hotStuffManager.initNetwork(nodeTransport, clientTransport);
