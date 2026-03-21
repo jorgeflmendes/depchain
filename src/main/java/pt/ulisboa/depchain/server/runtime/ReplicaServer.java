@@ -1,13 +1,14 @@
 package pt.ulisboa.depchain.server.runtime;
 
+import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,6 +27,7 @@ import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
+import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffManager;
 import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -69,7 +71,7 @@ public final class ReplicaServer {
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
-      evmService, this::onExecutedNode);
+        evmService, this::onExecutedNode);
   }
 
   public void run() throws Exception {
@@ -83,7 +85,8 @@ public final class ReplicaServer {
 
       logger.info("Replica {} client listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.clientPort());
       logger.info("Replica {} node listener: {}:{}", replicaConfig.id(), replicaConfig.host(), replicaConfig.consensusPort());
-      logger.info("Loaded genesis block height={} hash={} txs={} accounts={}", genesis.height(), shortHash(genesis.blockHash()), genesis.transactions().size(), genesis.state().size());
+      logger.info("Loaded genesis block height={} hash={} txs={} accounts={}", genesis.height(), shortHash(genesis.blockHash()), genesis.transactions().size(), genesis.state()
+          .size());
       logger.info("Persisted genesis block height={} hash={}", persistedGenesisBlock.height(), shortHash(persistedGenesisBlock.blockHash()));
 
       // Set up the replica with the transports and start the hotstuff loop
@@ -239,7 +242,7 @@ public final class ReplicaServer {
     Wei gasPrice = Wei.of(tx.gasPrice());
 
     switch (tx.type()) {
-      case "TRANSFER": {
+      case "TRANSFER" : {
         Address to = parseAddress(tx.to(), "transaction.to");
         EvmService.TransactionResult result = evmService.transferNative(from, to, amount, tx.nonce(), tx.gasLimit(), gasPrice);
         if (!result.success()) {
@@ -247,7 +250,7 @@ public final class ReplicaServer {
         }
         break;
       }
-      case "CONTRACT_CALL": {
+      case "CONTRACT_CALL" : {
         Address to = parseAddress(tx.to(), "transaction.to");
         EvmService.TransactionResult result = evmService.callContract(from, to, parseHexBytes(tx.input(), "transaction.input"), amount, tx.nonce(), tx.gasLimit(), gasPrice);
         if (!result.success()) {
@@ -255,11 +258,11 @@ public final class ReplicaServer {
         }
         break;
       }
-      case "CONTRACT_DEPLOY": {
+      case "CONTRACT_DEPLOY" : {
         evmService.deployContract(from, parseHexBytes(tx.input(), "transaction.input"));
         break;
       }
-      default:
+      default :
         throw new IllegalArgumentException("unsupported transaction type: " + tx.type());
     }
   }
@@ -288,13 +291,86 @@ public final class ReplicaServer {
       String previousHash = latest.map(BlockStore.BlockDocument::blockHash).orElse(null);
       long gasUsed = node.hasGasUsed() ? node.getGasUsed() : 0L;
 
-      // Minimal persistence path: metadata-first block document.
-      // TODO: include executed transactions and full world-state snapshot.
-      BlockStore.BlockDocument blockToPersist = new BlockStore.BlockDocument(nextHeight, node.getNodeHash(), previousHash, gasUsed, List.of(), new LinkedHashMap<>());
+      List<GenesisParser.GenesisTransaction> persistedTransactions = extractPersistedTransactions(node);
+      LinkedHashMap<String, GenesisParser.GenesisAccount> persistedState = snapshotKnownAccounts(persistedTransactions);
+
+      BlockStore.BlockDocument blockToPersist = new BlockStore.BlockDocument(nextHeight, node.getNodeHash(), previousHash, gasUsed, persistedTransactions, persistedState);
       blockStore.append(blockToPersist);
-      logger.info("Persisted block height={} hash={} parent={}", blockToPersist.height(), shortHash(blockToPersist.blockHash()), shortHash(previousHash));
+      logger.info("Persisted block height={} hash={} parent={} txs={} accounts={}", blockToPersist
+          .height(), shortHash(blockToPersist.blockHash()), shortHash(previousHash), blockToPersist.transactions().size(), blockToPersist.state().size());
     } catch (Exception exception) {
       logger.error("Failed to persist executed node {}", node.getNodeHash(), exception);
     }
+  }
+
+  private List<GenesisParser.GenesisTransaction> extractPersistedTransactions(Node node) {
+    if (!node.getCommand().hasTransaction()) {
+      return List.of();
+    }
+
+    TransactionRequest tx = node.getCommand().getTransaction().getClientRequest().getTransaction();
+    return List.of(toPersistedTransaction(tx));
+  }
+
+  private LinkedHashMap<String, GenesisParser.GenesisAccount> snapshotKnownAccounts(List<GenesisParser.GenesisTransaction> persistedTransactions) {
+    LinkedHashSet<String> addresses = new LinkedHashSet<>(genesis.state().keySet());
+
+    for (GenesisParser.GenesisTransaction tx : persistedTransactions) {
+      if (tx.from() != null && !tx.from().isBlank()) {
+        addresses.add(tx.from());
+      }
+      if (tx.to() != null && !tx.to().isBlank()) {
+        addresses.add(tx.to());
+      }
+    }
+
+    LinkedHashMap<String, GenesisParser.GenesisAccount> snapshot = new LinkedHashMap<>();
+    for (String addressHex : addresses) {
+      Address address = parseAddress(addressHex, "snapshot address");
+      var account = evmService.account(address);
+      if (account == null) {
+        continue;
+      }
+
+      String code = null;
+      if (account.getCode() != null && !account.getCode().isEmpty()) {
+        code = account.getCode().toHexString();
+      }
+      snapshot.put(addressHex, new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, new LinkedHashMap<>()));
+    }
+    return snapshot;
+  }
+
+  private static GenesisParser.GenesisTransaction toPersistedTransaction(TransactionRequest tx) {
+    String type;
+    switch (tx.getType()) {
+      case TRANSACTION_TYPE_TRANSFER -> type = "TRANSFER";
+      case TRANSACTION_TYPE_CONTRACT_CALL -> {
+        type = tx.hasTo() ? "CONTRACT_CALL" : "CONTRACT_DEPLOY";
+      }
+      default -> throw new IllegalArgumentException("unsupported transaction type for persistence: " + tx.getType());
+    }
+
+    String to = null;
+    if (tx.hasTo() && !tx.getTo().isBlank()) {
+      to = tx.getTo();
+    }
+
+    String input = "0x";
+    if (tx.hasData() && !tx.getData().isEmpty()) {
+      input = Bytes.wrap(tx.getData().toByteArray()).toHexString();
+    }
+
+    String signature = null;
+    if (tx.hasSignature() && !tx.getSignature().isEmpty()) {
+      signature = Bytes.wrap(tx.getSignature().toByteArray()).toHexString();
+    }
+
+    return new GenesisParser.GenesisTransaction(type, senderIdToAddressHex(tx.getRequestKey().getClientSenderId()), to, Long.toString(tx.getAmount()), tx.getNonce(),
+        tx.getGasLimit(), tx.getGasPrice(), input, signature);
+  }
+
+  private static String senderIdToAddressHex(long senderId) {
+    return String.format("%040x", senderId);
   }
 }
