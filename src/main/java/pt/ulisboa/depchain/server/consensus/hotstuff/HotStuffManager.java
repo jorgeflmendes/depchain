@@ -280,9 +280,10 @@ public class HotStuffManager {
 
     // Execute state transitions even when there is no reply target (e.g., catch-up paths).
     ClientResponse clientResponse = clientResponseForExecution(node, clientCommand);
+    Node nodeForExecutionHook = nodeWithObservedGasUsed(node, clientResponse);
 
     try {
-      onNodeExecuted.accept(node);
+      onNodeExecuted.accept(nodeForExecutionHook);
     } catch (RuntimeException exception) {
       logger.error("Node execution hook failed for node {}", node.getNodeHash(), exception);
     }
@@ -290,6 +291,13 @@ public class HotStuffManager {
       return;
     }
     clientCommunication.replyToClient(executionResult.replyTarget(), clientResponse);
+  }
+
+  private static Node nodeWithObservedGasUsed(Node node, ClientResponse response) {
+    if (!response.hasTransaction() || !response.getTransaction().hasReceipt()) {
+      return node;
+    }
+    return node.toBuilder().setGasUsed(response.getTransaction().getReceipt().getGasUsed()).build();
   }
 
   private NodeCommand nodeCommandForRequest(ClientRequest request) {
