@@ -22,9 +22,9 @@ final class AuthenticatedSender {
     ValidationUtils.requireAllNonNull(named("payload", payload), named("remoteEndpoint", remoteEndpoint));
     ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, connectionId);
     AuthenticatedConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
-    AuthenticatedConnectionState.SendPlan sendPlan = connectionState.planSend(payload);
+    AuthenticatedConnectionState.SendAction sendAction = connectionState.planSend(payload);
 
-    switch (sendPlan.action()) {
+    switch (sendAction) {
       case SEND -> sendData(connectionKey, connectionState, payload, remoteEndpoint);
       case START_HANDSHAKE -> sendInit(connectionKey, connectionState, remoteEndpoint);
       case WAIT -> {
@@ -40,7 +40,8 @@ final class AuthenticatedSender {
       connectionState.beginClose();
     }
     try {
-      context.handshakedLink.closeConnection(connectionId, remoteEndpoint);
+      context.perfectLink.cancelPendingData(connectionId, remoteEndpoint);
+      context.perfectLink.releaseConnection(connectionId, remoteEndpoint);
     } finally {
       if (connectionState != null) {
         connectionState.close();
@@ -64,7 +65,7 @@ final class AuthenticatedSender {
 
     try {
       byte[] initPayload = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_INIT, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
-      context.handshakedLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
+      context.perfectLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
     } catch (Exception exception) {
       connectionState.rollbackHandshake(localEKeys.getPrivate());
       connectionState.close();
@@ -77,7 +78,7 @@ final class AuthenticatedSender {
 
     try {
       byte[] replyPayload = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_REPLY, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
-      context.handshakedLink.send(connectionKey.connectionId(), replyPayload, remoteEndpoint);
+      context.perfectLink.send(connectionKey.connectionId(), replyPayload, remoteEndpoint);
     } catch (Exception exception) {
       AuthenticatedConnectionState state = context.getConnectionStateOrNull(connectionKey);
       if (state != null) {
@@ -103,7 +104,7 @@ final class AuthenticatedSender {
 
     try {
       byte[] securePayload = AuthenticatedPayloadUtil.encodeHmac(AuthOpcode.AUTH_OPCODE_DATA, payload, secureSend.sharedSecret(), secureSend.nonce());
-      context.handshakedLink.send(connectionKey.connectionId(), securePayload, remoteEndpoint);
+      context.perfectLink.send(connectionKey.connectionId(), securePayload, remoteEndpoint);
     } catch (Exception exception) {
       connectionState.close();
       throw new IllegalStateException("Failed to send authenticated data", exception);

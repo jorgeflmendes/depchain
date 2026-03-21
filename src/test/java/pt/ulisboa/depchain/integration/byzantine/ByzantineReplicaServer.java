@@ -23,7 +23,6 @@ import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
-import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
@@ -118,6 +117,8 @@ public final class ByzantineReplicaServer {
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
       return null;
+    } catch (Exception exception) {
+      return null;
     }
   }
 
@@ -127,8 +128,7 @@ public final class ByzantineReplicaServer {
     }
 
     try {
-      DpchPacket packet = inbound.packet();
-      ProtoValidationUtil.requireValid(ClientRequest.parseFrom(packet.getPayload()), "ClientRequest");
+      ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.payload()), "ClientRequest");
       observeAttack();
     } catch (InvalidProtocolBufferException | RuntimeException ignored) {
     }
@@ -142,7 +142,7 @@ public final class ByzantineReplicaServer {
         return;
       }
 
-      Message message = ProtoValidationUtil.requireValid(Message.parseFrom(inbound.packet().getPayload()), "ReplicaMessage");
+      Message message = ProtoValidationUtil.requireValid(Message.parseFrom(inbound.payload()), "ReplicaMessage");
       if (message.getReplicaSenderId() != expectedSenderId.intValue()) {
         return;
       }

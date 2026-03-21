@@ -18,7 +18,6 @@ import com.google.protobuf.ByteString;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
-import pt.ulisboa.depchain.proto.AuthenticatedEnvelope;
 import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 
@@ -44,7 +43,7 @@ class AuthenticatedPayloadUtilTest {
     KeyPair ephemeralKeyPair = CryptoUtil.newECKeyPair();
     byte[] encoded = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_REPLY, 19L, ephemeralKeyPair.getPublic(), staticKeyPair.getPrivate());
 
-    AuthenticatedHandshakeEnvelope tamperedHandshake = AuthenticatedEnvelope.parseFrom(encoded).getHandshake().toBuilder().setSenderId(20L).build();
+    AuthenticatedHandshakeEnvelope tamperedHandshake = AuthenticatedHandshakeEnvelope.parseFrom(encoded).toBuilder().setSenderId(20L).build();
     assertFalse(AuthenticatedPayloadUtil.verifyEcdsa(tamperedHandshake, staticKeyPair.getPublic()));
   }
 
@@ -88,8 +87,8 @@ class AuthenticatedPayloadUtilTest {
 
   @Test
   void decodeDataRejectsWrongHmacLength() {
-    AuthenticatedEnvelope invalidEnvelope = AuthenticatedEnvelope.newBuilder().setData(AuthenticatedDataEnvelope.newBuilder().setAuthOpcode(AuthOpcode.AUTH_OPCODE_DATA)
-        .setApplicationPayload(ByteString.copyFromUtf8("payload")).setNonce(1L).setHmac(ByteString.copyFrom(new byte[31]))).build();
+    AuthenticatedDataEnvelope invalidEnvelope = AuthenticatedDataEnvelope.newBuilder().setAuthOpcode(AuthOpcode.AUTH_OPCODE_DATA)
+        .setApplicationPayload(ByteString.copyFromUtf8("payload")).setNonce(1L).setHmac(ByteString.copyFrom(new byte[31])).build();
 
     assertThrows(IllegalArgumentException.class, () -> AuthenticatedPayloadUtil.decodeHmac(invalidEnvelope.toByteArray()));
   }

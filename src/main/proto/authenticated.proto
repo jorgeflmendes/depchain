@@ -48,11 +48,3 @@ message AuthenticatedDataEnvelope {
     (buf.validate.field).bytes.len = 32
   ];
 }
-
-message AuthenticatedEnvelope {
-  oneof body {
-    option (buf.validate.oneof).required = true;
-    AuthenticatedHandshakeEnvelope handshake = 1;
-    AuthenticatedDataEnvelope data = 2;
-  }
-}

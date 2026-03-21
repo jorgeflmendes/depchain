@@ -1,40 +1,39 @@
 package pt.ulisboa.depchain.shared.network.links.stubborn.tracking;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import java.util.Objects;
 
-import java.util.Arrays;
+import org.eclipse.jdt.annotation.Nullable;
 
 import pt.ulisboa.depchain.shared.network.links.RunOnce;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 // Represents a message being tracked for potential retries.
 public final class TrackedMessage {
   private final TrackedKey key;
   private final byte[] payload;
-  private final long createdAtMs;
-  private final RunOnce onTerminal;
+  private final @Nullable RunOnce onTerminal;
   private int retryAttempt;
-  private long nextRetryAtMs;
+  private long nextRetryAtNanos;
 
-  public TrackedMessage(TrackedKey key, byte[] payload, int retryAttempt, long createdAtMs, long nextRetryAtMs) {
-    this(key, payload, retryAttempt, createdAtMs, nextRetryAtMs, () -> {
-    });
-  }
-
-  public TrackedMessage(TrackedKey key, byte[] payload, int retryAttempt, long createdAtMs, long nextRetryAtMs, Runnable onTerminal) {
-    ValidationUtils.requireAllNonNull(named("key", key), named("payload", payload));
+  public TrackedMessage(TrackedKey key, byte[] payload) {
+    Objects.requireNonNull(key, "key cannot be null");
+    Objects.requireNonNull(payload, "payload cannot be null");
     this.key = key;
-    this.payload = Arrays.copyOf(payload, payload.length);
-    this.retryAttempt = ValidationUtils.requireNonNegativeInt(retryAttempt, "retryAttempt");
-    this.createdAtMs = ValidationUtils.requireNonNegativeLong(createdAtMs, "createdAtMs");
-    this.nextRetryAtMs = ValidationUtils.requireAtLeast(nextRetryAtMs, this.createdAtMs, "nextRetryAtMs", "createdAtMs");
-    this.onTerminal = new RunOnce(ValidationUtils.requireNonNull(onTerminal, "onTerminal"));
+    this.payload = payload;
+    this.retryAttempt = 0;
+    this.onTerminal = null;
   }
 
-  public void markRetried(long newNextRetryAtMs) {
-    ValidationUtils.requireAtLeast(newNextRetryAtMs, createdAtMs, "newNextRetryAtMs", "createdAtMs");
+  public TrackedMessage(TrackedKey key, byte[] payload, Runnable onTerminal) {
+    Objects.requireNonNull(key, "key cannot be null");
+    Objects.requireNonNull(payload, "payload cannot be null");
+    this.key = key;
+    this.payload = payload;
+    this.retryAttempt = 0;
+    this.onTerminal = new RunOnce(Objects.requireNonNull(onTerminal, "onTerminal cannot be null"));
+  }
+
+  public void advanceRetryAttempt() {
     retryAttempt++;
-    nextRetryAtMs = newNextRetryAtMs;
   }
 
   public TrackedKey key() {
@@ -42,7 +41,7 @@ public final class TrackedMessage {
   }
 
   public byte[] payload() {
-    return Arrays.copyOf(payload, payload.length);
+    return payload.clone();
   }
 
   public byte[] payloadView() {
@@ -53,15 +52,17 @@ public final class TrackedMessage {
     return retryAttempt;
   }
 
-  public long createdAtMs() {
-    return createdAtMs;
+  public long nextRetryAtNanos() {
+    return nextRetryAtNanos;
   }
 
-  public long nextRetryAtMs() {
-    return nextRetryAtMs;
+  public void scheduleRetryAfterNanos(long delayNanos) {
+    nextRetryAtNanos = System.nanoTime() + Math.max(1L, delayNanos);
   }
 
   public void notifyTerminalState() {
-    onTerminal.run();
+    if (onTerminal != null) {
+      onTerminal.run();
+    }
   }
 }

@@ -62,7 +62,8 @@ public final class DpchClient implements AutoCloseable {
     return new DpchClient(configPath);
   }
 
-  // TODO: implement the client-side transaction command flow using TransactionRequest/TransactionResponse.
+  // TODO: implement the client-side transaction command flow using
+  // TransactionRequest/TransactionResponse.
   public String requestAppend(String value) throws Exception {
     long nonce = nextRequestNonce.getAndIncrement();
     byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, nonce, value), clientPrivateKey);
@@ -137,6 +138,9 @@ public final class DpchClient implements AutoCloseable {
       } catch (InterruptedException exception) {
         Thread.currentThread().interrupt();
         return null;
+      } catch (Exception exception) {
+        logger.debug("Ignoring client receive failure", exception);
+        return null;
       }
 
       if (inbound == null) {
@@ -155,7 +159,7 @@ public final class DpchClient implements AutoCloseable {
       // Parse and validate the reply payload
       ClientResponse response;
       try {
-        response = ProtoValidationUtil.requireValid(ClientResponse.parseFrom(inbound.packet().getPayload()), "ClientResponse");
+        response = ProtoValidationUtil.requireValid(ClientResponse.parseFrom(inbound.payload()), "ClientResponse");
         if (!response.hasAppend()) {
           throw new IllegalArgumentException("Unsupported client response type: " + response.getBodyCase());
         }

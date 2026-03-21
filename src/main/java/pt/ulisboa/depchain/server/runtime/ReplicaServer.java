@@ -120,6 +120,9 @@ public final class ReplicaServer {
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
       return null;
+    } catch (Exception exception) {
+      logger.debug("Ignoring authenticated receive failure", exception);
+      return null;
     }
   }
 
@@ -136,7 +139,7 @@ public final class ReplicaServer {
         return;
       }
 
-      ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(packet.getPayload()), "ClientRequest");
+      ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.payload()), "ClientRequest");
       ConnectionKey key = new ConnectionKey(sender, packet.getConnectionId());
       this.hotStuffManager.onClientRequest(request, key);
     } catch (InvalidProtocolBufferException | RuntimeException exception) {
@@ -160,7 +163,7 @@ public final class ReplicaServer {
         return;
       }
 
-      Message msg = ProtoValidationUtil.requireValid(Message.parseFrom(packet.getPayload()), "ReplicaMessage");
+      Message msg = ProtoValidationUtil.requireValid(Message.parseFrom(inbound.payload()), "ReplicaMessage");
       if (msg.getReplicaSenderId() != expectedSenderId.intValue()) {
         logger.warn("Rejecting spoofed node message from {} claiming senderId {}", sender, msg.getReplicaSenderId());
         return;

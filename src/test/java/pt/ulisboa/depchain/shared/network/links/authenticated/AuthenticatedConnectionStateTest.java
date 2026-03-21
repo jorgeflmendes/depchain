@@ -28,7 +28,7 @@ class AuthenticatedConnectionStateTest {
     KeyPair localEphemeral = CryptoUtil.newECKeyPair();
     SecretKey secretKey = new SecretKeySpec(new byte[32], "HmacSHA256");
 
-    assertEquals(AuthenticatedConnectionState.SendAction.START_HANDSHAKE, state.planSend(payload).action());
+    assertEquals(AuthenticatedConnectionState.SendAction.START_HANDSHAKE, state.planSend(payload));
     assertTrue(state.tryMarkHandshakeInitiated(localEphemeral.getPrivate()));
     assertEquals(AuthenticatedConnectionState.ReceiveMode.HANDSHAKE, state.receiveMode());
 
@@ -87,8 +87,7 @@ class AuthenticatedConnectionStateTest {
 
     state.close();
 
-    assertFalse(state.canReceive());
-    assertFalse(state.canSend());
+    assertFalse(state.isEstablished());
     assertNull(state.sharedSecret());
     assertNull(state.authenticatedRemoteSenderId());
     assertThrows(IllegalStateException.class, state::reserveSecureSend);
