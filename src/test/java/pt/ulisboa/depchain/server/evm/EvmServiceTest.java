@@ -1,6 +1,7 @@
 package pt.ulisboa.depchain.server.evm;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -68,8 +69,23 @@ class EvmServiceTest {
     assertEquals(Bytes.EMPTY, result.returnData());
     assertNull(result.errorMessage());
     assertEquals(1L, senderAccount.getNonce());
-    assertEquals(Wei.of(49_900), senderAccount.getBalance());
+    assertEquals(Wei.of(28_900), senderAccount.getBalance());
     assertEquals(Wei.of(100), evmService.account(RECIPIENT).getBalance());
+  }
+
+  @Test
+  void transferWithInsufficientGasLimitFailsAndChargesUsedGasFee() {
+    EvmService evmService = new EvmService();
+    MutableAccount senderAccount = evmService.createAccount(SENDER, 0L, Wei.of(50_000));
+
+    EvmService.TransactionResult result = evmService.transferNative(SENDER, RECIPIENT, Wei.of(100), 0L, 10_000L, Wei.ONE);
+
+    assertFalse(result.success());
+    assertEquals(10_000L, result.gasUsed());
+    assertEquals("insufficient gas for native transfer", result.errorMessage());
+    assertEquals(1L, senderAccount.getNonce());
+    assertEquals(Wei.of(40_000), senderAccount.getBalance());
+    assertNull(evmService.account(RECIPIENT));
   }
 
   @Test
@@ -85,6 +101,7 @@ class EvmServiceTest {
     assertEquals("IST Coin", decodeAbiString(result.returnData()));
     assertNull(result.errorMessage());
     assertEquals(2L, senderAccount.getNonce());
+    assertEquals(Wei.of(2_000_000L - result.gasUsed()), senderAccount.getBalance());
   }
 
   private static Bytes balanceOfCallData(Address address) {

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
@@ -56,6 +57,7 @@ public class HotStuffManager {
   private final Set<String> executedNodeHashes;
   private final EvmService evmService;
   private final Address clientAccountAddress;
+  private final Consumer<Node> onNodeExecuted;
 
   private int id;
   private int n;
@@ -81,6 +83,12 @@ public class HotStuffManager {
   private long totalFetchFailures;
 
   public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService) {
+    this(id, config, localThresholdShare, publicThresholdKey, clientPublicKey, evmService, node -> {
+    });
+  }
+
+  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService,
+      Consumer<Node> onNodeExecuted) {
     this.id = id;
     this.logger = LoggerFactory.getLogger(HotStuffManager.class);
     this.n = config.system().n();
@@ -102,6 +110,7 @@ public class HotStuffManager {
     this.executedNodeHashes = ConcurrentHashMap.newKeySet();
     this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
     this.evmService = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(evmService, "evmService");
+    this.onNodeExecuted = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(onNodeExecuted, "onNodeExecuted");
     this.clientAccountAddress = clientAddress(clientPublicKey);
     if (this.evmService.account(clientAccountAddress) == null) {
       this.evmService.createAccount(clientAccountAddress, 0L, INITIAL_CLIENT_BALANCE);
@@ -268,12 +277,27 @@ public class HotStuffManager {
     }
     observeNode(node);
     executedNodeHashes.add(node.getNodeHash());
+
+    // Execute state transitions even when there is no reply target (e.g., catch-up paths).
+    ClientResponse clientResponse = clientResponseForExecution(node, clientCommand);
+    Node nodeForExecutionHook = nodeWithObservedGasUsed(node, clientResponse);
+
+    try {
+      onNodeExecuted.accept(nodeForExecutionHook);
+    } catch (RuntimeException exception) {
+      logger.error("Node execution hook failed for node {}", node.getNodeHash(), exception);
+    }
     if (executionResult.replyTarget() == null) {
       return;
     }
-
-    ClientResponse clientResponse = clientResponseForExecution(node, clientCommand);
     clientCommunication.replyToClient(executionResult.replyTarget(), clientResponse);
+  }
+
+  private static Node nodeWithObservedGasUsed(Node node, ClientResponse response) {
+    if (!response.hasTransaction() || !response.getTransaction().hasReceipt()) {
+      return node;
+    }
+    return node.toBuilder().setGasUsed(response.getTransaction().getReceipt().getGasUsed()).build();
   }
 
   private NodeCommand nodeCommandForRequest(ClientRequest request) {
@@ -302,19 +326,7 @@ public class HotStuffManager {
     TransactionReceipt.Builder receipt = TransactionReceipt.newBuilder().setTransactionHash(transactionHash).setNodeHash(node.getNodeHash());
 
     try {
-      Address recipient = Address.fromHexString("0x" + transaction.getTo());
-      EvmService.TransactionResult execution;
-      if (transaction.getType() == TransactionType.TRANSACTION_TYPE_TRANSFER) {
-        execution = evmService
-            .transferNative(clientAccountAddress, recipient, Wei.of(transaction.getAmount()), transaction.getNonce(), transaction.getGasLimit(), Wei.of(transaction.getGasPrice()));
-      } else {
-        Bytes callData = Bytes.EMPTY;
-        if (transaction.hasData()) {
-          callData = Bytes.wrap(transaction.getData().toByteArray());
-        }
-        execution = evmService.callContract(clientAccountAddress, recipient, callData, Wei.of(transaction.getAmount()), transaction.getNonce(), transaction.getGasLimit(), Wei
-            .of(transaction.getGasPrice()));
-      }
+      EvmService.TransactionResult execution = executeTransaction(transaction);
 
       receipt.setSuccess(execution.success()).setGasUsed(execution.gasUsed());
       if (execution.errorMessage() != null && !execution.errorMessage().isBlank()) {
@@ -337,6 +349,24 @@ public class HotStuffManager {
       receipt.setSuccess(false).setGasUsed(0L).setErrorMessage(errorMessage);
       return ClientResponse.newBuilder().setTransaction(TransactionResponse.newBuilder().setAccepted(true).setMessage("Transaction execution failed").setReceipt(receipt)).build();
     }
+  }
+
+  private EvmService.TransactionResult executeTransaction(TransactionRequest transaction) {
+    Address recipient = Address.fromHexString("0x" + transaction.getTo());
+    Wei amount = Wei.of(transaction.getAmount());
+    Wei gasPrice = Wei.of(transaction.getGasPrice());
+    TransactionType type = transaction.getType();
+
+    if (type == TransactionType.TRANSACTION_TYPE_TRANSFER) {
+      return evmService.transferNative(clientAccountAddress, recipient, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
+    }
+
+    if (type == TransactionType.TRANSACTION_TYPE_CONTRACT_CALL) {
+      Bytes callData = transaction.hasData() ? Bytes.wrap(transaction.getData().toByteArray()) : Bytes.EMPTY;
+      return evmService.callContract(clientAccountAddress, recipient, callData, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
+    }
+
+    throw new IllegalArgumentException("unsupported transaction type: " + type);
   }
 
   private static String successMessage(String clientCommand) {

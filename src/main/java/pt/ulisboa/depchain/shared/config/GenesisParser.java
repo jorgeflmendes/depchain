@@ -1,0 +1,161 @@
+package pt.ulisboa.depchain.shared.config;
+
+import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.regex.Pattern;
+
+import org.eclipse.jdt.annotation.Nullable;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+
+public record GenesisParser(long height, @JsonProperty("block_hash") String blockHash, @JsonProperty("previous_block_hash") @Nullable String previousBlockHash,
+    @JsonProperty("gas_used") long gasUsed, List<GenesisTransaction> transactions, LinkedHashMap<String, GenesisAccount> state) {
+
+  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final String DEFAULT_RESOURCE_PATH = "genesis/genesis.json";
+  private static final Pattern ADDRESS_PATTERN = Pattern.compile("^[0-9a-f]{40}$");
+  private static final Pattern HASH_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
+
+  public GenesisParser {
+    ValidationUtils.requireNonBlank(blockHash, "block_hash");
+    ValidationUtils.requireAllNonNull(named("transactions", transactions), named("state", state));
+    ValidationUtils.requireNonNegativeLong(height, "height");
+    ValidationUtils.requireNonNegativeLong(gasUsed, "gas_used");
+
+    if (height != 0L) {
+      throw new IllegalArgumentException("genesis.height must be 0");
+    }
+
+    if (!HASH_PATTERN.matcher(blockHash).matches()) {
+      throw new IllegalArgumentException("block_hash must be a 64-char lowercase SHA-256 hex string");
+    }
+
+    if (previousBlockHash != null) {
+      throw new IllegalArgumentException("genesis.previous_block_hash must be null");
+    }
+
+    transactions = List.copyOf(transactions);
+
+    LinkedHashMap<String, GenesisAccount> orderedState = new LinkedHashMap<>();
+    for (Map.Entry<String, GenesisAccount> entry : state.entrySet()) {
+      String address = ValidationUtils.requireNonBlank(entry.getKey(), "state address");
+      if (!ADDRESS_PATTERN.matcher(address).matches()) {
+        throw new IllegalArgumentException("state address must be a lowercase 40-hex-character account address: " + address);
+      }
+
+      GenesisAccount account = ValidationUtils.requireNonNull(entry.getValue(), "state account");
+      orderedState.put(address, account);
+    }
+
+    state = orderedState;
+  }
+
+  public static GenesisParser load(Path path) throws IOException {
+    ValidationUtils.requireNonNull(path, "path");
+
+    try (InputStream input = Files.newInputStream(path)) {
+      return JSON.readValue(input, GenesisParser.class);
+    } catch (IOException exception) {
+      throw new IOException("Failed to load genesis from " + path, exception);
+    }
+  }
+
+  public static GenesisParser loadDefaultResource() throws IOException {
+    ClassLoader classLoader = GenesisParser.class.getClassLoader();
+    try (InputStream input = classLoader.getResourceAsStream(DEFAULT_RESOURCE_PATH)) {
+      if (input == null) {
+        throw new IOException("Genesis resource not found: " + DEFAULT_RESOURCE_PATH);
+      }
+      return JSON.readValue(input, GenesisParser.class);
+    } catch (IOException exception) {
+      throw new IOException("Failed to load genesis resource " + DEFAULT_RESOURCE_PATH, exception);
+    }
+  }
+
+  public record GenesisTransaction(String type, String from, @Nullable String to, String amount, long nonce, @JsonProperty("gas_limit") long gasLimit,
+      @JsonProperty("gas_price") long gasPrice, String input, @Nullable String signature) {
+
+    public GenesisTransaction {
+      type = ValidationUtils.requireNonBlank(type, "transaction.type");
+      from = ValidationUtils.requireNonBlank(from, "transaction.from");
+      amount = ValidationUtils.requireNonBlank(amount, "transaction.amount");
+      input = ValidationUtils.requireNonBlank(input, "transaction.input");
+      ValidationUtils.requireNonNegativeLong(nonce, "transaction.nonce");
+      ValidationUtils.requirePositiveLong(gasLimit, "transaction.gas_limit");
+      ValidationUtils.requirePositiveLong(gasPrice, "transaction.gas_price");
+
+      if (!ADDRESS_PATTERN.matcher(from).matches()) {
+        throw new IllegalArgumentException("transaction.from must be a lowercase 40-hex-character account address");
+      }
+
+      if (to != null && !to.isBlank() && !ADDRESS_PATTERN.matcher(to).matches()) {
+        throw new IllegalArgumentException("transaction.to must be null/blank or a lowercase 40-hex-character account address");
+      }
+
+      requireNonNegativeDecimalString(amount, "transaction.amount");
+
+      if (!input.startsWith("0x")) {
+        throw new IllegalArgumentException("transaction.input must use 0x-prefixed hex encoding");
+      }
+
+      String normalizedType = type.toUpperCase();
+      if (!normalizedType.equals("TRANSFER") && !normalizedType.equals("CONTRACT_CALL") && !normalizedType.equals("CONTRACT_DEPLOY")) {
+        throw new IllegalArgumentException("transaction.type must be TRANSFER, CONTRACT_CALL, or CONTRACT_DEPLOY");
+      }
+
+      if (normalizedType.equals("TRANSFER") && (to == null || to.isBlank())) {
+        throw new IllegalArgumentException("TRANSFER transactions must set transaction.to");
+      }
+
+      if (normalizedType.equals("CONTRACT_CALL") && (to == null || to.isBlank())) {
+        throw new IllegalArgumentException("CONTRACT_CALL transactions must set transaction.to");
+      }
+
+      if (normalizedType.equals("CONTRACT_DEPLOY") && to != null && !to.isBlank()) {
+        throw new IllegalArgumentException("CONTRACT_DEPLOY transactions must not set transaction.to");
+      }
+
+      type = normalizedType;
+      if (signature != null) {
+        signature = signature.trim();
+      }
+    }
+  }
+
+  public record GenesisAccount(String balance, long nonce, @Nullable String code, LinkedHashMap<String, String> storage) {
+    public GenesisAccount {
+      balance = ValidationUtils.requireNonBlank(balance, "account.balance");
+      ValidationUtils.requireNonNegativeLong(nonce, "account.nonce");
+      storage = new LinkedHashMap<>(Objects.requireNonNullElse(storage, new LinkedHashMap<>()));
+
+      requireNonNegativeDecimalString(balance, "account.balance");
+
+      if (code != null && !code.isBlank() && !code.startsWith("0x")) {
+        throw new IllegalArgumentException("account.code must use 0x-prefixed hex encoding when present");
+      }
+    }
+  }
+
+  private static void requireNonNegativeDecimalString(String value, String fieldName) {
+    try {
+      BigInteger parsed = new BigInteger(value);
+      if (parsed.signum() < 0) {
+        throw new IllegalArgumentException(fieldName + " must be >= 0");
+      }
+    } catch (NumberFormatException exception) {
+      throw new IllegalArgumentException(fieldName + " must be a decimal integer string", exception);
+    }
+  }
+}

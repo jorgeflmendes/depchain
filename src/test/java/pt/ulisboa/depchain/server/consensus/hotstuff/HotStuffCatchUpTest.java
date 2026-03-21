@@ -11,9 +11,12 @@ import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 
@@ -110,11 +113,34 @@ class HotStuffCatchUpTest {
     assertSame(parent, blockTree(hotStuffManager).get(parent.getNodeHash()));
   }
 
+  @Test
+  void executeCommittedBranchInvokesExecutionHookForEachUnexecutedNode() throws Exception {
+    List<String> executedByHook = new ArrayList<>();
+    HotStuffManager hotStuffManager = newHotStuffManager(node -> executedByHook.add(node.getNodeHash()));
+    Node node1 = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 401L, "one");
+    Node node2 = newNode(2, node1.getNodeHash(), 402L, "two");
+    Node node3 = newNode(3, node2.getNodeHash(), 403L, "three");
+
+    putKnownNode(hotStuffManager, node1);
+    putKnownNode(hotStuffManager, node2);
+    putKnownNode(hotStuffManager, node3);
+
+    invokeEnsureDeliveredBranch(hotStuffManager, node3, -1);
+    invokeExecuteCommittedBranch(hotStuffManager, node3);
+
+    assertEquals(List.of(node1.getNodeHash(), node2.getNodeHash(), node3.getNodeHash()), executedByHook);
+  }
+
   private static HotStuffManager newHotStuffManager() throws Exception {
+    return newHotStuffManager(node -> {
+    });
+  }
+
+  private static HotStuffManager newHotStuffManager(Consumer<Node> onNodeExecuted) throws Exception {
     ConfigParser config = ConfigParser.load(configPath());
     PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(config);
     return new HotStuffManager(0, config, ThresholdKeyLoader.loadReplicaThresholdPrivateShare(config, 0L), ThresholdKeyLoader.loadReplicaThresholdPublicKey(config, 0L),
-        clientPublicKey, new EvmService());
+        clientPublicKey, new EvmService(), onNodeExecuted);
   }
 
   private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {
