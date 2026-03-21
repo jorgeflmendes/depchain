@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
@@ -56,6 +57,7 @@ public class HotStuffManager {
   private final Set<String> executedNodeHashes;
   private final EvmService evmService;
   private final Address clientAccountAddress;
+  private final Consumer<Node> onNodeExecuted;
 
   private int id;
   private int n;
@@ -81,6 +83,12 @@ public class HotStuffManager {
   private long totalFetchFailures;
 
   public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService) {
+    this(id, config, localThresholdShare, publicThresholdKey, clientPublicKey, evmService, node -> {
+    });
+  }
+
+  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService,
+      Consumer<Node> onNodeExecuted) {
     this.id = id;
     this.logger = LoggerFactory.getLogger(HotStuffManager.class);
     this.n = config.system().n();
@@ -102,6 +110,7 @@ public class HotStuffManager {
     this.executedNodeHashes = ConcurrentHashMap.newKeySet();
     this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
     this.evmService = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(evmService, "evmService");
+    this.onNodeExecuted = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(onNodeExecuted, "onNodeExecuted");
     this.clientAccountAddress = clientAddress(clientPublicKey);
     if (this.evmService.account(clientAccountAddress) == null) {
       this.evmService.createAccount(clientAccountAddress, 0L, INITIAL_CLIENT_BALANCE);
@@ -268,6 +277,11 @@ public class HotStuffManager {
     }
     observeNode(node);
     executedNodeHashes.add(node.getNodeHash());
+    try {
+      onNodeExecuted.accept(node);
+    } catch (RuntimeException exception) {
+      logger.error("Node execution hook failed for node {}", node.getNodeHash(), exception);
+    }
     if (executionResult.replyTarget() == null) {
       return;
     }
