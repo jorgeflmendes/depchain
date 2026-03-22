@@ -1,10 +1,12 @@
 package pt.ulisboa.depchain.server.consensus.client;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.security.KeyPair;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -44,12 +46,48 @@ class ClientRequestManagerTest {
     assertFalse(requestManager.hasValidClientRequest(requestFromUnknownClient));
   }
 
+  @Test
+  void awaitNextPendingPrefersHigherGasPrice() throws Exception {
+    KeyPair client = CryptoUtil.newECKeyPair();
+    ClientRequestManager requestManager = new ClientRequestManager(Map.of(100L, client.getPublic()), LoggerFactory.getLogger(ClientRequestManagerTest.class));
+
+    ClientRequest lowFeeRequest = signedTransferRequest(100L, 1L, 0L, 1L, client);
+    ClientRequest highFeeRequest = signedTransferRequest(100L, 2L, 1L, 5L, client);
+
+    requestManager.onClientRequest(lowFeeRequest, null, true);
+    requestManager.onClientRequest(highFeeRequest, null, true);
+
+    long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+    assertEquals(highFeeRequest, requestManager.awaitNextPending(deadlineNanos));
+    assertEquals(lowFeeRequest, requestManager.awaitNextPending(deadlineNanos));
+  }
+
+  @Test
+  void awaitNextPendingPreservesArrivalOrderWhenGasPriceTies() throws Exception {
+    KeyPair client = CryptoUtil.newECKeyPair();
+    ClientRequestManager requestManager = new ClientRequestManager(Map.of(100L, client.getPublic()), LoggerFactory.getLogger(ClientRequestManagerTest.class));
+
+    ClientRequest firstRequest = signedTransferRequest(100L, 1L, 0L, 3L, client);
+    ClientRequest secondRequest = signedTransferRequest(100L, 2L, 1L, 3L, client);
+
+    requestManager.onClientRequest(firstRequest, null, true);
+    requestManager.onClientRequest(secondRequest, null, true);
+
+    long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+    assertEquals(firstRequest, requestManager.awaitNextPending(deadlineNanos));
+    assertEquals(secondRequest, requestManager.awaitNextPending(deadlineNanos));
+  }
+
   private static ClientRequest signedTransferRequest(long clientSenderId, long requestId, long nonce, KeyPair keyPair) throws Exception {
+    return signedTransferRequest(clientSenderId, requestId, nonce, 1L, keyPair);
+  }
+
+  private static ClientRequest signedTransferRequest(long clientSenderId, long requestId, long nonce, long gasPrice, KeyPair keyPair) throws Exception {
     byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil
-        .signedTransactionRequestPayload(clientSenderId, requestId, TransactionType.TRANSACTION_TYPE_TRANSFER, RECIPIENT, 5L, nonce, 21_000L, 1L), keyPair.getPrivate());
+        .signedTransactionRequestPayload(clientSenderId, requestId, TransactionType.TRANSACTION_TYPE_TRANSFER, RECIPIENT, 5L, nonce, 21_000L, gasPrice), keyPair.getPrivate());
     return ClientRequest.newBuilder()
         .setTransaction(TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
-            .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(RECIPIENT).setAmount(5L).setNonce(nonce).setGasLimit(21_000L).setGasPrice(1L)
+            .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(RECIPIENT).setAmount(5L).setNonce(nonce).setGasLimit(21_000L).setGasPrice(gasPrice)
             .setSignature(ByteString.copyFrom(signature)))
         .build();
   }

@@ -1,12 +1,14 @@
 package pt.ulisboa.depchain.server.consensus.client;
 
 import java.security.PublicKey;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 
@@ -30,11 +32,12 @@ import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 public final class ClientRequestManager {
   private final Map<Long, PublicKey> clientPublicKeys;
   private final Logger logger;
-  private final BlockingQueue<ClientRequest> pendingCommands = new LinkedBlockingQueue<>();
+  private final BlockingQueue<QueuedClientRequest> pendingCommands = new PriorityBlockingQueue<>(11, QueuedClientRequest.ORDERING);
   private final Map<ClientRequestKey, ConnectionKey> clientContexts = new ConcurrentHashMap<>();
   private final Map<ClientRequestKey, ClientRequest> pendingRequests = new ConcurrentHashMap<>();
   private final Set<ClientRequestKey> queuedRequestIds = ConcurrentHashMap.newKeySet();
   private final Set<ClientRequestKey> completedRequestIds = ConcurrentHashMap.newKeySet();
+  private final AtomicLong enqueueSequence = new AtomicLong();
   private AuthenticatedLink clientTransport;
 
   public ClientRequestManager(long expectedClientSenderId, PublicKey clientPublicKey, Logger logger) {
@@ -82,11 +85,12 @@ public final class ClientRequestManager {
 
   public ClientRequest awaitNextPending(long deadlineNanos) {
     while (true) {
-      ClientRequest nextRequest = pollPendingCommand(deadlineNanos);
-      if (nextRequest == null) {
+      QueuedClientRequest nextQueuedRequest = pollPendingCommand(deadlineNanos);
+      if (nextQueuedRequest == null) {
         return null;
       }
 
+      ClientRequest nextRequest = nextQueuedRequest.request();
       ClientRequestKey requestKey = requestKeyOrNull(nextRequest);
       queuedRequestIds.remove(requestKey);
       if (!completedRequestIds.contains(requestKey) && pendingRequests.containsKey(requestKey)) {
@@ -105,7 +109,7 @@ public final class ClientRequestManager {
     }
 
     if (queuedRequestIds.add(requestKey)) {
-      pendingCommands.offer(request);
+      pendingCommands.offer(new QueuedClientRequest(request, enqueueSequence.getAndIncrement()));
       return true;
     }
     return false;
@@ -184,10 +188,10 @@ public final class ClientRequestManager {
     return enqueuedRequests;
   }
 
-  private ClientRequest pollPendingCommand(long deadlineNanos) {
+  private QueuedClientRequest pollPendingCommand(long deadlineNanos) {
     while (!TimeUtil.hasTimedOutMonotonic(deadlineNanos)) {
       try {
-        ClientRequest nextRequest = pendingCommands.poll(TimeUtil.monotonicRemainingMsUntil(deadlineNanos), TimeUnit.MILLISECONDS);
+        QueuedClientRequest nextRequest = pendingCommands.poll(TimeUtil.monotonicRemainingMsUntil(deadlineNanos), TimeUnit.MILLISECONDS);
         if (nextRequest != null) {
           return nextRequest;
         }
@@ -259,5 +263,17 @@ public final class ClientRequestManager {
   }
 
   public record ExecutionResult(String commandSummary, ConnectionKey replyTarget) {
+  }
+
+  private record QueuedClientRequest(ClientRequest request, long enqueueSequence) {
+    private static final Comparator<QueuedClientRequest> ORDERING = Comparator.comparingLong(QueuedClientRequest::gasPrice).reversed()
+        .thenComparingLong(QueuedClientRequest::enqueueSequence);
+
+    private long gasPrice() {
+      if (request.hasTransaction()) {
+        return request.getTransaction().getGasPrice();
+      }
+      return Long.MIN_VALUE;
+    }
   }
 }
