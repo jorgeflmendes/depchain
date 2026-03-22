@@ -16,11 +16,12 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts) {
+public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StorageSection storage, KeysSection keys) {
   private static final ObjectMapper YAML = YAMLMapper.builder().build();
 
   public ConfigParser {
-    ValidationUtils.requireAllNonNull(named("system", system), named("replicas", replicas), named("client", client), named("timeouts", timeouts));
+    ValidationUtils
+        .requireAllNonNull(named("system", system), named("replicas", replicas), named("client", client), named("timeouts", timeouts), named("storage", storage), named("keys", keys));
     replicas = List.copyOf(ValidationUtils.requireNonEmpty(replicas, "replicas"));
     validateConsistency(system, replicas, client);
   }
@@ -49,19 +50,19 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
       return ports.client();
     }
 
-    public String publicKeyPath() {
+    public Path publicKeyPath() {
       return keys.publicKeyPath();
     }
 
-    public String privateKeyPath() {
+    public Path privateKeyPath() {
       return keys.privateKeyPath();
     }
 
-    public String thresholdPublicKeyPath() {
+    public Path thresholdPublicKeyPath() {
       return keys.threshold().publicKeyPath();
     }
 
-    public String thresholdPrivateSharePath() {
+    public Path thresholdPrivateSharePath() {
       return keys.threshold().privateSharePath();
     }
   }
@@ -73,22 +74,31 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     }
   }
 
-  public record ReplicaKeysSection(@JsonProperty("public") String publicKeyPath, @JsonProperty("private") String privateKeyPath, ThresholdKeysSection threshold) {
+  public record ReplicaKeysSection(@JsonProperty("public") Path publicKeyPath, @JsonProperty("private") Path privateKeyPath, ThresholdKeysSection threshold) {
     public ReplicaKeysSection {
-      publicKeyPath = ValidationUtils.requireNonBlank(publicKeyPath, "replica.keys.public");
-      privateKeyPath = ValidationUtils.requireNonBlank(privateKeyPath, "replica.keys.private");
+      ValidationUtils.requireNonNull(publicKeyPath, "replica.keys.public");
+      ValidationUtils.requireNonBlank(publicKeyPath.toString(), "replica.keys.public");
+      ValidationUtils.requireNonNull(privateKeyPath, "replica.keys.private");
+      ValidationUtils.requireNonBlank(privateKeyPath.toString(), "replica.keys.private");
       ValidationUtils.requireNonNull(threshold, "replica.keys.threshold");
+    }
+
+    public static ReplicaKeysSection forReplica(KeysSection keys, String replicaId) {
+      ValidationUtils.requireNonNull(keys, "keys");
+      replicaId = ValidationUtils.requireNonBlank(replicaId, "replica.id");
+
+      Path replicaRoot = keys.rootPath().resolve(replicaId);
+      return new ReplicaKeysSection(replicaRoot.resolve("public").resolve("replica.pem"), replicaRoot.resolve("private").resolve("replica.pem"),
+          new ThresholdKeysSection(replicaRoot.resolve("public").resolve("threshold.pub"), replicaRoot.resolve("private").resolve("threshold.share")));
     }
   }
 
-  public record ThresholdKeysSection(@JsonProperty("public") String publicKeyPath, String privateShare) {
+  public record ThresholdKeysSection(@JsonProperty("public") Path publicKeyPath, @JsonProperty("privateShare") Path privateSharePath) {
     public ThresholdKeysSection {
-      publicKeyPath = ValidationUtils.requireNonBlank(publicKeyPath, "replica.keys.threshold.public");
-      privateShare = ValidationUtils.requireNonBlank(privateShare, "replica.keys.threshold.privateShare");
-    }
-
-    public String privateSharePath() {
-      return privateShare;
+      ValidationUtils.requireNonNull(publicKeyPath, "replica.keys.threshold.public");
+      ValidationUtils.requireNonBlank(publicKeyPath.toString(), "replica.keys.threshold.public");
+      ValidationUtils.requireNonNull(privateSharePath, "replica.keys.threshold.privateShare");
+      ValidationUtils.requireNonBlank(privateSharePath.toString(), "replica.keys.threshold.privateShare");
     }
   }
 
@@ -103,19 +113,29 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
           .map(replicaId -> ValidationUtils.requireNonBlank(replicaId, "client.knownReplicas entry")).toList());
     }
 
-    public String publicKeyPath() {
+    public Path publicKeyPath() {
       return keys.publicKeyPath();
     }
 
-    public String privateKeyPath() {
+    public Path privateKeyPath() {
       return keys.privateKeyPath();
     }
   }
 
-  public record ClientKeysSection(@JsonProperty("public") String publicKeyPath, @JsonProperty("private") String privateKeyPath) {
+  public record ClientKeysSection(@JsonProperty("public") Path publicKeyPath, @JsonProperty("private") Path privateKeyPath) {
     public ClientKeysSection {
-      publicKeyPath = ValidationUtils.requireNonBlank(publicKeyPath, "client.keys.public");
-      privateKeyPath = ValidationUtils.requireNonBlank(privateKeyPath, "client.keys.private");
+      ValidationUtils.requireNonNull(publicKeyPath, "client.keys.public");
+      ValidationUtils.requireNonBlank(publicKeyPath.toString(), "client.keys.public");
+      ValidationUtils.requireNonNull(privateKeyPath, "client.keys.private");
+      ValidationUtils.requireNonBlank(privateKeyPath.toString(), "client.keys.private");
+    }
+
+    public static ClientKeysSection forClient(KeysSection keys, String clientId) {
+      ValidationUtils.requireNonNull(keys, "keys");
+      clientId = ValidationUtils.requireNonBlank(clientId, "client.id");
+
+      Path clientRoot = keys.rootPath().resolve(clientId);
+      return new ClientKeysSection(clientRoot.resolve("public").resolve("client.pem"), clientRoot.resolve("private").resolve("client.pem"));
     }
   }
 
@@ -128,8 +148,18 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     }
   }
 
-  public ReplicaSection requireReplica(String replicaId) {
-    return requireReplicaById(replicaId);
+  public record KeysSection(@JsonProperty("root") Path rootPath) {
+    public KeysSection {
+      ValidationUtils.requireNonNull(rootPath, "keys.root");
+      ValidationUtils.requireNonBlank(rootPath.toString(), "keys.root");
+    }
+  }
+
+  public record StorageSection(@JsonProperty("blocksRoot") Path blocksRootPath) {
+    public StorageSection {
+      ValidationUtils.requireNonNull(blocksRootPath, "storage.blocksRoot");
+      ValidationUtils.requireNonBlank(blocksRootPath.toString(), "storage.blocksRoot");
+    }
   }
 
   public ReplicaSection requireReplicaById(String replicaId) {
@@ -139,26 +169,10 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
         .orElseThrow(() -> new IllegalArgumentException("Replica '%s' not found".formatted(replicaId)));
   }
 
-  public ReplicaSection requireReplicaBySenderId(int senderId) {
-    return requireReplicaBySenderId((long) senderId);
-  }
-
   public ReplicaSection requireReplicaBySenderId(long senderId) {
     ValidationUtils.requireNonNegativeLong(senderId, "senderId");
 
     return replicas.stream().filter(replica -> replica.senderId() == senderId).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown replica senderId: " + senderId));
-  }
-
-  public int replicaIndexForSenderId(int senderId) {
-    return requireReplicaIndexForSenderId(senderId);
-  }
-
-  public int replicaIndexForSenderId(long senderId) {
-    return requireReplicaIndexForSenderId(senderId);
-  }
-
-  public int requireReplicaIndexForSenderId(int senderId) {
-    return requireReplicaIndexForSenderId((long) senderId);
   }
 
   public int requireReplicaIndexForSenderId(long senderId) {
@@ -173,12 +187,13 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     throw new IllegalArgumentException("Unknown replica senderId: " + senderId);
   }
 
-  public ReplicaSection firstKnownReplicaForClient() {
-    return requireFirstKnownReplicaForClient();
+  public Path blocksDirectoryForReplica(String replicaId) {
+    return blocksDirectoryForReplica(requireReplicaById(replicaId));
   }
 
-  public ReplicaSection requireFirstKnownReplicaForClient() {
-    return requireReplicaById(client.knownReplicas().getFirst());
+  public Path blocksDirectoryForReplica(ReplicaSection replica) {
+    ValidationUtils.requireNonNull(replica, "replica");
+    return storage.blocksRootPath().resolve(replica.id()).resolve("blocks");
   }
 
   public static ConfigParser load(Path path) throws IOException {
@@ -186,17 +201,24 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
     try (var input = Files.newInputStream(path)) {
       RawConfig raw = YAML.readValue(input, RawConfig.class);
-      return new ConfigParser(raw.system(), normalizeReplicas(raw.replicas()), raw.client(), raw.timeouts());
+      return new ConfigParser(raw.system(), normalizeReplicas(raw.replicas(), raw.keys()), normalizeClient(raw.client(), raw.keys()), raw.timeouts(), raw.storage(), raw.keys());
     } catch (IOException exception) {
       throw new IOException("Failed to load config from " + path, exception);
     }
   }
 
-  private static List<ReplicaSection> normalizeReplicas(LinkedHashMap<String, ReplicaInput> replicas) {
+  private static List<ReplicaSection> normalizeReplicas(LinkedHashMap<String, ReplicaInput> replicas, KeysSection keys) {
     ValidationUtils.requireNonNull(replicas, "replicas");
     ValidationUtils.requireNonEmpty(replicas.entrySet(), "replicas");
+    ValidationUtils.requireNonNull(keys, "keys");
 
-    return replicas.entrySet().stream().map(entry -> entry.getValue().toReplica(entry.getKey())).toList();
+    return replicas.entrySet().stream().map(entry -> entry.getValue().toReplica(entry.getKey(), keys)).toList();
+  }
+
+  private static ClientSection normalizeClient(ClientInput client, KeysSection keys) {
+    ValidationUtils.requireNonNull(client, "client");
+    ValidationUtils.requireNonNull(keys, "keys");
+    return client.toClient(keys);
   }
 
   private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client) {
@@ -238,12 +260,21 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     }
   }
 
-  private record RawConfig(SystemSection system, LinkedHashMap<String, ReplicaInput> replicas, ClientSection client, TimeoutsSection timeouts) {
+  private record RawConfig(SystemSection system, LinkedHashMap<String, ReplicaInput> replicas, ClientInput client, TimeoutsSection timeouts, StorageSection storage,
+      KeysSection keys) {
   }
 
   private record ReplicaInput(long senderId, String host, ReplicaPortsSection ports, ReplicaKeysSection keys) {
-    ReplicaSection toReplica(String replicaId) {
-      return new ReplicaSection(replicaId, senderId, host, ports, keys);
+    ReplicaSection toReplica(String replicaId, KeysSection configKeys) {
+      ReplicaKeysSection resolvedKeys = keys != null ? keys : ReplicaKeysSection.forReplica(configKeys, replicaId);
+      return new ReplicaSection(replicaId, senderId, host, ports, resolvedKeys);
+    }
+  }
+
+  private record ClientInput(String id, long senderId, String host, ClientKeysSection keys, int requestTimeoutMs, List<String> knownReplicas) {
+    ClientSection toClient(KeysSection configKeys) {
+      ClientKeysSection resolvedKeys = keys != null ? keys : ClientKeysSection.forClient(configKeys, id);
+      return new ClientSection(id, senderId, host, resolvedKeys, requestTimeoutMs, knownReplicas);
     }
   }
 }

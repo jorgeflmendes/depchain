@@ -10,6 +10,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import org.eclipse.jdt.annotation.Nullable;
 
@@ -17,6 +18,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
+import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.config.GenesisParser;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
@@ -24,6 +26,7 @@ public final class BlockStore {
   private static final ObjectMapper JSON = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
   private static final String BLOCK_FILE_PREFIX = "block-";
   private static final String BLOCK_FILE_SUFFIX = ".json";
+  private static final Pattern BLOCK_FILE_PATTERN = Pattern.compile("^block-\\d{8}\\.json$");
 
   private final Path blocksDirectory;
 
@@ -31,12 +34,25 @@ public final class BlockStore {
     this.blocksDirectory = ValidationUtils.requireNonNull(blocksDirectory, "blocksDirectory");
   }
 
-  public static BlockStore defaultStore() {
-    // Keep persistence outside resources because resources are packaged artifacts.
-    return new BlockStore(Path.of("data", "blocks"));
+  public static BlockStore forReplica(ConfigParser config, String replicaId) {
+    ValidationUtils.requireNonNull(config, "config");
+    ValidationUtils.requireNonBlank(replicaId, "replicaId");
+    return new BlockStore(config.blocksDirectoryForReplica(replicaId));
+  }
+
+  public static BlockStore forReplica(ConfigParser config, ConfigParser.ReplicaSection replica) {
+    ValidationUtils.requireNonNull(config, "config");
+    ValidationUtils.requireNonNull(replica, "replica");
+    return new BlockStore(config.blocksDirectoryForReplica(replica));
   }
 
   public BlockDocument ensureGenesisPersisted() throws IOException {
+    GenesisParser genesis = GenesisParser.loadDefault();
+    return ensureGenesisPersisted(BlockDocument.fromGenesis(genesis));
+  }
+
+  public BlockDocument ensureGenesisPersisted(BlockDocument genesisBlock) throws IOException {
+    ValidationUtils.requireNonNull(genesisBlock, "genesisBlock");
     Files.createDirectories(blocksDirectory);
 
     Path genesisBlockPath = blockFilePath(0L);
@@ -44,13 +60,9 @@ public final class BlockStore {
       try {
         return readBlock(genesisBlockPath);
       } catch (IOException exception) {
-        // Another replica may have been writing genesis concurrently.
-        // Regenerate deterministic genesis content and overwrite atomically.
       }
     }
 
-    GenesisParser genesis = GenesisParser.loadDefaultResource();
-    BlockDocument genesisBlock = BlockDocument.fromGenesis(genesis);
     writeBlock(genesisBlock);
     return genesisBlock;
   }
@@ -100,6 +112,18 @@ public final class BlockStore {
     return Optional.of(readBlock(latestPath.get()));
   }
 
+  public Optional<BlockDocument> load(long height) throws IOException {
+    ValidationUtils.requireNonNegativeLong(height, "height");
+    Files.createDirectories(blocksDirectory);
+
+    Path blockPath = blockFilePath(height);
+    if (!Files.exists(blockPath)) {
+      return Optional.empty();
+    }
+
+    return Optional.of(readBlock(blockPath));
+  }
+
   private void writeBlock(BlockDocument block) throws IOException {
     Path blockPath = blockFilePath(block.height());
     Path temporaryPath = Files.createTempFile(blocksDirectory, blockPath.getFileName() + ".tmp-", ".json");
@@ -128,7 +152,7 @@ public final class BlockStore {
 
   private static boolean isBlockFile(Path path) {
     String fileName = path.getFileName().toString();
-    return fileName.startsWith(BLOCK_FILE_PREFIX) && fileName.endsWith(BLOCK_FILE_SUFFIX);
+    return BLOCK_FILE_PATTERN.matcher(fileName).matches();
   }
 
   public record BlockDocument(long height, @JsonProperty("block_hash") String blockHash, @JsonProperty("previous_block_hash") @Nullable String previousBlockHash,

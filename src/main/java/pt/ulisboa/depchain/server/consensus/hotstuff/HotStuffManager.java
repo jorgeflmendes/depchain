@@ -11,7 +11,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
-import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 import org.slf4j.Logger;
@@ -20,8 +19,6 @@ import org.slf4j.LoggerFactory;
 import com.google.protobuf.ByteString;
 import com.weavechain.curve25519.Scalar;
 
-import pt.ulisboa.depchain.proto.AppendNodeCommand;
-import pt.ulisboa.depchain.proto.AppendResponse;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
@@ -32,6 +29,8 @@ import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
 import pt.ulisboa.depchain.proto.ProposalMessage;
+import pt.ulisboa.depchain.proto.QueryRequest;
+import pt.ulisboa.depchain.proto.QueryResponse;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.proto.TransactionNodeCommand;
 import pt.ulisboa.depchain.proto.TransactionReceipt;
@@ -43,6 +42,7 @@ import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
 import pt.ulisboa.depchain.server.consensus.network.ReplicaMessenger;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.server.evm.EvmService;
+import pt.ulisboa.depchain.server.evm.IstCoin;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
@@ -50,12 +50,11 @@ import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
 
 public class HotStuffManager {
-  private static final Wei INITIAL_CLIENT_BALANCE = Wei.of(1_000_000_000L);
-
   private final ClientRequestManager clientCommunication;
   private final ReplicaMessenger replicaCommunication;
   private final Set<String> executedNodeHashes;
   private final EvmService evmService;
+  private final IstCoin istCoin;
   private final Address clientAccountAddress;
   private final Consumer<Node> onNodeExecuted;
 
@@ -110,11 +109,13 @@ public class HotStuffManager {
     this.executedNodeHashes = ConcurrentHashMap.newKeySet();
     this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
     this.evmService = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(evmService, "evmService");
+    try {
+      this.istCoin = new IstCoin(this.evmService);
+    } catch (java.io.IOException exception) {
+      throw new IllegalStateException("Could not initialize IST Coin support from genesis", exception);
+    }
     this.onNodeExecuted = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(onNodeExecuted, "onNodeExecuted");
     this.clientAccountAddress = clientAddress(clientPublicKey);
-    if (this.evmService.account(clientAccountAddress) == null) {
-      this.evmService.createAccount(clientAccountAddress, 0L, INITIAL_CLIENT_BALANCE);
-    }
 
     blockTree.put(HotStuffSupport.GENESIS_NODE.getNodeHash(), HotStuffSupport.GENESIS_NODE);
     executedNodeHashes.add(HotStuffSupport.GENESIS_NODE.getNodeHash());
@@ -155,6 +156,17 @@ public class HotStuffManager {
 
   public void onClientRequest(ClientRequest request, ConnectionKey key) {
     clientCommunication.onClientRequest(request, key, isLeader());
+  }
+
+  public void onClientQuery(ClientRequest request, ConnectionKey key) {
+    if (!request.hasQuery()) {
+      throw new IllegalArgumentException("Client query request body is not set");
+    }
+    if (!clientCommunication.hasValidClientRequest(request)) {
+      return;
+    }
+
+    clientCommunication.replyToClient(key, ClientResponse.newBuilder().setQuery(queryResponse(request.getQuery())).build());
   }
 
   private void onPrepare() {
@@ -301,9 +313,6 @@ public class HotStuffManager {
   }
 
   private NodeCommand nodeCommandForRequest(ClientRequest request) {
-    if (request.hasAppend()) {
-      return NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
-    }
     if (request.hasTransaction()) {
       return NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(request)).build();
     }
@@ -312,9 +321,6 @@ public class HotStuffManager {
 
   private ClientResponse clientResponseForExecution(Node node, String clientCommand) {
     NodeCommand command = node.getCommand();
-    if (command.hasAppend()) {
-      return ClientResponse.newBuilder().setAppend(AppendResponse.newBuilder().setSuccess(true).setMessage(successMessage(clientCommand))).build();
-    }
     if (command.hasTransaction()) {
       return transactionResponse(node, command.getTransaction().getClientRequest().getTransaction());
     }
@@ -352,25 +358,52 @@ public class HotStuffManager {
   }
 
   private EvmService.TransactionResult executeTransaction(TransactionRequest transaction) {
-    Address recipient = Address.fromHexString("0x" + transaction.getTo());
+    Address targetAccount = Address.fromHexString("0x" + transaction.getTo());
     Wei amount = Wei.of(transaction.getAmount());
     Wei gasPrice = Wei.of(transaction.getGasPrice());
     TransactionType type = transaction.getType();
 
     if (type == TransactionType.TRANSACTION_TYPE_TRANSFER) {
-      return evmService.transferNative(clientAccountAddress, recipient, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
+      return evmService.transferNative(clientAccountAddress, targetAccount, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
     }
 
-    if (type == TransactionType.TRANSACTION_TYPE_CONTRACT_CALL) {
-      Bytes callData = transaction.hasData() ? Bytes.wrap(transaction.getData().toByteArray()) : Bytes.EMPTY;
-      return evmService.callContract(clientAccountAddress, recipient, callData, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
+    if (type == TransactionType.TRANSACTION_TYPE_IST_COIN_TRANSFER) {
+      return istCoin.transfer(clientAccountAddress, targetAccount, transaction.getAmount(), transaction.getNonce(), transaction.getGasLimit(), gasPrice);
     }
 
     throw new IllegalArgumentException("unsupported transaction type: " + type);
   }
 
-  private static String successMessage(String clientCommand) {
-    return "Request completed successfully: " + clientCommand;
+  private QueryResponse queryResponse(QueryRequest query) {
+    Address owner = Address.fromHexString("0x" + query.getOwner());
+
+    try {
+      EvmService.TransactionResult execution = switch (query.getType()) {
+        case QUERY_TYPE_DEPCOIN_BALANCE -> evmService.readNativeBalance(owner);
+        case QUERY_TYPE_IST_COIN_BALANCE -> istCoin.readBalanceOf(owner);
+        default -> throw new IllegalArgumentException("unsupported query type: " + query.getType());
+      };
+      QueryResponse.Builder response = QueryResponse.newBuilder().setSuccess(execution.success());
+      if (execution.success()) {
+        response.setMessage("Query executed successfully");
+        if (execution.returnData() != null && !execution.returnData().isEmpty()) {
+          response.setReturnData(ByteString.copyFrom(execution.returnData().toArrayUnsafe()));
+        }
+        return response.build();
+      }
+
+      response.setMessage("Query execution failed");
+      if (execution.errorMessage() != null && !execution.errorMessage().isBlank()) {
+        response.setErrorMessage(execution.errorMessage());
+      }
+      return response.build();
+    } catch (RuntimeException exception) {
+      String errorMessage = exception.getMessage();
+      if (errorMessage == null || errorMessage.isBlank()) {
+        errorMessage = "unexpected query execution error";
+      }
+      return QueryResponse.newBuilder().setSuccess(false).setMessage("Query execution failed").setErrorMessage(errorMessage).build();
+    }
   }
 
   private static Address clientAddress(PublicKey clientPublicKey) {

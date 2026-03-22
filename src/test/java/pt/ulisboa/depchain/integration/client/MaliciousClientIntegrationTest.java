@@ -13,9 +13,10 @@ import org.junit.jupiter.api.Timeout;
 
 import pt.ulisboa.depchain.integration.support.IntegrationHarness;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness.ManagedCluster;
-import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
+import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionType;
 
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -37,7 +38,7 @@ class MaliciousClientIntegrationTest extends IntegrationHarness {
   @Test
   @Timeout(30)
   void clientCannotAuthenticateOnConsensusPortTest() throws Exception {
-    ClientRequest request = sharedCluster.signedRequest("consensus-port-reject");
+    ClientRequest request = signedTransferRequest(sharedCluster.clientSenderId(), 990L, 0L, sharedCluster.clientPrivateKey());
     byte[] payload = request.toByteArray();
 
     assertNull(sharedCluster.sendPayloadToConsensusPort(LEADER_REPLICA_ID, payload, Duration.ofSeconds(3)), "A client must not be able to authenticate on the consensus port");
@@ -48,7 +49,7 @@ class MaliciousClientIntegrationTest extends IntegrationHarness {
   @Test
   @Timeout(30)
   void clientRequestWithWrongSenderIdRejectedTest() throws Exception {
-    ClientRequest forgedSenderRequest = signedAppendRequest(sharedCluster.clientSenderId() + 1, 991L, "wrong-sender", sharedCluster.clientPrivateKey());
+    ClientRequest forgedSenderRequest = signedTransferRequest(sharedCluster.clientSenderId() + 1, 991L, 0L, sharedCluster.clientPrivateKey());
 
     assertNull(sharedCluster
         .sendPayloadToClientPort(LEADER_REPLICA_ID, forgedSenderRequest.toByteArray(), Duration.ofSeconds(3)), "Requests with a mismatched client sender id must be rejected");
@@ -65,8 +66,11 @@ class MaliciousClientIntegrationTest extends IntegrationHarness {
   @Test
   @Timeout(30)
   void protoInvalidClientRequestRejectedTest() throws Exception {
-    ClientRequest invalidRequest = ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
-        .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(sharedCluster.clientSenderId()).setRequestId(992L)).setValue("missing-signature")).build();
+    ClientRequest invalidRequest = ClientRequest.newBuilder()
+        .setTransaction(TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(sharedCluster.clientSenderId()).setRequestId(992L))
+            .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(TEST_RECIPIENT_ADDRESS).setAmount(TEST_TRANSFER_AMOUNT).setNonce(0L).setGasLimit(TEST_GAS_LIMIT)
+            .setGasPrice(TEST_GAS_PRICE))
+        .build();
 
     assertNull(sharedCluster
         .sendPayloadToClientPort(LEADER_REPLICA_ID, invalidRequest.toByteArray(), Duration.ofSeconds(3)), "Proto-valid but protovalidate-invalid client requests must be rejected");

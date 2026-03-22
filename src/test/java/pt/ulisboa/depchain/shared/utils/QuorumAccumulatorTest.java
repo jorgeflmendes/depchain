@@ -42,4 +42,16 @@ class QuorumAccumulatorTest {
     assertIterableEquals(List.of(), accumulator.recordAndGetValuesIfQuorumReached(1, "ok", "reply-a", 2));
     assertIterableEquals(List.of("reply-a", "reply-b"), accumulator.recordAndGetValuesIfQuorumReached(2, "ok", "reply-b", 2));
   }
+
+  @Test
+  void exposesAcceptedCountAndLargestGroupCount() {
+    QuorumAccumulator<Integer, String, String> accumulator = new QuorumAccumulator<>(Set.of(1, 2, 3, 4));
+
+    accumulator.record(1, "a", "reply-a1");
+    accumulator.record(2, "a", "reply-a2");
+    accumulator.record(3, "b", "reply-b1");
+
+    assertEquals(3, accumulator.acceptedCount());
+    assertEquals(2, accumulator.maxCount());
+  }
 }

@@ -87,6 +87,14 @@ public final class QuorumAccumulator<S, K, V> {
     return group.values();
   }
 
+  public int acceptedCount() {
+    return acceptedSenders.size();
+  }
+
+  public int maxCount() {
+    return groups.values().stream().mapToInt(Group::count).max().orElse(0);
+  }
+
   private boolean accepts(S sender) {
     if (allowedSenders != null && !allowedSenders.contains(sender)) {
       return false;

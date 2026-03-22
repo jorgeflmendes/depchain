@@ -9,48 +9,24 @@ replicas:
     ports:
       consensus: 10001
       client: 11001
-    keys:
-      public: config/keys/server1/public/replica.pem
-      private: config/keys/server1/private/replica.pem
-      threshold:
-        public: config/keys/server1/public/threshold.pub
-        privateShare: config/keys/server1/private/threshold.share
   server2:
     senderId: 1
     host: 127.0.0.1
     ports:
       consensus: 10002
       client: 11002
-    keys:
-      public: config/keys/server2/public/replica.pem
-      private: config/keys/server2/private/replica.pem
-      threshold:
-        public: config/keys/server2/public/threshold.pub
-        privateShare: config/keys/server2/private/threshold.share
   server3:
     senderId: 2
     host: 127.0.0.1
     ports:
       consensus: 10003
       client: 11003
-    keys:
-      public: config/keys/server3/public/replica.pem
-      private: config/keys/server3/private/replica.pem
-      threshold:
-        public: config/keys/server3/public/threshold.pub
-        privateShare: config/keys/server3/private/threshold.share
   server4:
     senderId: 3
     host: 127.0.0.1
     ports:
       consensus: 10004
       client: 11004
-    keys:
-      public: config/keys/server4/public/replica.pem
-      private: config/keys/server4/private/replica.pem
-      threshold:
-        public: config/keys/server4/public/threshold.pub
-        privateShare: config/keys/server4/private/threshold.share
 
 client:
   id: client
@@ -62,12 +38,15 @@ client:
     - server2
     - server3
     - server4
-  keys:
-    public: config/keys/client/public/client.pem
-    private: config/keys/client/private/client.pem
 
 timeouts:
   viewChangeMs: 1000
   clientCommandWaitMs: 800
   thresholdRoundMs: 800
   fetchNodeMs: 300
+
+keys:
+  root: runtime/keys
+
+storage:
+  blocksRoot: runtime/storage

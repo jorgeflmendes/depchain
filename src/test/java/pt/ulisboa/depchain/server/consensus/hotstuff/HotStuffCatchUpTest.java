@@ -18,12 +18,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.google.protobuf.ByteString;
 
-import pt.ulisboa.depchain.proto.AppendNodeCommand;
-import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
@@ -31,6 +30,9 @@ import pt.ulisboa.depchain.proto.FetchNodeResponseMessage;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
+import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
 import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -40,8 +42,16 @@ import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
 import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
+import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 class HotStuffCatchUpTest {
+  private static final String TEST_RECIPIENT_ADDRESS = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  @BeforeAll
+  static void ensureKeyMaterial() throws Exception {
+    TestKeyMaterialSupport.ensureKeyMaterial(configPath());
+  }
+
   @Test
   void executeCommittedBranchExecutesAllUnexecutedAncestorsAndIsIdempotent() throws Exception {
     HotStuffManager hotStuffManager = newHotStuffManager();
@@ -78,10 +88,10 @@ class HotStuffCatchUpTest {
   void fetchNodeFromReplicasRejectsInvalidResponseAndFallsBackToAlternateReplica() throws Exception {
     HotStuffManager hotStuffManager = newHotStuffManager();
     Node parent = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 201L, "parent");
-    ClientRequest tamperedRequest = parent.getCommand().getAppend().getClientRequest().toBuilder()
-        .setAppend(parent.getCommand().getAppend().getClientRequest().getAppend().toBuilder().setValue("tampered")).build();
-    Node invalidParent = parent.toBuilder().setCommand(parent.getCommand().toBuilder().setAppend(parent.getCommand().getAppend().toBuilder().setClientRequest(tamperedRequest)))
-        .build();
+    ClientRequest tamperedRequest = parent.getCommand().getTransaction().getClientRequest().toBuilder()
+        .setTransaction(parent.getCommand().getTransaction().getClientRequest().getTransaction().toBuilder().setAmount(999L)).build();
+    Node invalidParent = parent.toBuilder()
+        .setCommand(parent.getCommand().toBuilder().setTransaction(parent.getCommand().getTransaction().toBuilder().setClientRequest(tamperedRequest))).build();
 
     hotStuffManager.onReplicaMessage(fetchNodeResponse(1, invalidParent));
     hotStuffManager.onReplicaMessage(fetchNodeResponse(2, parent));
@@ -144,26 +154,34 @@ class HotStuffCatchUpTest {
   }
 
   private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {
-    NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(signedAppendRequest(requestId, value))).build();
+    NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(signedTransferRequest(requestId, value, viewNumber - 1L)))
+        .build();
     String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(parentHash, viewNumber, command));
     return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
   }
 
-  private static ClientRequest signedAppendRequest(long requestId, String value) {
+  private static ClientRequest signedTransferRequest(long requestId, String value, long nonce) {
     try {
       ConfigParser config = ConfigParser.load(configPath());
       long clientSenderId = config.client().senderId();
       PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
-      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
-      return ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder().setRequestKey(requestKey(requestId)).setValue(value).setSignature(ByteString.copyFrom(signature)))
-          .build();
+      long amount = Math.max(1L, value.length());
+      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil
+          .signedTransactionRequestPayload(clientSenderId, requestId, TransactionType.TRANSACTION_TYPE_TRANSFER, TEST_RECIPIENT_ADDRESS, amount, nonce, 21_000L, 1L), clientPrivateKey);
+      return ClientRequest.newBuilder().setTransaction(TransactionRequest.newBuilder().setRequestKey(requestKey(requestId)).setType(TransactionType.TRANSACTION_TYPE_TRANSFER)
+          .setTo(TEST_RECIPIENT_ADDRESS).setAmount(amount).setNonce(nonce).setGasLimit(21_000L).setGasPrice(1L).setSignature(ByteString.copyFrom(signature))).build();
     } catch (Exception exception) {
-      throw new IllegalStateException("Could not create signed append request", exception);
+      throw new IllegalStateException("Could not create signed transfer request", exception);
     }
   }
 
   private static ClientRequestKey requestKey(long requestId) {
-    return ClientRequestKey.newBuilder().setClientSenderId(100L).setRequestId(requestId).build();
+    try {
+      ConfigParser config = ConfigParser.load(configPath());
+      return ClientRequestKey.newBuilder().setClientSenderId(config.client().senderId()).setRequestId(requestId).build();
+    } catch (Exception exception) {
+      throw new IllegalStateException("Could not resolve client sender id for request key", exception);
+    }
   }
 
   private static Message fetchNodeResponse(int senderId, Node node) {

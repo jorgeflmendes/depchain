@@ -24,18 +24,13 @@ public final class HotStuffSupport {
 
   public static String commandSummary(NodeCommand command) {
     ValidationUtils.requireNonNull(command, "command");
-    if (command.hasAppend()) {
-      return command.getAppend().getClientRequest().getAppend().getValue();
-    }
     if (command.hasTransaction()) {
       var transaction = command.getTransaction().getClientRequest().getTransaction();
-      if (transaction.getTypeValue() == 1) {
-        return "transfer to=%s amount=%d nonce=%d".formatted(transaction.getTo(), transaction.getAmount(), transaction.getNonce());
-      } else if (transaction.hasData()) {
-        return "contract_call to=%s nonce=%d data_len=%d".formatted(transaction.getTo(), transaction.getNonce(), transaction.getData().size());
-      }
-
-      return "contract_call to=%s nonce=%d".formatted(transaction.getTo(), transaction.getNonce());
+      return switch (transaction.getType()) {
+        case TRANSACTION_TYPE_TRANSFER -> "dep_transfer to=%s amount=%d nonce=%d".formatted(transaction.getTo(), transaction.getAmount(), transaction.getNonce());
+        case TRANSACTION_TYPE_IST_COIN_TRANSFER -> "ist_transfer to=%s amount=%d nonce=%d".formatted(transaction.getTo(), transaction.getAmount(), transaction.getNonce());
+        default -> "transaction type=%s to=%s nonce=%d".formatted(transaction.getType(), transaction.getTo(), transaction.getNonce());
+      };
     }
     if (command.hasNoOp()) {
       return NO_OP_VALUE;

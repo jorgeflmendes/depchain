@@ -79,8 +79,8 @@ public final class Populate {
     ValidationUtils.requireNonNull(replica, "replica");
 
     KeyPair keyPair = CryptoUtil.newECKeyPair();
-    Path publicKeyPath = Path.of(replica.publicKeyPath());
-    Path privateKeyPath = Path.of(replica.privateKeyPath());
+    Path publicKeyPath = replica.publicKeyPath();
+    Path privateKeyPath = replica.privateKeyPath();
 
     createParentDirectories(publicKeyPath);
     createParentDirectories(privateKeyPath);
@@ -97,8 +97,8 @@ public final class Populate {
     ValidationUtils.requireNonNull(thresholdConfig, "thresholdConfig");
     ValidationUtils.requireNonNegativeInt(replicaIndex, "replicaIndex");
 
-    Path thresholdPublicKeyPath = Path.of(replica.thresholdPublicKeyPath());
-    Path thresholdPrivateSharePath = Path.of(replica.thresholdPrivateSharePath());
+    Path thresholdPublicKeyPath = replica.thresholdPublicKeyPath();
+    Path thresholdPrivateSharePath = replica.thresholdPrivateSharePath();
 
     createParentDirectories(thresholdPublicKeyPath);
     createParentDirectories(thresholdPrivateSharePath);
@@ -118,8 +118,8 @@ public final class Populate {
     ValidationUtils.requireNonNull(client, "client");
 
     KeyPair keyPair = CryptoUtil.newECKeyPair();
-    Path publicKeyPath = Path.of(client.publicKeyPath());
-    Path privateKeyPath = Path.of(client.privateKeyPath());
+    Path publicKeyPath = client.publicKeyPath();
+    Path privateKeyPath = client.privateKeyPath();
 
     createParentDirectories(publicKeyPath);
     createParentDirectories(privateKeyPath);

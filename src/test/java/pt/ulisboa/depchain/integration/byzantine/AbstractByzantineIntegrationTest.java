@@ -10,6 +10,7 @@ import pt.ulisboa.depchain.integration.support.IntegrationHarness.StartedServer;
 abstract class AbstractByzantineIntegrationTest extends IntegrationHarness {
   protected final void runReplicaAttackScenario(ByzantineAttackMode attackMode) throws Exception {
     Path configPath = integrationConfigPath();
+    cleanPersistedBlockData(configPath);
     populateConfig(configPath);
 
     List<StartedServer> servers = new ArrayList<>(startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath));
@@ -21,12 +22,17 @@ abstract class AbstractByzantineIntegrationTest extends IntegrationHarness {
           + attackMode);
       assertByzantineAttackObserved(byzantineReplica, attackMode, "Byzantine replica attack was never exercised");
     } finally {
-      stopProcesses(servers);
+      try {
+        stopProcesses(servers);
+      } finally {
+        cleanPersistedBlockData(configPath);
+      }
     }
   }
 
   protected final void runLeaderAttackScenario(ByzantineAttackMode attackMode) throws Exception {
     Path configPath = integrationConfigPath();
+    cleanPersistedBlockData(configPath);
     populateConfig(configPath);
 
     List<StartedServer> servers = new ArrayList<>(startServers(HONEST_WITH_BYZANTINE_LEADER_REPLICA_IDS, configPath));
@@ -38,7 +44,11 @@ abstract class AbstractByzantineIntegrationTest extends IntegrationHarness {
           + attackMode);
       assertByzantineAttackObserved(byzantineLeader, attackMode, "Byzantine leader attack was never exercised");
     } finally {
-      stopProcesses(servers);
+      try {
+        stopProcesses(servers);
+      } finally {
+        cleanPersistedBlockData(configPath);
+      }
     }
   }
 

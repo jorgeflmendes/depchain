@@ -45,7 +45,8 @@ target/
 .DS_Store
 Thumbs.db
 
-# Generated keys
+# Runtime artifacts
+runtime/
 config/keys/
 
 # LaTeX auxiliary files

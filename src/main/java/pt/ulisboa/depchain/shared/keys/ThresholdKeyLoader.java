@@ -18,8 +18,8 @@ public final class ThresholdKeyLoader {
     ValidationUtils.requireNonNegativeLong(senderId, "senderId");
 
     ConfigParser.ReplicaSection replica = config.requireReplicaBySenderId(senderId);
-    byte[] publicKey = readSerialized(Path.of(replica.thresholdPublicKeyPath()), byte[].class);
-    Scalar privateShare = readSerialized(Path.of(replica.thresholdPrivateSharePath()), Scalar.class);
+    byte[] publicKey = readSerialized(replica.thresholdPublicKeyPath(), byte[].class);
+    Scalar privateShare = readSerialized(replica.thresholdPrivateSharePath(), Scalar.class);
     return new ReplicaThresholdKeyMaterial(publicKey, privateShare);
   }
 

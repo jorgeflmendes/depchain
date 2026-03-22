@@ -16,10 +16,15 @@ import org.slf4j.LoggerFactory;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
-import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
+import pt.ulisboa.depchain.proto.QueryRequest;
+import pt.ulisboa.depchain.proto.QueryResponse;
+import pt.ulisboa.depchain.proto.QueryType;
+import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionResponse;
+import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
@@ -34,16 +39,17 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 public final class DpchClient implements AutoCloseable {
   private static final Logger logger = LoggerFactory.getLogger(DpchClient.class);
   private static final SecureRandom connectionIdRandom = new SecureRandom();
+  private static final String INCOHERENT_REPLICA_RESPONSE_MESSAGE = "could not obtain a majority of identical replies from replicas";
 
-  private List<InetSocketAddress> replicaEndpoints;
-  private PrivateKey clientPrivateKey;
-  private Map<Long, PublicKey> replicaPublicKeys;
-  private long requestTimeoutMs;
-  private int coherentReplyQuorum;
-  private long clientSenderId;
-  private AuthenticatedLink transport;
-  private Map<Long, InetSocketAddress> openConnections;
-  private AtomicLong nextRequestNonce;
+  private final List<InetSocketAddress> replicaEndpoints;
+  private final PrivateKey clientPrivateKey;
+  private final Map<Long, PublicKey> replicaPublicKeys;
+  private final long requestTimeoutMs;
+  private final int coherentReplyQuorum;
+  private final long clientSenderId;
+  private final AuthenticatedLink transport;
+  private final Map<Long, InetSocketAddress> openConnections;
+  private final AtomicLong nextRequestId;
 
   public DpchClient(String configPath) throws Exception {
     ConfigParser config = ConfigParser.load(java.nio.file.Path.of(configPath));
@@ -55,95 +61,129 @@ public final class DpchClient implements AutoCloseable {
     this.coherentReplyQuorum = config.system().f() + 1;
     this.transport = AuthenticatedLink.unbound(this.clientSenderId, this.clientPrivateKey, this.replicaPublicKeys);
     this.openConnections = new LinkedHashMap<>();
-    this.nextRequestNonce = new AtomicLong(0L);
+    this.nextRequestId = new AtomicLong(0L);
   }
 
   public static DpchClient open(String configPath) throws Exception {
     return new DpchClient(configPath);
   }
 
-  // TODO: implement the client-side transaction command flow using
-  // TransactionRequest/TransactionResponse.
-  public String requestAppend(String value) throws Exception {
-    long nonce = nextRequestNonce.getAndIncrement();
-    byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, nonce, value), clientPrivateKey);
+  public TransactionResponse requestDepCoinTransfer(String recipientAddress, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
+    return requestTransaction(TransactionType.TRANSACTION_TYPE_TRANSFER, recipientAddress, amount, nonce, gasLimit, gasPrice);
+  }
 
-    // Make the proto request and validate
-    ClientRequest request = ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
-        .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(nonce)).setValue(value).setSignature(ByteString.copyFrom(signature))).build();
-    byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
+  public QueryResponse requestDepCoinBalance(String ownerAddress) throws Exception {
+    return requestQuery(QueryType.QUERY_TYPE_DEPCOIN_BALANCE, ownerAddress);
+  }
 
-    openConnections.clear();
-    for (InetSocketAddress replica : replicaEndpoints) {
-      // Get a unique connection ID
-      long connectionId;
-      while (true) {
-        connectionId = connectionIdRandom.nextLong();
-        if (connectionId != 0L && !openConnections.containsKey(connectionId)) {
-          break;
-        }
-      }
+  public QueryResponse requestIstCoinBalance(String ownerAddress) throws Exception {
+    return requestQuery(QueryType.QUERY_TYPE_IST_COIN_BALANCE, ownerAddress);
+  }
 
-      // Send the request, ignoring send failures (which may be due to some replicas being down).
-      try {
-        transport.send(connectionId, payload, replica);
-        openConnections.put(connectionId, replica);
-      } catch (RuntimeException exception) {
-        logger.debug("Ignoring failed client broadcast init to {}", replica, exception);
-      }
+  public TransactionResponse requestIstCoinTransfer(String recipientAddress, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
+    return requestTransaction(TransactionType.TRANSACTION_TYPE_IST_COIN_TRANSFER, recipientAddress, amount, nonce, gasLimit, gasPrice);
+  }
+
+  private TransactionResponse requestTransaction(TransactionType type, String to, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
+    ClientResponse response = broadcastAndCollectResponse(buildTransactionRequest(type, to, amount, nonce, gasLimit, gasPrice));
+    if (response == null) {
+      return null;
     }
+    if (!response.hasTransaction()) {
+      throw new IllegalArgumentException("Expected transaction response but received " + response.getBodyCase());
+    }
+    return response.getTransaction();
+  }
 
+  private QueryResponse requestQuery(QueryType type, String ownerAddress) throws Exception {
+    ClientResponse response = broadcastAndCollectResponse(buildQueryRequest(type, ownerAddress));
+    if (response == null) {
+      return null;
+    }
+    if (!response.hasQuery()) {
+      throw new IllegalArgumentException("Expected query response but received " + response.getBodyCase());
+    }
+    return response.getQuery();
+  }
+
+  private ClientResponse broadcastAndCollectResponse(ClientRequest request) throws Exception {
+    broadcastToReplicas(ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray());
     if (openConnections.isEmpty()) {
       return null;
     }
 
-    long deadlineNanos = Long.MAX_VALUE;
-    if (requestTimeoutMs != 0L) {
-      deadlineNanos = TimeUtil.monotonicDeadlineAfterNow(requestTimeoutMs);
-    }
+    long deadlineNanos = requestTimeoutMs == 0L ? Long.MAX_VALUE : TimeUtil.monotonicDeadlineAfterNow(requestTimeoutMs);
 
-    // Wait for replies, and return the first value for which a quorum of replicas replied with it.
     try {
-      return receiveAppend(deadlineNanos);
+      return awaitCoherentResponse(deadlineNanos);
     } finally {
-      for (Map.Entry<Long, InetSocketAddress> entry : openConnections.entrySet()) {
-        try {
-          transport.closeConnection(entry.getKey(), entry.getValue());
-        } catch (RuntimeException exception) {
-          logger.debug("Ignoring client connection close failure", exception);
-        }
-      }
-
-      openConnections.clear();
+      closeOpenConnections();
     }
   }
 
-  public String receiveAppend(long deadlineNanos) {
+  private void broadcastToReplicas(byte[] payload) {
+    openConnections.clear();
+    for (InetSocketAddress replicaEndpoint : replicaEndpoints) {
+      long connectionId = nextConnectionId();
+
+      try {
+        transport.send(connectionId, payload, replicaEndpoint);
+        openConnections.put(connectionId, replicaEndpoint);
+      } catch (RuntimeException exception) {
+        logger.debug("Ignoring failed client broadcast init to {}", replicaEndpoint, exception);
+      }
+    }
+  }
+
+  private long nextConnectionId() {
+    while (true) {
+      long connectionId = connectionIdRandom.nextLong();
+      if (connectionId != 0L && !openConnections.containsKey(connectionId)) {
+        return connectionId;
+      }
+    }
+  }
+
+  private void closeOpenConnections() {
+    for (Map.Entry<Long, InetSocketAddress> entry : openConnections.entrySet()) {
+      try {
+        transport.closeConnection(entry.getKey(), entry.getValue());
+      } catch (RuntimeException exception) {
+        logger.debug("Ignoring client connection close failure", exception);
+      }
+    }
+    openConnections.clear();
+  }
+
+  private ClientRequest buildTransactionRequest(TransactionType type, String to, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
+    long requestId = nextRequestId.getAndIncrement();
+    byte[] signature = CryptoUtil
+        .signEcdsa(ClientRequestSignaturePayloadUtil.signedTransactionRequestPayload(clientSenderId, requestId, type, to, amount, nonce, gasLimit, gasPrice), clientPrivateKey);
+
+    TransactionRequest.Builder transaction = TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
+        .setType(type).setTo(to).setAmount(amount).setNonce(nonce).setGasLimit(gasLimit).setGasPrice(gasPrice).setSignature(ByteString.copyFrom(signature));
+    return ClientRequest.newBuilder().setTransaction(transaction).build();
+  }
+
+  private ClientRequest buildQueryRequest(QueryType type, String owner) throws Exception {
+    long requestId = nextRequestId.getAndIncrement();
+    byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedQueryRequestPayload(clientSenderId, requestId, type, owner), clientPrivateKey);
+
+    QueryRequest.Builder query = QueryRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setType(type)
+        .setOwner(owner).setSignature(ByteString.copyFrom(signature));
+    return ClientRequest.newBuilder().setQuery(query).build();
+  }
+
+  private ClientResponse awaitCoherentResponse(long deadlineNanos) throws IncoherentReplicaResponseException {
     QuorumAccumulator<Long, String, ClientResponse> repliesByValue = new QuorumAccumulator<>(replicaPublicKeys.keySet());
 
     while (true) {
-      // Receive a reply, ignoring receive failures (which may be due to some replicas being down).
-      InboundPacket inbound;
-      try {
-        if (requestTimeoutMs == 0L) {
-          do {
-            inbound = transport.receive();
-          } while (inbound == null);
-        } else {
-          inbound = null;
-          while (!TimeUtil.hasTimedOutMonotonic(deadlineNanos) && inbound == null) {
-            inbound = transport.receive(TimeUtil.monotonicRemainingMsUntil(deadlineNanos));
-          }
-        }
-      } catch (InterruptedException exception) {
-        Thread.currentThread().interrupt();
-        return null;
-      } catch (Exception exception) {
-        logger.debug("Ignoring client receive failure", exception);
-        return null;
-      }
+      InboundPacket inbound = receiveInboundPacket(deadlineNanos);
 
       if (inbound == null) {
+        if (repliesByValue.acceptedCount() > 0) {
+          throw new IncoherentReplicaResponseException(INCOHERENT_REPLICA_RESPONSE_MESSAGE);
+        }
         return null;
       }
 
@@ -156,24 +196,56 @@ public final class DpchClient implements AutoCloseable {
         continue;
       }
 
-      // Parse and validate the reply payload
-      ClientResponse response;
-      try {
-        response = ProtoValidationUtil.requireValid(ClientResponse.parseFrom(inbound.payload()), "ClientResponse");
-        if (!response.hasAppend()) {
-          throw new IllegalArgumentException("Unsupported client response type: " + response.getBodyCase());
-        }
-      } catch (InvalidProtocolBufferException exception) {
-        throw new IllegalArgumentException("Invalid protobuf client response payload", exception);
-      }
+      ClientResponse response = parseResponse(inbound.payload().toByteArray());
       ClientResponse quorumResponse = repliesByValue.recordAndGetFirstValueIfQuorumReached(replicaSenderId, Base64.getEncoder()
           .encodeToString(ProtoValidationUtil.requireValid(response, "ClientResponse").toByteArray()), response, coherentReplyQuorum);
 
-      // If a quorum of replicas has replied with the same value, return it.
       if (quorumResponse != null) {
-        return quorumResponse.getAppend().getMessage();
+        return quorumResponse;
+      }
+
+      if (replyQuorumIsImpossible(repliesByValue)) {
+        throw new IncoherentReplicaResponseException(INCOHERENT_REPLICA_RESPONSE_MESSAGE);
       }
     }
+  }
+
+  private InboundPacket receiveInboundPacket(long deadlineNanos) {
+    while (true) {
+      try {
+        if (requestTimeoutMs == 0L) {
+          InboundPacket inbound;
+          do {
+            inbound = transport.receive();
+          } while (inbound == null);
+          return inbound;
+        }
+
+        InboundPacket inbound = null;
+        while (!TimeUtil.hasTimedOutMonotonic(deadlineNanos) && inbound == null) {
+          inbound = transport.receive(TimeUtil.monotonicRemainingMsUntil(deadlineNanos));
+        }
+        return inbound;
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        return null;
+      } catch (Exception exception) {
+        logger.debug("Ignoring client receive failure", exception);
+      }
+    }
+  }
+
+  private ClientResponse parseResponse(byte[] payload) {
+    try {
+      return ProtoValidationUtil.requireValid(ClientResponse.parseFrom(payload), "ClientResponse");
+    } catch (InvalidProtocolBufferException exception) {
+      throw new IllegalArgumentException("Invalid protobuf client response payload", exception);
+    }
+  }
+
+  private boolean replyQuorumIsImpossible(QuorumAccumulator<Long, String, ClientResponse> repliesByValue) {
+    int remainingPossibleReplies = openConnections.size() - repliesByValue.acceptedCount();
+    return repliesByValue.maxCount() + remainingPossibleReplies < coherentReplyQuorum;
   }
 
   @Override

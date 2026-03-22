@@ -37,9 +37,7 @@ public final class PublicKeyLoader {
 
     Map<Long, PublicKey> publicKeyBySenderId = new LinkedHashMap<>();
     for (ConfigParser.ReplicaSection replica : config.replicas()) {
-      Path publicKeyPath = Path.of(replica.publicKeyPath());
-      PublicKey publicKey = loadPemPublicKey(publicKeyPath);
-      publicKeyBySenderId.put(replica.senderId(), publicKey);
+      publicKeyBySenderId.put(replica.senderId(), loadPemPublicKey(replica.publicKeyPath()));
     }
 
     return Map.copyOf(publicKeyBySenderId);
@@ -47,7 +45,7 @@ public final class PublicKeyLoader {
 
   public static PublicKey loadClientPublicKey(ConfigParser config) throws Exception {
     ValidationUtils.requireNonNull(config, "config");
-    return loadPemPublicKey(Path.of(config.client().publicKeyPath()));
+    return loadPemPublicKey(config.client().publicKeyPath());
   }
 
   public static PublicKey decodePublicKey(byte[] bytes) throws Exception {

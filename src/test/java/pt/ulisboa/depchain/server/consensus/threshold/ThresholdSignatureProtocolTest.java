@@ -8,19 +8,21 @@ import java.security.PrivateKey;
 import java.util.List;
 import java.util.Set;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.google.protobuf.ByteString;
 import com.weavechain.curve25519.Scalar;
 
-import pt.ulisboa.depchain.proto.AppendNodeCommand;
-import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffCryptoPayloads;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -29,8 +31,16 @@ import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
 import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
+import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 class ThresholdSignatureProtocolTest {
+  private static final String TEST_RECIPIENT_ADDRESS = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  @BeforeAll
+  static void ensureKeyMaterial() throws Exception {
+    TestKeyMaterialSupport.ensureKeyMaterial(configPath());
+  }
+
   @Test
   void verifyQcAcceptsGenesisAndRejectsTamperedGenesis() throws Exception {
     ThresholdSignatureProtocol protocol = protocol();
@@ -99,21 +109,27 @@ class ThresholdSignatureProtocolTest {
   }
 
   private static Node newNode(int viewNumber, String value, long requestId) {
-    NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(signedAppendRequest(requestId, value))).build();
+    NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(signedTransferRequest(requestId, value, viewNumber)))
+        .build();
     String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(HotStuffSupport.GENESIS_NODE.getNodeHash(), viewNumber, command));
     return Node.newBuilder().setParentNodeHash(HotStuffSupport.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
   }
 
-  private static ClientRequest signedAppendRequest(long requestId, String value) {
+  private static ClientRequest signedTransferRequest(long requestId, String value, long nonce) {
     try {
       ConfigParser config = ConfigParser.load(configPath());
       long clientSenderId = config.client().senderId();
       PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
-      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
-      return ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
-          .setValue(value).setSignature(ByteString.copyFrom(signature))).build();
+      long amount = Math.max(1L, value.length());
+      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil
+          .signedTransactionRequestPayload(clientSenderId, requestId, TransactionType.TRANSACTION_TYPE_TRANSFER, TEST_RECIPIENT_ADDRESS, amount, nonce, 21_000L, 1L), clientPrivateKey);
+      return ClientRequest.newBuilder()
+          .setTransaction(TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
+              .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(TEST_RECIPIENT_ADDRESS).setAmount(amount).setNonce(nonce).setGasLimit(21_000L).setGasPrice(1L)
+              .setSignature(ByteString.copyFrom(signature)))
+          .build();
     } catch (Exception exception) {
-      throw new IllegalStateException("Could not create signed append request", exception);
+      throw new IllegalStateException("Could not create signed transfer request", exception);
     }
   }
 

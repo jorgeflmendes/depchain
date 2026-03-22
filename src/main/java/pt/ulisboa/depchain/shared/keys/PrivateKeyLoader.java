@@ -25,15 +25,12 @@ public final class PrivateKeyLoader {
     ValidationUtils.requireNonNull(config, "config");
     ValidationUtils.requireNonNegativeLong(senderId, "senderId");
 
-    ConfigParser.ReplicaSection replica = config.requireReplicaBySenderId(senderId);
-    return loadPrivateKey(Path.of(replica.privateKeyPath()));
+    return loadPrivateKey(config.requireReplicaBySenderId(senderId).privateKeyPath());
   }
 
   public static PrivateKey loadClientPrivateKey(ConfigParser config) throws Exception {
     ValidationUtils.requireNonNull(config, "config");
-
-    Path privateKeyPath = Path.of(config.client().privateKeyPath());
-    return loadPrivateKey(privateKeyPath);
+    return loadPrivateKey(config.client().privateKeyPath());
   }
 
   public static PrivateKey decodePrivateKey(byte[] bytes) throws Exception {

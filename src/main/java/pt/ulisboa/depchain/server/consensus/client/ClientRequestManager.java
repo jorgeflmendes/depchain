@@ -15,6 +15,7 @@ import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
+import pt.ulisboa.depchain.proto.QueryRequest;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
@@ -131,6 +132,10 @@ public final class ClientRequestManager {
     }
   }
 
+  public boolean hasValidClientRequest(ClientRequest request) {
+    return hasValidClientRequestSignature(request);
+  }
+
   private ClientRequest registerKnownRequest(ClientRequest request, ConnectionKey key) {
     ClientRequestKey requestKey = requestKeyOrNull(request);
     if (requestKey == null) {
@@ -152,7 +157,7 @@ public final class ClientRequestManager {
       return knownRequest;
     }
 
-    if (!hasValidClientRequest(request)) {
+    if (!hasValidClientRequestSignature(request)) {
       return null;
     }
 
@@ -189,7 +194,7 @@ public final class ClientRequestManager {
     return null;
   }
 
-  private boolean hasValidClientRequest(ClientRequest request) {
+  private boolean hasValidClientRequestSignature(ClientRequest request) {
     ClientRequestKey requestKey = requestKeyOrNull(request);
     if (request == null || requestKey == null) {
       return false;
@@ -199,20 +204,17 @@ public final class ClientRequestManager {
     }
 
     try {
-      if (request.hasAppend()) {
-        byte[] payload = ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), request.getAppend().getValue());
-        return CryptoUtil.verifyEcdsa(payload, request.getAppend().getSignature().toByteArray(), clientPublicKey);
-      }
-
       if (request.hasTransaction()) {
         TransactionRequest transaction = request.getTransaction();
-        byte[] data = null;
-        if (transaction.hasData()) {
-          data = transaction.getData().toByteArray();
-        }
         byte[] payload = ClientRequestSignaturePayloadUtil.signedTransactionRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), transaction
-            .getType(), transaction.getTo(), transaction.getAmount(), transaction.getNonce(), transaction.getGasLimit(), transaction.getGasPrice(), data);
+            .getType(), transaction.getTo(), transaction.getAmount(), transaction.getNonce(), transaction.getGasLimit(), transaction.getGasPrice());
         return CryptoUtil.verifyEcdsa(payload, transaction.getSignature().toByteArray(), clientPublicKey);
+      }
+
+      if (request.hasQuery()) {
+        QueryRequest query = request.getQuery();
+        byte[] payload = ClientRequestSignaturePayloadUtil.signedQueryRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), query.getType(), query.getOwner());
+        return CryptoUtil.verifyEcdsa(payload, query.getSignature().toByteArray(), clientPublicKey);
       }
     } catch (Exception exception) {
       return false;
@@ -228,11 +230,11 @@ public final class ClientRequestManager {
     if (request == null) {
       return null;
     }
-    if (request.hasAppend()) {
-      return request.getAppend().getRequestKey();
-    }
     if (request.hasTransaction()) {
       return request.getTransaction().getRequestKey();
+    }
+    if (request.hasQuery()) {
+      return request.getQuery().getRequestKey();
     }
     return null;
   }
@@ -240,9 +242,6 @@ public final class ClientRequestManager {
   private static ClientRequest clientRequestOrNull(NodeCommand command) {
     if (command == null) {
       return null;
-    }
-    if (command.hasAppend() && command.getAppend().hasClientRequest()) {
-      return command.getAppend().getClientRequest();
     }
     if (command.hasTransaction() && command.getTransaction().hasClientRequest()) {
       return command.getTransaction().getClientRequest();

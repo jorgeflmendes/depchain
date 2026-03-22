@@ -8,19 +8,24 @@ DepChain is a permissioned blockchain project for the Highly Dependable Systems 
 - Maven 3.9+
 
 ## Configuration
-Main runtime configuration is in `config/config.yaml`, including:
+Main runtime configuration is in `config/config.yaml`, and the genesis block template is in `config/genesis.json`.
+The YAML config includes:
 - system parameters (`system.n`, `system.f`),
 - replica ids as YAML keys under `replicas`,
 - replica network fields grouped under `ports`,
-- replica key material grouped under `keys` and `keys.threshold`,
 - client identity and connectivity fields (`client.id`, `client.senderId`, `client.host`, `client.knownReplicas`),
-- client key paths grouped under `client.keys`,
 - client request timeout (`client.requestTimeoutMs`, where `0` means no timeout),
-- view change timeout (`timeouts.viewChangeMs`).
+- timeouts (`timeouts.viewChangeMs`, `timeouts.clientCommandWaitMs`, `timeouts.thresholdRoundMs`, `timeouts.fetchNodeMs`),
+- runtime key root (`keys.root`), from which replica/client key paths are derived,
+- runtime block storage root (`storage.blocksRoot`), from which per-replica block directories are derived.
+
+With the default config:
+- key material is generated under `runtime/keys`,
+- persisted blocks are stored under `runtime/storage/<replicaId>/blocks`.
 
 
 ## Run Locally
-Always run `Populate` before starting replicas or clients locally, so the configured key files and threshold material exist.
+Always run `Populate` before starting replicas or clients locally, so the configured key files and threshold material exist under `runtime/keys`.
 
 Before running:
 - ensure key files exist at configured paths,
@@ -45,9 +50,31 @@ Main <configPath>
 
 Maven:
 ```powershell
-mvn exec:java@client "-Dexec.args=server1 config/config.yaml"
-mvn exec:java@client "-Dexec.args=server2 config/config.yaml"
+mvn exec:java@client "-Dexec.args=config/config.yaml"
 ```
+
+Client shell commands:
+```text
+depcoin-transfer <to> <amount> <nonce> [gasLimit] [gasPrice]
+depcoin-balance <owner>
+ist-balance <owner>
+ist-transfer <to> <rawValue> <nonce> [gasLimit] [gasPrice]
+```
+
+Examples:
+```text
+depcoin-transfer 3333333333333333333333333333333333333333 25 0
+depcoin-balance 1111111111111111111111111111111111111111
+ist-balance 1111111111111111111111111111111111111111
+ist-transfer 3333333333333333333333333333333333333333 500 1
+```
+
+The client now exposes both assets required by the project:
+- `depcoin-transfer` sends native `DepCoin` between EOAs.
+- `depcoin-balance` reads native `DepCoin` balances.
+- `ist-balance` and `ist-transfer` operate on the `IST Coin` ERC-20 contract.
+
+The replicas translate `IST Coin` requests into the corresponding contract calls internally. The client only accepts a response when a coherent quorum of replicas returns the same value. If replicas answer but no majority agrees, the shell prints an explicit error.
 
 Server entrypoint usage:
 ```text

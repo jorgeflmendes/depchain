@@ -7,7 +7,7 @@
         {
             "type": "CONTRACT_DEPLOY",
             "from": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "to": null, 
+            "to": null,
             "amount": "0",
             "nonce": 0,
             "gas_limit": 5000000,

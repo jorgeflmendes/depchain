@@ -19,10 +19,6 @@ enum ConsensusMessageType {
   CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE = 7;
 }
 
-message AppendNodeCommand {
-  depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
-}
-
 message TransactionNodeCommand {
   depchain.ClientRequest client_request = 1 [(buf.validate.field).required = true];
 }
@@ -32,9 +28,9 @@ message NoOpCommand {}
 message GenesisCommand {}
 
 message NodeCommand {
+  reserved 1;
   oneof body {
     option (buf.validate.oneof).required = true;
-    AppendNodeCommand append = 1;
     NoOpCommand no_op = 2;
     GenesisCommand genesis = 3;
     TransactionNodeCommand transaction = 4;

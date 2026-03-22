@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -67,6 +68,36 @@ class BlockStoreTest {
     var latest = store.loadLatest();
     assertTrue(latest.isPresent());
     assertEquals("0x02", latest.get().state().get("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").storage().get("0x01"));
+  }
+
+  @Test
+  void loadLatestIgnoresTemporaryArtifacts(@TempDir Path tempDir) throws IOException {
+    BlockStore store = new BlockStore(tempDir);
+
+    store.append(block(0L, "hash-0", null));
+    Files.writeString(tempDir.resolve("block-00000001.json.tmp-123.json"), "{}");
+
+    var latest = store.loadLatest();
+    assertTrue(latest.isPresent());
+    assertEquals(0L, latest.get().height());
+  }
+
+  @Test
+  void appendAndLoadPreservesStateChangingTransactionTypes(@TempDir Path tempDir) throws IOException {
+    BlockStore store = new BlockStore(tempDir);
+
+    BlockStore.BlockDocument block = new BlockStore.BlockDocument(0L, "hash-0", null, 21_000L,
+        List.of(new GenesisParser.GenesisTransaction("TRANSFER", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "0", 0L, 250_000L, 1L,
+            "0x", null), new GenesisParser.GenesisTransaction("IST_COIN_TRANSFER", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "25", 1L,
+                250_000L, 1L, "0x", null)),
+        new LinkedHashMap<>());
+
+    store.append(block);
+
+    var latest = store.loadLatest();
+    assertTrue(latest.isPresent());
+    assertEquals("TRANSFER", latest.get().transactions().get(0).type());
+    assertEquals("IST_COIN_TRANSFER", latest.get().transactions().get(1).type());
   }
 
   private static BlockStore.BlockDocument block(long height, String hash, String previousHash) {

@@ -11,12 +11,19 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Map;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
+import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 class KeyLoaderTest {
+  @BeforeAll
+  static void ensureKeyMaterial() throws Exception {
+    TestKeyMaterialSupport.ensureKeyMaterial(configPath());
+  }
+
   @Test
   void loadsReplicaAndClientPemKeysFromConfig() throws Exception {
     ConfigParser config = ConfigParser.load(configPath());

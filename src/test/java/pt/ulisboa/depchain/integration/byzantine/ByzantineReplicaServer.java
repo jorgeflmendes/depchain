@@ -18,8 +18,6 @@ import org.slf4j.LoggerFactory;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
-import pt.ulisboa.depchain.proto.AppendNodeCommand;
-import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ConsensusMessageType;
@@ -29,6 +27,9 @@ import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
 import pt.ulisboa.depchain.proto.ProposalMessage;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.proto.VoteMessage;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffCryptoPayloads;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
@@ -44,6 +45,7 @@ import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
 public final class ByzantineReplicaServer {
   public static final String ATTACK_MARKER = "Byzantine attack observed:";
+  private static final String TEST_RECIPIENT_ADDRESS = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
   private static final Logger logger = LoggerFactory.getLogger(ByzantineReplicaServer.class);
 
@@ -280,11 +282,16 @@ public final class ByzantineReplicaServer {
     try {
       long clientSenderId = configParser.client().senderId();
       PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(configParser);
-      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, value), clientPrivateKey);
-      ClientRequest request = ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
-          .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setValue(value).setSignature(ByteString.copyFrom(signature)))
+      long nonce = 1_000_000L + requestId;
+      byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil
+          .signedTransactionRequestPayload(clientSenderId, requestId, TransactionType.TRANSACTION_TYPE_TRANSFER, TEST_RECIPIENT_ADDRESS, requestId
+              + 1, nonce, 21_000L, 1L), clientPrivateKey);
+      ClientRequest request = ClientRequest.newBuilder()
+          .setTransaction(TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
+              .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(TEST_RECIPIENT_ADDRESS).setAmount(requestId + 1).setNonce(nonce).setGasLimit(21_000L).setGasPrice(1L)
+              .setSignature(ByteString.copyFrom(signature)))
           .build();
-      NodeCommand command = NodeCommand.newBuilder().setAppend(AppendNodeCommand.newBuilder().setClientRequest(request)).build();
+      NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(request)).build();
       String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(HotStuffSupport.GENESIS_NODE.getNodeHash(), view, command));
       return Node.newBuilder().setParentNodeHash(HotStuffSupport.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(view).setCommand(command).build();
     } catch (Exception exception) {

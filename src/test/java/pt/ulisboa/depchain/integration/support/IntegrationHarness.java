@@ -1,15 +1,12 @@
 package pt.ulisboa.depchain.integration.support;
 
 import static org.awaitility.Awaitility.await;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
@@ -26,11 +23,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,10 +39,12 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 import pt.ulisboa.depchain.integration.byzantine.ByzantineAttackMode;
 import pt.ulisboa.depchain.integration.byzantine.ByzantineReplicaServer;
-import pt.ulisboa.depchain.proto.AppendRequest;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
+import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionResponse;
+import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.config.ConfigParser.ReplicaSection;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
@@ -53,6 +54,7 @@ import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
+import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 public abstract class IntegrationHarness {
   protected static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(8);
@@ -70,36 +72,28 @@ public abstract class IntegrationHarness {
   protected static final List<String> HONEST_REPLICA_IDS = List.of("server1", "server2");
   protected static final List<String> HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS = List.of("server1", "server2", "server4");
   protected static final List<String> HONEST_WITH_BYZANTINE_LEADER_REPLICA_IDS = List.of("server2", "server3", "server4");
+  protected static final String TEST_RECIPIENT_ADDRESS = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  protected static final long TEST_TRANSFER_AMOUNT = 1L;
+  protected static final long TEST_GAS_LIMIT = 21_000L;
+  protected static final long TEST_GAS_PRICE = 1L;
 
   private static final AtomicInteger PORT_BLOCK_COUNTER = new AtomicInteger();
+  private static final Map<Path, AtomicLong> NEXT_NONCE_BY_CONFIG = new ConcurrentHashMap<>();
   private static final Pattern CONSENSUS_PORT_PATTERN = Pattern.compile("(consensus:\\s+)(\\d+)");
   private static final Pattern CLIENT_PORT_PATTERN = Pattern.compile("(client:\\s+)(\\d+)");
-  private static final Object POPULATE_LOCK = new Object();
-  private static volatile boolean populated;
-
-  protected record ProcessResult(int exitCode, String output) {
-  }
-
   protected static Path integrationConfigPath() {
-    Path baseConfigPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
-    assertTrue(Files.exists(baseConfigPath), "Missing config file: " + baseConfigPath);
+    Path baseConfigPath = projectConfigPath();
     return isolatedIntegrationConfigPath(baseConfigPath);
   }
 
+  protected static Path projectConfigPath() {
+    Path baseConfigPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
+    assertTrue(Files.exists(baseConfigPath), "Missing config file: " + baseConfigPath);
+    return baseConfigPath;
+  }
+
   protected static void populateConfig(Path configPath) throws IOException, InterruptedException {
-    if (populated) {
-      return;
-    }
-
-    synchronized (POPULATE_LOCK) {
-      if (populated) {
-        return;
-      }
-
-      ProcessResult populateResult = runPopulate(configPath);
-      assertEquals(0, populateResult.exitCode(), populateResult.output());
-      populated = true;
-    }
+    TestKeyMaterialSupport.ensureKeyMaterial(configPath);
   }
 
   protected static List<StartedServer> startServers(List<String> replicaIds, Path configPath) throws IOException {
@@ -110,12 +104,32 @@ public abstract class IntegrationHarness {
     return servers;
   }
 
+  protected static void cleanPersistedBlockData(Path configPath) throws IOException {
+    ConfigParser config = ConfigParser.load(configPath);
+    Path blocksRoot = config.storage().blocksRootPath();
+    NEXT_NONCE_BY_CONFIG.remove(normalizedConfigPath(configPath));
+    if (!Files.exists(blocksRoot)) {
+      return;
+    }
+
+    try (var paths = Files.walk(blocksRoot)) {
+      paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+        try {
+          Files.deleteIfExists(path);
+        } catch (IOException exception) {
+          throw new IllegalStateException("Could not clean block path " + path, exception);
+        }
+      });
+    }
+  }
+
   protected static StartedServer startByzantineServer(String replicaId, Path configPath, ByzantineAttackMode attackMode) throws IOException {
     return startProcess(replicaId, "pt.ulisboa.depchain.integration.byzantine.ByzantineReplicaMain", configPath.toString(), attackMode.name());
   }
 
   protected static ManagedCluster startManagedCluster(List<String> replicaIds) throws Exception {
     Path configPath = integrationConfigPath();
+    cleanPersistedBlockData(configPath);
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(replicaIds, configPath);
@@ -124,6 +138,7 @@ public abstract class IntegrationHarness {
       return new ManagedCluster(configPath, servers, TestClientSession.open(configPath));
     } catch (Exception exception) {
       stopProcesses(servers);
+      cleanPersistedBlockData(configPath);
       throw exception;
     }
   }
@@ -139,7 +154,7 @@ public abstract class IntegrationHarness {
     byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
     InboundPacket response = broadcastClientRequestPayload(configPath, payload, timeout);
     assertResponseNotNull(response, message, servers);
-    assertEquals(successMessage(command), decodeClientResponse(response).getAppend().getMessage(), message);
+    assertSuccessfulTransactionResponse(decodeClientResponse(response), message);
   }
 
   protected static void assertReplayIsIgnored(Path configPath, String command, List<StartedServer> servers, String message) throws Exception {
@@ -147,7 +162,7 @@ public abstract class IntegrationHarness {
     byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
     InboundPacket firstResponse = broadcastClientRequestPayload(configPath, payload, REPLAY_INITIAL_TIMEOUT);
     assertResponseNotNull(firstResponse, message + " (initial request)", servers);
-    assertEquals(successMessage(command), decodeClientResponse(firstResponse).getAppend().getMessage(), message + " (initial request)");
+    assertSuccessfulTransactionResponse(decodeClientResponse(firstResponse), message + " (initial request)");
 
     for (int i = 0; i < 3; i++) {
       InboundPacket replayResponse = broadcastClientRequestPayload(configPath, payload, REPLAY_RESPONSE_TIMEOUT);
@@ -191,13 +206,16 @@ public abstract class IntegrationHarness {
     long clientSenderId = config.client().senderId();
     PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    return signedAppendRequest(clientSenderId, requestId, command, clientPrivateKey);
+    return signedTransferRequest(clientSenderId, requestId, nextNonce(configPath), clientPrivateKey);
   }
 
-  protected static ClientRequest signedAppendRequest(long clientSenderId, long requestId, String command, PrivateKey clientPrivateKey) throws Exception {
-    byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedAppendRequestPayload(clientSenderId, requestId, command), clientPrivateKey);
-    return ProtoValidationUtil.requireValid(ClientRequest.newBuilder().setAppend(AppendRequest.newBuilder()
-        .setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setValue(command).setSignature(ByteString.copyFrom(signature)))
+  protected static ClientRequest signedTransferRequest(long clientSenderId, long requestId, long nonce, PrivateKey clientPrivateKey) throws Exception {
+    byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil
+        .signedTransactionRequestPayload(clientSenderId, requestId, TransactionType.TRANSACTION_TYPE_TRANSFER, TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, nonce, TEST_GAS_LIMIT, TEST_GAS_PRICE), clientPrivateKey);
+    return ProtoValidationUtil.requireValid(ClientRequest.newBuilder()
+        .setTransaction(TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
+            .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(TEST_RECIPIENT_ADDRESS).setAmount(TEST_TRANSFER_AMOUNT).setNonce(nonce).setGasLimit(TEST_GAS_LIMIT)
+            .setGasPrice(TEST_GAS_PRICE).setSignature(ByteString.copyFrom(signature)))
         .build(), "ClientRequest");
   }
 
@@ -221,8 +239,20 @@ public abstract class IntegrationHarness {
     }
   }
 
-  private static String successMessage(String command) {
-    return "Request completed successfully: " + command;
+  private static void assertSuccessfulTransactionResponse(ClientResponse response, String message) {
+    assertTrue(response.hasTransaction(), message + " (expected transaction response)");
+    TransactionResponse transaction = response.getTransaction();
+    assertTrue(transaction.getAccepted(), message + " (transaction should be accepted)");
+    assertTrue(transaction.hasReceipt(), message + " (missing transaction receipt)");
+    assertTrue(transaction.getReceipt().getSuccess(), message + " (transaction should succeed)");
+  }
+
+  private static long nextNonce(Path configPath) {
+    return NEXT_NONCE_BY_CONFIG.computeIfAbsent(normalizedConfigPath(configPath), ignored -> new AtomicLong()).getAndIncrement();
+  }
+
+  private static Path normalizedConfigPath(Path configPath) {
+    return configPath.toAbsolutePath().normalize();
   }
 
   protected static InboundPacket broadcastClientRequestPayload(Path configPath, byte[] payload, Duration timeout) throws Exception {
@@ -412,11 +442,10 @@ public abstract class IntegrationHarness {
   }
 
   private static ClientRequest forgedRequest(long clientSenderId, String command, PrivateKey clientPrivateKey) throws Exception {
-    long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    ClientRequest validRequest = signedAppendRequest(clientSenderId, requestId, command, clientPrivateKey);
-    byte[] forgedSignature = validRequest.getAppend().getSignature().toByteArray();
+    ClientRequest validRequest = signedTransferRequest(clientSenderId, ThreadLocalRandom.current().nextLong(Long.MAX_VALUE), 991L, clientPrivateKey);
+    byte[] forgedSignature = validRequest.getTransaction().getSignature().toByteArray();
     forgedSignature[0] ^= 0x01;
-    return validRequest.toBuilder().setAppend(validRequest.getAppend().toBuilder().setSignature(ByteString.copyFrom(forgedSignature))).build();
+    return validRequest.toBuilder().setTransaction(validRequest.getTransaction().toBuilder().setSignature(ByteString.copyFrom(forgedSignature))).build();
   }
 
   private static StartedServer startHonestServer(String replicaId, Path configPath) throws IOException {
@@ -439,21 +468,6 @@ public abstract class IntegrationHarness {
     return new StartedServer(replicaId, processBuilder.start());
   }
 
-  private static ProcessResult runPopulate(Path configPath) throws IOException, InterruptedException {
-    ProcessBuilder processBuilder = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.populate.Populate",
-        configPath.toString());
-    processBuilder.redirectErrorStream(true);
-
-    Process process = processBuilder.start();
-    boolean finished = awaitProcessExit(process, Duration.ofSeconds(20));
-    if (!finished) {
-      process.destroyForcibly();
-      return new ProcessResult(124, "Populate timeout");
-    }
-
-    return new ProcessResult(process.exitValue(), readAll(process.getInputStream()));
-  }
-
   private static String javaExecutable() {
     String javaHome = System.getProperty("java.home");
     String suffix = "";
@@ -461,12 +475,6 @@ public abstract class IntegrationHarness {
       suffix = ".exe";
     }
     return Path.of(javaHome, "bin", "java" + suffix).toString();
-  }
-
-  private static String readAll(InputStream inputStream) throws IOException {
-    ByteArrayOutputStream output = new ByteArrayOutputStream();
-    inputStream.transferTo(output);
-    return output.toString(StandardCharsets.UTF_8);
   }
 
   private static boolean awaitProcessExit(Process process, Duration timeout) throws InterruptedException {
@@ -522,7 +530,7 @@ public abstract class IntegrationHarness {
       byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
       InboundPacket response = clientSession.broadcastPayload(payload, timeout);
       assertResponseNotNull(response, message, servers);
-      assertEquals(successMessage(command), decodeClientResponse(response).getAppend().getMessage(), message);
+      assertSuccessfulTransactionResponse(decodeClientResponse(response), message);
     }
 
     public void assertReplayIsIgnored(String command, String message) throws Exception {
@@ -530,7 +538,7 @@ public abstract class IntegrationHarness {
       byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
       InboundPacket firstResponse = clientSession.broadcastPayload(payload, REPLAY_INITIAL_TIMEOUT);
       assertResponseNotNull(firstResponse, message + " (initial request)", servers);
-      assertEquals(successMessage(command), decodeClientResponse(firstResponse).getAppend().getMessage(), message + " (initial request)");
+      assertSuccessfulTransactionResponse(decodeClientResponse(firstResponse), message + " (initial request)");
 
       for (int i = 0; i < 3; i++) {
         InboundPacket replayResponse = clientSession.broadcastPayload(payload, REPLAY_RESPONSE_TIMEOUT);
@@ -557,7 +565,11 @@ public abstract class IntegrationHarness {
       try {
         clientSession.close();
       } finally {
-        stopProcesses(servers);
+        try {
+          stopProcesses(servers);
+        } finally {
+          cleanPersistedBlockData(configPath);
+        }
       }
     }
   }
@@ -569,15 +581,17 @@ public abstract class IntegrationHarness {
     private final Map<Long, PublicKey> staticPublicKeys;
     private final Map<Long, PublicKey> replicaPublicKeys;
     private final AuthenticatedLink transport;
+    private final AtomicLong nextNonce;
 
     private TestClientSession(ConfigParser config, long clientSenderId, PrivateKey clientPrivateKey, Map<Long, PublicKey> staticPublicKeys, Map<Long, PublicKey> replicaPublicKeys,
-        AuthenticatedLink transport) {
+        AuthenticatedLink transport, AtomicLong nextNonce) {
       this.config = config;
       this.clientSenderId = clientSenderId;
       this.clientPrivateKey = clientPrivateKey;
       this.staticPublicKeys = staticPublicKeys;
       this.replicaPublicKeys = replicaPublicKeys;
       this.transport = transport;
+      this.nextNonce = nextNonce;
     }
 
     static TestClientSession open(Path configPath) throws Exception {
@@ -587,7 +601,7 @@ public abstract class IntegrationHarness {
       Map<Long, PublicKey> staticPublicKeys = PublicKeyLoader.loadStaticPublicKeys(config);
       Map<Long, PublicKey> replicaPublicKeys = PublicKeyLoader.loadReplicaPublicKeys(config);
       AuthenticatedLink transport = AuthenticatedLink.unbound(clientSenderId, clientPrivateKey, staticPublicKeys);
-      return new TestClientSession(config, clientSenderId, clientPrivateKey, staticPublicKeys, replicaPublicKeys, transport);
+      return new TestClientSession(config, clientSenderId, clientPrivateKey, staticPublicKeys, replicaPublicKeys, transport, new AtomicLong());
     }
 
     long clientSenderId() {
@@ -608,7 +622,7 @@ public abstract class IntegrationHarness {
 
     ClientRequest signedRequest(String command) throws Exception {
       long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-      return signedAppendRequest(clientSenderId, requestId, command, clientPrivateKey);
+      return signedTransferRequest(clientSenderId, requestId, nextNonce.getAndIncrement(), clientPrivateKey);
     }
 
     InboundPacket sendPayloadToClientPort(String replicaId, byte[] payload, Duration timeout) throws Exception {

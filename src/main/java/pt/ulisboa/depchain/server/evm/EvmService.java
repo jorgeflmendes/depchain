@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.server.evm;
 import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.math.BigInteger;
+import java.util.Arrays;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
@@ -80,6 +81,17 @@ public final class EvmService {
 
     return execute(sender, contractAddress, contractAddress, contractAccount.getCode(), ValidationUtils
         .requireNonNull(callData, "callData"), Wei.ZERO, DEFAULT_GAS_LIMIT, Wei.ZERO, MessageFrame.Type.MESSAGE_CALL).returnData();
+  }
+
+  public TransactionResult readNativeBalance(Address address) {
+    ValidationUtils.requireNonNull(address, "address");
+
+    MutableAccount account = account(address);
+    Wei balance = Wei.ZERO;
+    if (account != null) {
+      balance = account.getBalance();
+    }
+    return new TransactionResult(true, 0L, normalizeUnsigned(balance.toBigInteger()), null);
   }
 
   public TransactionResult transferNative(Address sender, Address recipient, Wei amount, long nonce, long gasLimit, Wei gasPrice) {
@@ -160,6 +172,17 @@ public final class EvmService {
 
   private static Wei sumWei(Wei left, Wei right) {
     return Wei.of(left.toBigInteger().add(right.toBigInteger()));
+  }
+
+  private static Bytes normalizeUnsigned(BigInteger value) {
+    byte[] raw = value.toByteArray();
+    if (raw.length > 0 && raw[0] == 0) {
+      raw = Arrays.copyOfRange(raw, 1, raw.length);
+    }
+    if (raw.length == 0) {
+      return Bytes.of(0);
+    }
+    return Bytes.wrap(raw);
   }
 
   private TransactionResult execute(Address sender, Address receiver, Address contractAddress, Bytes code, Bytes callData, Wei value, long gasLimit, Wei gasPrice, MessageFrame.Type frameType) {

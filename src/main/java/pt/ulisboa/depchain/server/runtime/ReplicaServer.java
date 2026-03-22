@@ -1,24 +1,16 @@
 package pt.ulisboa.depchain.server.runtime;
 
-import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
-import org.apache.tuweni.bytes.Bytes;
-import org.hyperledger.besu.datatypes.Address;
-import org.hyperledger.besu.datatypes.Wei;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,7 +20,6 @@ import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.DpchPacket;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
-import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffManager;
 import pt.ulisboa.depchain.server.evm.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -39,7 +30,6 @@ import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 
 public final class ReplicaServer {
@@ -52,28 +42,27 @@ public final class ReplicaServer {
   private final Map<Long, PublicKey> replicaStaticPKeys;
   private final Map<String, Long> replicaSenderIdByConsensusEndpoint;
   private final GenesisParser genesis;
-  private final BlockStore blockStore;
   private final BlockStore.BlockDocument persistedGenesisBlock;
+  private final BlockStore.BlockDocument recoveredBlock;
   private final EvmService evmService;
-  private final Address clientAccountAddress;
+  private final ReplicaBlockPersistence blockPersistence;
   private final HotStuffManager hotStuffManager;
 
   public ReplicaServer(String serverId, String configPath) throws Exception {
     this.configParser = ConfigParser.load(Path.of(configPath));
     this.replicaConfig = configParser.requireReplicaById(serverId);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
-    this.clientStaticPKeys = Map.of(configParser.client().senderId(), PublicKeyLoader.loadClientPublicKey(configParser));
+    PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(configParser);
+    this.clientStaticPKeys = Map.of(configParser.client().senderId(), clientPublicKey);
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
-    this.genesis = GenesisParser.loadDefaultResource();
-    this.blockStore = BlockStore.defaultStore();
-    this.persistedGenesisBlock = blockStore.ensureGenesisPersisted();
+    this.genesis = GenesisMaterializer.materializeDefault(clientPublicKey);
     this.evmService = new EvmService();
-    applyGenesisState(evmService, genesis);
-    applyGenesisTransactions(evmService, genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
-    PublicKey clientPublicKey = clientStaticPKeys.get(configParser.client().senderId());
-    this.clientAccountAddress = clientAddress(clientPublicKey);
+    this.blockPersistence = new ReplicaBlockPersistence(BlockStore.forReplica(configParser, replicaConfig), evmService, clientPublicKey);
+    ReplicaBlockPersistence.RecoveryState recoveryState = blockPersistence.initialize(genesis);
+    this.persistedGenesisBlock = recoveryState.genesisBlock();
+    this.recoveredBlock = recoveryState.latestBlock();
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
         evmService, this::onExecutedNode);
   }
@@ -92,6 +81,7 @@ public final class ReplicaServer {
       logger.info("Loaded genesis block height={} hash={} txs={} accounts={}", genesis.height(), shortHash(genesis.blockHash()), genesis.transactions().size(), genesis.state()
           .size());
       logger.info("Persisted genesis block height={} hash={}", persistedGenesisBlock.height(), shortHash(persistedGenesisBlock.blockHash()));
+      logger.info("Recovered persisted state for replica {} at block height={}", replicaConfig.id(), recoveredBlock.height());
 
       // Set up the replica with the transports and start the hotstuff loop
       this.hotStuffManager.initNetwork(nodeTransport, clientTransport);
@@ -155,6 +145,10 @@ public final class ReplicaServer {
 
       ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.payload()), "ClientRequest");
       ConnectionKey key = new ConnectionKey(sender, packet.getConnectionId());
+      if (request.hasQuery()) {
+        this.hotStuffManager.onClientQuery(request, key);
+        return;
+      }
       this.hotStuffManager.onClientRequest(request, key);
     } catch (InvalidProtocolBufferException | RuntimeException exception) {
       logger.error("Client request error from {}", senderText, exception);
@@ -163,7 +157,6 @@ public final class ReplicaServer {
 
   // Handles messages from other replicas
   private void handleNodeRequest(InboundPacket inbound) {
-    DpchPacket packet = inbound.packet();
     InetSocketAddress sender = inbound.sender();
     try {
       Long expectedSenderId = replicaSenderIdByConsensusEndpoint.get(endpointKey(sender));
@@ -213,188 +206,15 @@ public final class ReplicaServer {
     return hash.substring(0, 12);
   }
 
-  private static void applyGenesisState(EvmService evmService, GenesisParser genesis) {
-    for (Map.Entry<String, GenesisParser.GenesisAccount> entry : genesis.state().entrySet()) {
-      String addressHex = entry.getKey();
-      GenesisParser.GenesisAccount genesisAccount = entry.getValue();
-      Address address = parseAddress(addressHex, "state address");
-      Wei balance = Wei.of(new BigInteger(genesisAccount.balance()));
-      var account = evmService.createAccount(address, genesisAccount.nonce(), balance);
-
-      if (genesisAccount.code() != null && !genesisAccount.code().isBlank()) {
-        account.setCode(Bytes.fromHexString(genesisAccount.code()));
-      }
-    }
-  }
-
-  private static void applyGenesisTransactions(EvmService evmService, GenesisParser genesis) {
-    for (int i = 0; i < genesis.transactions().size(); i++) {
-      GenesisParser.GenesisTransaction tx = genesis.transactions().get(i);
-      try {
-        applyGenesisTransaction(evmService, tx);
-      } catch (RuntimeException exception) {
-        throw new IllegalArgumentException("Failed to execute genesis transaction at index " + i + ": " + exception.getMessage(), exception);
-      }
-    }
-  }
-
-  private static void applyGenesisTransaction(EvmService evmService, GenesisParser.GenesisTransaction tx) {
-    Address from = parseAddress(tx.from(), "transaction.from");
-    Wei amount = Wei.of(new BigInteger(tx.amount()));
-    Wei gasPrice = Wei.of(tx.gasPrice());
-
-    switch (tx.type()) {
-      case "TRANSFER" : {
-        Address to = parseAddress(tx.to(), "transaction.to");
-        EvmService.TransactionResult result = evmService.transferNative(from, to, amount, tx.nonce(), tx.gasLimit(), gasPrice);
-        if (!result.success()) {
-          throw new IllegalArgumentException(result.errorMessage());
-        }
-        break;
-      }
-      case "CONTRACT_CALL" : {
-        Address to = parseAddress(tx.to(), "transaction.to");
-        EvmService.TransactionResult result = evmService.callContract(from, to, parseHexBytes(tx.input(), "transaction.input"), amount, tx.nonce(), tx.gasLimit(), gasPrice);
-        if (!result.success()) {
-          throw new IllegalArgumentException(result.errorMessage());
-        }
-        break;
-      }
-      case "CONTRACT_DEPLOY" : {
-        evmService.deployContract(from, parseHexBytes(tx.input(), "transaction.input"));
-        break;
-      }
-      default :
-        throw new IllegalArgumentException("unsupported transaction type: " + tx.type());
-    }
-  }
-
-  private static Address parseAddress(String addressHex, String fieldName) {
-    if (addressHex == null || addressHex.isBlank()) {
-      throw new IllegalArgumentException(fieldName + " must be a 40-char hex address");
-    }
-    return Address.fromHexString("0x" + addressHex);
-  }
-
-  private static Bytes parseHexBytes(String value, String fieldName) {
-    try {
-      return Bytes.fromHexString(value);
-    } catch (RuntimeException exception) {
-      throw new IllegalArgumentException(fieldName + " is not a valid hex payload", exception);
-    }
-  }
-
   private void onExecutedNode(Node node) {
     logger.debug("Executed node hook received node={} view={}", shortHash(node.getNodeHash()), node.getViewNumber());
 
     try {
-      // Each committed node is materialized as the next persisted block in the local chain.
-      Optional<BlockStore.BlockDocument> latest = blockStore.loadLatest();
-      long nextHeight = latest.map(block -> block.height() + 1L).orElse(0L);
-      String previousHash = latest.map(BlockStore.BlockDocument::blockHash).orElse(null);
-      long gasUsed = node.hasGasUsed() ? node.getGasUsed() : 0L;
-
-      List<GenesisParser.GenesisTransaction> persistedTransactions = extractPersistedTransactions(node);
-      LinkedHashMap<String, GenesisParser.GenesisAccount> persistedState = snapshotKnownAccounts(persistedTransactions);
-
-      BlockStore.BlockDocument blockToPersist = new BlockStore.BlockDocument(nextHeight, node.getNodeHash(), previousHash, gasUsed, persistedTransactions, persistedState);
-      blockStore.append(blockToPersist);
-      logger.info("Persisted block height={} hash={} parent={} txs={} accounts={}", blockToPersist
-          .height(), shortHash(blockToPersist.blockHash()), shortHash(previousHash), blockToPersist.transactions().size(), blockToPersist.state().size());
+      BlockStore.BlockDocument persistedBlock = blockPersistence.persistExecutedNode(node);
+      logger.info("Persisted block height={} hash={} parent={} txs={} accounts={}", persistedBlock
+          .height(), shortHash(persistedBlock.blockHash()), shortHash(persistedBlock.previousBlockHash()), persistedBlock.transactions().size(), persistedBlock.state().size());
     } catch (Exception exception) {
       logger.error("Failed to persist executed node {}", node.getNodeHash(), exception);
     }
-  }
-
-  private List<GenesisParser.GenesisTransaction> extractPersistedTransactions(Node node) {
-    if (!node.getCommand().hasTransaction()) {
-      return List.of();
-    }
-
-    TransactionRequest tx = node.getCommand().getTransaction().getClientRequest().getTransaction();
-    return List.of(toPersistedTransaction(tx, clientAccountAddress));
-  }
-
-  private LinkedHashMap<String, GenesisParser.GenesisAccount> snapshotKnownAccounts(List<GenesisParser.GenesisTransaction> persistedTransactions) {
-    // Track all genesis accounts plus transaction participants to keep persisted snapshots bounded and
-    // deterministic.
-    LinkedHashSet<String> addresses = collectTrackedAddresses(persistedTransactions);
-
-    LinkedHashMap<String, GenesisParser.GenesisAccount> snapshot = new LinkedHashMap<>();
-    for (String addressHex : addresses) {
-      GenesisParser.GenesisAccount accountSnapshot = snapshotAccount(addressHex);
-      if (accountSnapshot != null) {
-        snapshot.put(addressHex, accountSnapshot);
-      }
-    }
-    return snapshot;
-  }
-
-  private LinkedHashSet<String> collectTrackedAddresses(List<GenesisParser.GenesisTransaction> persistedTransactions) {
-    LinkedHashSet<String> addresses = new LinkedHashSet<>(genesis.state().keySet());
-    for (GenesisParser.GenesisTransaction tx : persistedTransactions) {
-      addAddressIfPresent(addresses, tx.from());
-      addAddressIfPresent(addresses, tx.to());
-    }
-    return addresses;
-  }
-
-  private static void addAddressIfPresent(LinkedHashSet<String> addresses, String addressHex) {
-    if (addressHex != null && !addressHex.isBlank()) {
-      addresses.add(addressHex);
-    }
-  }
-
-  private GenesisParser.GenesisAccount snapshotAccount(String addressHex) {
-    Address address = parseAddress(addressHex, "snapshot address");
-    var account = evmService.account(address);
-    if (account == null) {
-      return null;
-    }
-
-    String code = null;
-    if (account.getCode() != null && !account.getCode().isEmpty()) {
-      code = account.getCode().toHexString();
-    }
-
-    // SimpleWorld exposes updated storage entries; this captures the touched keys for persisted
-    // snapshots.
-    LinkedHashMap<String, String> storage = new LinkedHashMap<>();
-    account.getUpdatedStorage().forEach((key, value) -> storage.put(key.toHexString(), value.toHexString()));
-    return new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, storage);
-  }
-
-  private static GenesisParser.GenesisTransaction toPersistedTransaction(TransactionRequest tx, Address fromAddress) {
-    String type;
-    switch (tx.getType()) {
-      case TRANSACTION_TYPE_TRANSFER -> type = "TRANSFER";
-      case TRANSACTION_TYPE_CONTRACT_CALL -> {
-        type = tx.hasTo() ? "CONTRACT_CALL" : "CONTRACT_DEPLOY";
-      }
-      default -> throw new IllegalArgumentException("unsupported transaction type for persistence: " + tx.getType());
-    }
-
-    String to = null;
-    if (tx.hasTo() && !tx.getTo().isBlank()) {
-      to = tx.getTo();
-    }
-
-    String input = "0x";
-    if (tx.hasData() && !tx.getData().isEmpty()) {
-      input = Bytes.wrap(tx.getData().toByteArray()).toHexString();
-    }
-
-    String signature = null;
-    if (tx.hasSignature() && !tx.getSignature().isEmpty()) {
-      signature = Bytes.wrap(tx.getSignature().toByteArray()).toHexString();
-    }
-
-    String from = fromAddress.toHexString().substring(2);
-    return new GenesisParser.GenesisTransaction(type, from, to, Long.toString(tx.getAmount()), tx.getNonce(), tx.getGasLimit(), tx.getGasPrice(), input, signature);
-  }
-
-  private static Address clientAddress(PublicKey clientPublicKey) {
-    String publicKeyHash = CryptoUtil.sha256Hex(clientPublicKey.getEncoded());
-    return Address.fromHexString("0x" + publicKeyHash.substring(publicKeyHash.length() - 40));
   }
 }

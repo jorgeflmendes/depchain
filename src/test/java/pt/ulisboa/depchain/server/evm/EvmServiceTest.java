@@ -7,10 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
@@ -130,9 +129,11 @@ class EvmServiceTest {
   }
 
   private static Bytes loadBytecode(String fileName) {
-    try {
-      Path bytecodePath = Path.of(System.getProperty("user.dir"), "src", "test", "resources", "contracts", fileName);
-      return Bytes.fromHexString("0x" + Files.readString(bytecodePath).trim());
+    try (InputStream input = EvmServiceTest.class.getClassLoader().getResourceAsStream("contracts/" + fileName)) {
+      if (input == null) {
+        throw new IOException("Bytecode resource not found: contracts/" + fileName);
+      }
+      return Bytes.fromHexString("0x" + new String(input.readAllBytes(), StandardCharsets.UTF_8).trim());
     } catch (IOException exception) {
       throw new IllegalStateException("Could not load bytecode file " + fileName, exception);
     }
