@@ -66,10 +66,24 @@ Open a local cluster on Linux in separate terminal windows:
 ./scripts/open-local-cluster.sh --project-dir . --client-id client2
 ```
 
+Open only the local replicas:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\open-local-replicas.ps1 -ProjectDir .
+```
+
+```bash
+./scripts/open-local-replicas.sh --project-dir .
+```
+
 Open a local cluster through Maven, selecting the Windows or Linux script automatically:
 ```powershell
 mvn exec:exec@open-local-cluster "-Dcluster.client.id=client"
 mvn exec:exec@open-local-cluster "-Dcluster.client.id=client2"
+```
+
+Open only the local replicas through Maven:
+```powershell
+mvn exec:exec@open-local-replicas
 ```
 
 Client shell commands:

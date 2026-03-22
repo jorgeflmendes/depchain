@@ -336,6 +336,26 @@
                   </arguments>
                 </configuration>
               </execution>
+              <execution>
+                <id>open-local-replicas</id>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>powershell</executable>
+                  <arguments>
+                    <argument>-NoProfile</argument>
+                    <argument>-ExecutionPolicy</argument>
+                    <argument>Bypass</argument>
+                    <argument>-File</argument>
+                    <argument>${project.basedir}/scripts/open-local-replicas.ps1</argument>
+                    <argument>-ProjectDir</argument>
+                    <argument>${project.basedir}</argument>
+                    <argument>-ConfigPath</argument>
+                    <argument>${cluster.config.path}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
             </executions>
           </plugin>
         </plugins>
@@ -372,6 +392,22 @@
                     <argument>${cluster.config.path}</argument>
                     <argument>--client-id</argument>
                     <argument>${cluster.client.id}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
+                <id>open-local-replicas</id>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>bash</executable>
+                  <arguments>
+                    <argument>${project.basedir}/scripts/open-local-replicas.sh</argument>
+                    <argument>--project-dir</argument>
+                    <argument>${project.basedir}</argument>
+                    <argument>--config-path</argument>
+                    <argument>${cluster.config.path}</argument>
                   </arguments>
                 </configuration>
               </execution>

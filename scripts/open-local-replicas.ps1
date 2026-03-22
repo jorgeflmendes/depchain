@@ -3,10 +3,7 @@ param(
   [string]$ProjectDir,
 
   [Parameter(Mandatory = $false)]
-  [string]$ConfigPath = "config/config.yaml",
-
-  [Parameter(Mandatory = $true)]
-  [string]$ClientId
+  [string]$ConfigPath = "config/config.yaml"
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,20 +27,3 @@ Write-Host "Running: mvn `$(`$mavenArgs -join ' ')" -ForegroundColor Cyan
     $serverEncodedCommand
   )
 }
-
-$clientArgs = "--config $ConfigPath --client-id $ClientId"
-$clientCommand = @"
-`$host.UI.RawUI.WindowTitle = 'depchain-client-$ClientId'
-Set-Location -LiteralPath '$ProjectDir'
-`$mavenArgs = @('-q', 'exec:java@client', "-Dexec.args=$clientArgs")
-Write-Host "Running: mvn `$(`$mavenArgs -join ' ')" -ForegroundColor Cyan
-& mvn @mavenArgs
-"@
-$clientEncodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($clientCommand))
-Start-Process -FilePath "powershell.exe" -WorkingDirectory $ProjectDir -ArgumentList @(
-  "-NoExit",
-  "-ExecutionPolicy",
-  "Bypass",
-  "-EncodedCommand",
-  $clientEncodedCommand
-)
