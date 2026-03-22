@@ -1,16 +1,24 @@
 package pt.ulisboa.depchain.populate;
 
 import java.io.ObjectOutputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
+import java.security.PublicKey;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.KeyUtil;
 import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
@@ -24,6 +32,7 @@ import picocli.CommandLine.Parameters;
 
 public final class Populate {
   private static final Logger logger = LoggerFactory.getLogger(Populate.class);
+  private static final ObjectMapper JSON = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
   private Populate() {
   }
@@ -57,7 +66,9 @@ public final class Populate {
       writeClientKeys(client);
     }
 
-    logger.info("Generated individual keys for {} replicas, threshold material for {} replicas, and {} clients", replicas.size(), replicas.size(), config.clients().size());
+    writeAddresses(configPath, config);
+    logger.info("Generated individual keys for {} replicas, threshold material for {} replicas, {} clients, and wrote {}", replicas.size(), replicas.size(), config.clients()
+        .size(), addressesPathFor(configPath));
   }
 
   @Command(name = "populate", mixinStandardHelpOptions = true, description = "Generate replica, threshold, and client key material.")
@@ -80,12 +91,18 @@ public final class Populate {
   private static void writeReplicaKeys(ConfigParser.ReplicaSection replica) throws Exception {
     ValidationUtils.requireNonNull(replica, "replica");
 
-    KeyPair keyPair = CryptoUtil.newECKeyPair();
     Path publicKeyPath = replica.publicKeyPath();
     Path privateKeyPath = replica.privateKeyPath();
 
     createParentDirectories(publicKeyPath);
     createParentDirectories(privateKeyPath);
+
+    if (Files.exists(publicKeyPath) && Files.exists(privateKeyPath)) {
+      logger.info("Replica keys already exist for {} -> {}", replica.id(), publicKeyPath);
+      return;
+    }
+
+    KeyPair keyPair = CryptoUtil.newECKeyPair();
 
     Files.writeString(publicKeyPath, KeyUtil.encodePem("PUBLIC KEY", keyPair.getPublic().getEncoded()));
     Files.writeString(privateKeyPath, KeyUtil.encodePem("PRIVATE KEY", keyPair.getPrivate().getEncoded()));
@@ -105,6 +122,11 @@ public final class Populate {
     createParentDirectories(thresholdPublicKeyPath);
     createParentDirectories(thresholdPrivateSharePath);
 
+    if (Files.exists(thresholdPublicKeyPath) && Files.exists(thresholdPrivateSharePath)) {
+      logger.info("Threshold material already exists for {} -> public: {}, share: {}", replica.id(), thresholdPublicKeyPath, thresholdPrivateSharePath);
+      return;
+    }
+
     try (ObjectOutputStream out = new ObjectOutputStream(Files.newOutputStream(thresholdPublicKeyPath))) {
       out.writeObject(thresholdConfig.publicKey());
     }
@@ -119,12 +141,18 @@ public final class Populate {
   private static void writeClientKeys(ConfigParser.ClientSection client) throws Exception {
     ValidationUtils.requireNonNull(client, "client");
 
-    KeyPair keyPair = CryptoUtil.newECKeyPair();
     Path publicKeyPath = client.publicKeyPath();
     Path privateKeyPath = client.privateKeyPath();
 
     createParentDirectories(publicKeyPath);
     createParentDirectories(privateKeyPath);
+
+    if (Files.exists(publicKeyPath) && Files.exists(privateKeyPath)) {
+      logger.info("Client keys already exist for {} -> {}", client.id(), publicKeyPath);
+      return;
+    }
+
+    KeyPair keyPair = CryptoUtil.newECKeyPair();
 
     Files.writeString(publicKeyPath, KeyUtil.encodePem("PUBLIC KEY", keyPair.getPublic().getEncoded()));
     Files.writeString(privateKeyPath, KeyUtil.encodePem("PRIVATE KEY", keyPair.getPrivate().getEncoded()));
@@ -132,10 +160,45 @@ public final class Populate {
     logger.info("Generated keys for {} -> {}", client.id(), publicKeyPath);
   }
 
+  private static void writeAddresses(Path configPath, ConfigParser config) throws Exception {
+    Map<String, String> clientAddresses = new LinkedHashMap<>();
+    for (ConfigParser.ClientSection client : config.clients()) {
+      PublicKey publicKey = PublicKeyLoader.loadClientPublicKey(config, client.senderId());
+      clientAddresses.put(client.id(), CryptoUtil.deriveAddressHex(publicKey));
+    }
+
+    Map<Long, PublicKey> replicaPublicKeys = PublicKeyLoader.loadReplicaPublicKeys(config);
+    Map<String, String> replicaAddresses = new LinkedHashMap<>();
+    for (ConfigParser.ReplicaSection replica : config.replicas()) {
+      replicaAddresses.put(replica.id(), CryptoUtil.deriveAddressHex(replicaPublicKeys.get(replica.senderId())));
+    }
+
+    Path addressesPath = addressesPathFor(configPath);
+    Path parent = addressesPath.getParent();
+    if (parent != null) {
+      Files.createDirectories(parent);
+    }
+
+    try (OutputStream output = Files.newOutputStream(addressesPath)) {
+      JSON.writeValue(output, new AddressBook(clientAddresses, replicaAddresses));
+    }
+  }
+
+  private static Path addressesPathFor(Path configPath) {
+    Path parent = configPath.toAbsolutePath().normalize().getParent();
+    if (parent == null) {
+      throw new IllegalArgumentException("configPath must have a parent directory");
+    }
+    return parent.resolve("addresses.json");
+  }
+
   private static void createParentDirectories(Path path) throws Exception {
     Path parent = path.getParent();
     if (parent != null) {
       Files.createDirectories(parent);
     }
+  }
+
+  private record AddressBook(Map<String, String> clients, Map<String, String> replicas) {
   }
 }

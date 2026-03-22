@@ -87,9 +87,9 @@ class BlockStoreTest {
     BlockStore store = new BlockStore(tempDir);
 
     BlockStore.BlockDocument block = new BlockStore.BlockDocument(0L, "hash-0", null, 21_000L,
-        List.of(new GenesisParser.GenesisTransaction("TRANSFER", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "0", 0L, 250_000L, 1L,
-            "0x", null), new GenesisParser.GenesisTransaction("IST_COIN_TRANSFER", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "25", 1L,
-                250_000L, 1L, "0x", null)),
+        List.of(new GenesisParser.GenesisTransaction("TRANSFER", "DepCoin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "0", 0L,
+            250_000L, 1L, "0x", null), new GenesisParser.GenesisTransaction("IST_COIN_TRANSFER", "IST", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "25", 1L, 250_000L, 1L, "0x", null)),
         new LinkedHashMap<>());
 
     store.append(block);

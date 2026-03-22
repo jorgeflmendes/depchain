@@ -8,7 +8,8 @@ DepChain is a permissioned blockchain project for the Highly Dependable Systems 
 - Maven 3.9+
 
 ## Configuration
-Main runtime configuration is in `config/config.yaml`, and the genesis block template is in `config/genesis.json`.
+Main runtime configuration is in `config/config.yaml`.
+The authoritative genesis file is in `config/genesis.json`, and replicas/clients load it directly at runtime.
 The YAML config includes:
 - system parameters (`system.n`, `system.f`),
 - replica ids as YAML keys under `replicas`,
@@ -25,7 +26,7 @@ With the default config:
 
 
 ## Run Locally
-Always run `Populate` before starting replicas or clients locally, so the configured key files and threshold material exist under `runtime/keys`.
+Always run `Populate` before starting replicas or clients locally, so the configured key files, threshold material, and `addresses.json` exist under the selected config directory.
 
 Before running:
 - ensure key files exist at configured paths,
@@ -36,6 +37,8 @@ Populate usage:
 ```text
 Populate [configPath]
 ```
+
+`Populate` does not modify `genesis.json`. It only generates key material and an `addresses.json` file with the derived wallet addresses so the genesis can be edited manually.
 
 Maven:
 ```powershell

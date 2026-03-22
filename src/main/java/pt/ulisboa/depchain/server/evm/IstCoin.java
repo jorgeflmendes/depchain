@@ -46,7 +46,18 @@ public final class IstCoin {
   }
 
   public static Address resolveDefaultContractAddress() throws IOException {
-    return resolveContractAddress();
+    return resolveContractAddress(GenesisParser.loadDefault());
+  }
+
+  public static Address resolveContractAddress(java.nio.file.Path configPath) throws IOException {
+    return resolveContractAddress(GenesisParser.loadForConfig(configPath));
+  }
+
+  public static Address resolveContractAddress(GenesisParser genesis) {
+    pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(genesis, "genesis");
+    GenesisParser.GenesisTransaction deploy = genesis.transactions().stream().filter(transaction -> "CONTRACT_DEPLOY".equals(transaction.type())).findFirst()
+        .orElseThrow(() -> new IllegalStateException("Genesis does not define an IST Coin contract deployment"));
+    return Address.contractAddress(Address.fromHexString("0x" + deploy.from()), deploy.nonce());
   }
 
   public static Bytes encodeTransferCallData(Address recipient, long amount) {
@@ -67,10 +78,7 @@ public final class IstCoin {
   }
 
   private static Address resolveContractAddress() throws IOException {
-    GenesisParser genesis = GenesisParser.loadDefault();
-    GenesisParser.GenesisTransaction deploy = genesis.transactions().stream().filter(transaction -> "CONTRACT_DEPLOY".equals(transaction.type())).findFirst()
-        .orElseThrow(() -> new IllegalStateException("Genesis does not define an IST Coin contract deployment"));
-    return Address.contractAddress(Address.fromHexString("0x" + deploy.from()), deploy.nonce());
+    return resolveDefaultContractAddress();
   }
 
   private static Bytes balanceOfCallData(Address owner) {

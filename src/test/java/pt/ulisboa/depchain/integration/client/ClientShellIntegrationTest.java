@@ -46,7 +46,7 @@ class ClientShellIntegrationTest extends IntegrationHarness {
   @Timeout(60)
   void shellCommandsWorkEndToEnd() throws Exception {
     try (DpchClient client = DpchClient.open(sharedCluster.configPath().toString(), CLIENT_ID)) {
-      String contractAddress = IstCoin.resolveDefaultContractAddress().toHexString().substring(2);
+      String contractAddress = IstCoin.resolveContractAddress(sharedCluster.configPath()).toHexString().substring(2);
       String transferCallData = IstCoin.encodeTransferCallData(Address.fromHexString("0x" + RECIPIENT_ADDRESS), 11L).toHexString().substring(2);
       String script = String
           .join(System.lineSeparator(), "my-address", "depcoin-balance", "depcoin-transfer " + RECIPIENT_ADDRESS + " 7 0", "depcoin-balance " + RECIPIENT_ADDRESS, "ist-transfer "

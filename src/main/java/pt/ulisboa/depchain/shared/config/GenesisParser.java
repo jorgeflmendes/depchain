@@ -4,6 +4,7 @@ import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,15 +17,20 @@ import java.util.regex.Pattern;
 import org.eclipse.jdt.annotation.Nullable;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public record GenesisParser(long height, @JsonProperty("block_hash") String blockHash, @JsonProperty("previous_block_hash") @Nullable String previousBlockHash,
     @JsonProperty("gas_used") long gasUsed, List<GenesisTransaction> transactions, LinkedHashMap<String, GenesisAccount> state) {
 
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON = JsonMapper.builder().enable(JsonReadFeature.ALLOW_JAVA_COMMENTS).enable(JsonReadFeature.ALLOW_YAML_COMMENTS).build()
+      .enable(SerializationFeature.INDENT_OUTPUT);
   private static final Path DEFAULT_PATH = Path.of("config", "genesis.json");
+  private static final String GENESIS_FILE_NAME = "genesis.json";
   private static final Pattern ADDRESS_PATTERN = Pattern.compile("^[0-9a-f]{40}$");
   private static final Pattern HASH_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
 
@@ -52,11 +58,39 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
     return load(DEFAULT_PATH);
   }
 
-  public record GenesisTransaction(String type, String from, @Nullable String to, String amount, long nonce, @JsonProperty("gas_limit") long gasLimit,
+  public static GenesisParser loadForConfig(Path configPath) throws IOException {
+    return load(genesisPathForConfig(configPath));
+  }
+
+  public static Path genesisPathForConfig(Path configPath) {
+    ValidationUtils.requireNonNull(configPath, "configPath");
+    Path configDirectory = configPath.toAbsolutePath().normalize().getParent();
+    if (configDirectory == null) {
+      throw new IllegalArgumentException("configPath must have a parent directory");
+    }
+    return configDirectory.resolve(GENESIS_FILE_NAME);
+  }
+
+  public void write(Path path) throws IOException {
+    ValidationUtils.requireNonNull(path, "path");
+    Path parent = path.toAbsolutePath().normalize().getParent();
+    if (parent != null) {
+      Files.createDirectories(parent);
+    }
+
+    try (OutputStream output = Files.newOutputStream(path)) {
+      JSON.writeValue(output, this);
+    } catch (IOException exception) {
+      throw new IOException("Failed to write genesis to " + path, exception);
+    }
+  }
+
+  public record GenesisTransaction(String type, String currency, String from, @Nullable String to, String amount, long nonce, @JsonProperty("gas_limit") long gasLimit,
       @JsonProperty("gas_price") long gasPrice, String input, @Nullable String signature) {
 
     public GenesisTransaction {
       type = ValidationUtils.requireNonBlank(type, "transaction.type");
+      currency = ValidationUtils.requireNonBlank(currency, "transaction.currency");
       from = ValidationUtils.requireNonBlank(from, "transaction.from");
       amount = ValidationUtils.requireNonBlank(amount, "transaction.amount");
       input = ValidationUtils.requireNonBlank(input, "transaction.input");
@@ -98,6 +132,14 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
 
       if (normalizedType.equals("IST_COIN_TRANSFER") && !input.equals("0x")) {
         throw new IllegalArgumentException(normalizedType + " transactions must not include input data");
+      }
+
+      if (normalizedType.equals("TRANSFER") && !"DepCoin".equals(currency)) {
+        throw new IllegalArgumentException("TRANSFER transactions must use currency DepCoin");
+      }
+
+      if (normalizedType.equals("IST_COIN_TRANSFER") && !"IST".equals(currency)) {
+        throw new IllegalArgumentException("IST_COIN_TRANSFER transactions must use currency IST");
       }
 
       type = normalizedType;

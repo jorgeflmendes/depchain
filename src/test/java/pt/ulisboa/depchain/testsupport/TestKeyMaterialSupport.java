@@ -18,13 +18,13 @@ public final class TestKeyMaterialSupport {
 
   public static void ensureKeyMaterial(Path configPath) throws IOException, InterruptedException {
     ConfigParser config = ConfigParser.load(configPath);
-    if (hasKeyMaterial(config)) {
+    if (hasKeyMaterial(configPath, config)) {
       return;
     }
 
     synchronized (POPULATE_LOCK) {
       config = ConfigParser.load(configPath);
-      if (hasKeyMaterial(config)) {
+      if (hasKeyMaterial(configPath, config)) {
         return;
       }
 
@@ -35,7 +35,7 @@ public final class TestKeyMaterialSupport {
     }
   }
 
-  private static boolean hasKeyMaterial(ConfigParser config) {
+  private static boolean hasKeyMaterial(Path configPath, ConfigParser config) {
     for (ConfigParser.ClientSection client : config.clients()) {
       if (!Files.exists(client.publicKeyPath()) || !Files.exists(client.privateKeyPath())) {
         return false;

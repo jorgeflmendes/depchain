@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
+import org.hyperledger.besu.datatypes.Address;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,6 +23,7 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffManager;
 import pt.ulisboa.depchain.server.evm.EvmService;
+import pt.ulisboa.depchain.server.evm.IstCoin;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.config.GenesisParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
@@ -53,19 +55,19 @@ public final class ReplicaServer {
     this.replicaConfig = configParser.requireReplicaById(serverId);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
     Map<Long, PublicKey> clientPublicKeys = PublicKeyLoader.loadClientPublicKeys(configParser);
-    PublicKey primaryClientPublicKey = PublicKeyLoader.loadClientPublicKey(configParser);
     this.clientStaticPKeys = clientPublicKeys;
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
-    this.genesis = GenesisMaterializer.materializeDefault(clientPublicKeys, primaryClientPublicKey);
+    this.genesis = GenesisParser.loadForConfig(Path.of(configPath));
     this.evmService = new EvmService();
+    Address istCoinContractAddress = IstCoin.resolveContractAddress(genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
     this.blockPersistence = new ReplicaBlockPersistence(BlockStore.forReplica(configParser, replicaConfig), evmService, clientPublicKeys);
     ReplicaBlockPersistence.RecoveryState recoveryState = blockPersistence.initialize(genesis);
     this.persistedGenesisBlock = recoveryState.genesisBlock();
     this.recoveredBlock = recoveryState.latestBlock();
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKeys,
-        evmService, this::onExecutedNode);
+        evmService, istCoinContractAddress, this::onExecutedNode);
   }
 
   public void run() throws Exception {

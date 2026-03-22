@@ -19,12 +19,14 @@ class GenesisParserTest {
     Path genesisPath = tempDir.resolve("genesis.json");
     Files.writeString(genesisPath, """
         {
+          // basic transfer transaction with a commented genesis fixture
           "height": 0,
           "block_hash": "%s",
           "previous_block_hash": null,
           "gas_used": 0,
           "transactions": [
             {
+              "currency": "DepCoin",
               "type": "transfer",
               "from": "%s",
               "to": "%s",
@@ -63,5 +65,40 @@ class GenesisParserTest {
     assertEquals(0L, genesis.height());
     assertFalse(genesis.transactions().isEmpty());
     assertFalse(genesis.state().isEmpty());
+  }
+
+  @Test
+  void loadSupportsJsonComments(@TempDir Path tempDir) throws Exception {
+    Path genesisPath = tempDir.resolve("genesis.json");
+    Files.writeString(genesisPath, """
+        {
+          "height": 0,
+          "block_hash": "%s",
+          "previous_block_hash": null,
+          "gas_used": 0,
+          "transactions": [],
+          "state": {
+            // client
+            "%s": {
+              "balance": "10",
+              "nonce": 0,
+              "code": null,
+              "storage": {}
+            }
+          }
+        }
+        """.formatted(EMPTY_HASH, SENDER));
+
+    GenesisParser genesis = GenesisParser.load(genesisPath);
+
+    assertEquals("10", genesis.state().get(SENDER).balance());
+  }
+
+  @Test
+  void configRelativeGenesisPathUsesSiblingFile(@TempDir Path tempDir) {
+    Path configPath = tempDir.resolve("config.yaml");
+    Path expectedGenesisPath = tempDir.resolve("genesis.json");
+
+    assertEquals(expectedGenesisPath, GenesisParser.genesisPathForConfig(configPath));
   }
 }

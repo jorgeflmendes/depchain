@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.time.Duration;
@@ -319,8 +320,23 @@ public abstract class IntegrationHarness {
 
       Path targetDirectory = Path.of(System.getProperty("user.dir"), "target", "integration-configs");
       Files.createDirectories(targetDirectory);
-      Path isolatedConfigPath = targetDirectory.resolve("config-" + configIndex + ".yaml");
+      Path isolatedConfigDirectory = targetDirectory.resolve("config-" + configIndex);
+      if (Files.exists(isolatedConfigDirectory)) {
+        try (var paths = Files.walk(isolatedConfigDirectory)) {
+          paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+            try {
+              Files.deleteIfExists(path);
+            } catch (IOException exception) {
+              throw new IllegalStateException("Could not reset isolated integration config directory " + isolatedConfigDirectory, exception);
+            }
+          });
+        }
+      }
+      Files.createDirectories(isolatedConfigDirectory);
+      Path isolatedConfigPath = isolatedConfigDirectory.resolve("config.yaml");
       Files.writeString(isolatedConfigPath, isolatedConfig, StandardCharsets.UTF_8);
+      Path baseGenesisPath = baseConfigPath.getParent().resolve("genesis.json");
+      Files.copy(baseGenesisPath, isolatedConfigDirectory.resolve("genesis.json"), StandardCopyOption.REPLACE_EXISTING);
       return isolatedConfigPath;
     } catch (IOException exception) {
       throw new IllegalStateException("Could not create isolated integration config", exception);

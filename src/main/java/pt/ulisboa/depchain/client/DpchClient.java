@@ -1,6 +1,5 @@
 package pt.ulisboa.depchain.client;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -44,6 +43,7 @@ public final class DpchClient implements AutoCloseable {
   private final long requestTimeoutMs;
   private final int coherentReplyQuorum;
   private final String walletAddress;
+  private final Address istCoinContractAddress;
   private final AuthenticatedLink transport;
   private final Map<Long, InetSocketAddress> openConnections;
   private final SignedClientRequestFactory requestFactory;
@@ -64,6 +64,7 @@ public final class DpchClient implements AutoCloseable {
     this.requestTimeoutMs = selectedClient.requestTimeoutMs();
     this.coherentReplyQuorum = config.system().f() + 1;
     this.walletAddress = CryptoUtil.deriveAddressHex(clientPublicKey);
+    this.istCoinContractAddress = IstCoin.resolveContractAddress(java.nio.file.Path.of(configPath));
     this.transport = AuthenticatedLink.unbound(clientSenderId, clientPrivateKey, this.replicaPublicKeys);
     this.openConnections = new LinkedHashMap<>();
     this.requestFactory = new SignedClientRequestFactory(clientSenderId, clientPrivateKey);
@@ -98,9 +99,8 @@ public final class DpchClient implements AutoCloseable {
   }
 
   public TransactionResponse requestIstCoinTransfer(String recipientAddress, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
-    Address contractAddress = resolveIstCoinContractAddress();
     byte[] input = IstCoin.encodeTransferCallData(Address.fromHexString("0x" + recipientAddress), amount).toArrayUnsafe();
-    return requestTransaction(TransactionType.TRANSACTION_TYPE_CONTRACT_CALL, contractAddress.toHexString().substring(2), 0L, nonce, gasLimit, gasPrice, input);
+    return requestTransaction(TransactionType.TRANSACTION_TYPE_CONTRACT_CALL, istCoinContractAddress.toHexString().substring(2), 0L, nonce, gasLimit, gasPrice, input);
   }
 
   public TransactionResponse requestContractCall(String contractAddress, long amount, long nonce, long gasLimit, long gasPrice, byte[] input) throws Exception {
@@ -254,10 +254,6 @@ public final class DpchClient implements AutoCloseable {
   private boolean replyQuorumIsImpossible(QuorumAccumulator<Long, String, ClientResponse> repliesByValue) {
     int remainingPossibleReplies = openConnections.size() - repliesByValue.acceptedCount();
     return repliesByValue.maxCount() + remainingPossibleReplies < coherentReplyQuorum;
-  }
-
-  private static Address resolveIstCoinContractAddress() throws IOException {
-    return IstCoin.resolveDefaultContractAddress();
   }
 
   @Override

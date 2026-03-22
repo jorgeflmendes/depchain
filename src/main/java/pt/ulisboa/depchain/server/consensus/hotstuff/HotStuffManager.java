@@ -99,6 +99,11 @@ public class HotStuffManager {
 
   public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, Map<Long, PublicKey> clientPublicKeys, EvmService evmService,
       Consumer<Node> onNodeExecuted) {
+    this(id, config, localThresholdShare, publicThresholdKey, clientPublicKeys, evmService, null, onNodeExecuted);
+  }
+
+  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, Map<Long, PublicKey> clientPublicKeys, EvmService evmService,
+      Address istCoinContractAddress, Consumer<Node> onNodeExecuted) {
     this.id = id;
     this.logger = LoggerFactory.getLogger(HotStuffManager.class);
     this.n = config.system().n();
@@ -121,7 +126,7 @@ public class HotStuffManager {
     this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
     this.evmService = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(evmService, "evmService");
     try {
-      this.istCoin = new IstCoin(this.evmService);
+      this.istCoin = istCoinContractAddress == null ? new IstCoin(this.evmService) : new IstCoin(this.evmService, istCoinContractAddress);
     } catch (java.io.IOException exception) {
       throw new IllegalStateException("Could not initialize IST Coin support from genesis", exception);
     }
