@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -16,14 +17,15 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
-public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, ClientSection client, TimeoutsSection timeouts, StorageSection storage, KeysSection keys) {
+public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, List<ClientSection> clients, TimeoutsSection timeouts, StorageSection storage, KeysSection keys) {
   private static final ObjectMapper YAML = YAMLMapper.builder().build();
 
   public ConfigParser {
     ValidationUtils
-        .requireAllNonNull(named("system", system), named("replicas", replicas), named("client", client), named("timeouts", timeouts), named("storage", storage), named("keys", keys));
+        .requireAllNonNull(named("system", system), named("replicas", replicas), named("clients", clients), named("timeouts", timeouts), named("storage", storage), named("keys", keys));
     replicas = List.copyOf(ValidationUtils.requireNonEmpty(replicas, "replicas"));
-    validateConsistency(system, replicas, client);
+    clients = List.copyOf(ValidationUtils.requireNonEmpty(clients, "clients"));
+    validateConsistency(system, replicas, clients);
   }
 
   public record SystemSection(int n, int f) {
@@ -122,6 +124,22 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     }
   }
 
+  public ClientSection client() {
+    return clients.getFirst();
+  }
+
+  public ClientSection requireClientById(String clientId) {
+    ValidationUtils.requireNonBlank(clientId, "clientId");
+
+    return clients.stream().filter(client -> client.id().equals(clientId)).findFirst().orElseThrow(() -> new IllegalArgumentException("Client '%s' not found".formatted(clientId)));
+  }
+
+  public ClientSection requireClientBySenderId(long senderId) {
+    ValidationUtils.requireNonNegativeLong(senderId, "senderId");
+
+    return clients.stream().filter(client -> client.senderId() == senderId).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown client senderId: " + senderId));
+  }
+
   public record ClientKeysSection(@JsonProperty("public") Path publicKeyPath, @JsonProperty("private") Path privateKeyPath) {
     public ClientKeysSection {
       ValidationUtils.requireNonNull(publicKeyPath, "client.keys.public");
@@ -201,7 +219,8 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
 
     try (var input = Files.newInputStream(path)) {
       RawConfig raw = YAML.readValue(input, RawConfig.class);
-      return new ConfigParser(raw.system(), normalizeReplicas(raw.replicas(), raw.keys()), normalizeClient(raw.client(), raw.keys()), raw.timeouts(), raw.storage(), raw.keys());
+      return new ConfigParser(raw.system(), normalizeReplicas(raw.replicas(), raw.keys()), normalizeClients(raw.client(), raw.clients(), raw.keys()), raw.timeouts(), raw.storage(),
+          raw.keys());
     } catch (IOException exception) {
       throw new IOException("Failed to load config from " + path, exception);
     }
@@ -215,13 +234,28 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     return replicas.entrySet().stream().map(entry -> entry.getValue().toReplica(entry.getKey(), keys)).toList();
   }
 
-  private static ClientSection normalizeClient(ClientInput client, KeysSection keys) {
-    ValidationUtils.requireNonNull(client, "client");
+  private static List<ClientSection> normalizeClients(ClientInput legacyClient, LinkedHashMap<String, ClientMapInput> clients, KeysSection keys) {
     ValidationUtils.requireNonNull(keys, "keys");
-    return client.toClient(keys);
+
+    LinkedHashMap<String, ClientSection> normalizedClients = new LinkedHashMap<>();
+    if (legacyClient != null) {
+      ClientSection client = legacyClient.toClient(keys);
+      normalizedClients.put(client.id(), client);
+    }
+    if (clients != null) {
+      for (Map.Entry<String, ClientMapInput> entry : clients.entrySet()) {
+        String clientId = ValidationUtils.requireNonBlank(entry.getKey(), "clients entry id");
+        ClientMapInput clientInput = ValidationUtils.requireNonNull(entry.getValue(), "clients." + clientId);
+        if (normalizedClients.containsKey(clientId)) {
+          throw new IllegalArgumentException("Duplicate client id: " + clientId);
+        }
+        normalizedClients.put(clientId, clientInput.toClient(clientId, keys));
+      }
+    }
+    return List.copyOf(ValidationUtils.requireNonEmpty(normalizedClients.values(), "clients"));
   }
 
-  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, ClientSection client) {
+  private static void validateConsistency(SystemSection system, List<ReplicaSection> replicas, List<ClientSection> clients) {
     ValidationUtils.requireExactInt(system.n(), replicas.size(), "system.n");
     ValidationUtils.requireAtLeastInt(system.n(), (3 * system.f()) + 1, "system.n", "3f + 1");
 
@@ -236,16 +270,17 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
       requireUnique(endpoints, endpointKey(replica.host(), replica.clientPort()), "Duplicate endpoint in replica: " + replica.id());
     }
 
-    if (senderIds.contains(client.senderId())) {
-      throw new IllegalArgumentException("client.senderId conflicts with replica");
-    }
+    for (ClientSection client : clients) {
+      requireUnique(ids, client.id(), "Duplicate client id: " + client.id());
+      requireUnique(senderIds, client.senderId(), "Duplicate senderId: " + client.senderId());
 
-    Set<String> seenKnownReplicas = new HashSet<>();
-    for (String replicaId : client.knownReplicas()) {
-      if (!ids.contains(replicaId)) {
-        throw new IllegalArgumentException("client.knownReplicas contains unknown replica '%s'".formatted(replicaId));
+      Set<String> seenKnownReplicas = new HashSet<>();
+      for (String replicaId : client.knownReplicas()) {
+        if (replicas.stream().noneMatch(replica -> replica.id().equals(replicaId))) {
+          throw new IllegalArgumentException("client.knownReplicas contains unknown replica '%s'".formatted(replicaId));
+        }
+        requireUnique(seenKnownReplicas, replicaId, "Duplicate id '%s' in client.knownReplicas".formatted(replicaId));
       }
-      requireUnique(seenKnownReplicas, replicaId, "Duplicate id '%s' in client.knownReplicas".formatted(replicaId));
     }
   }
 
@@ -260,8 +295,8 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     }
   }
 
-  private record RawConfig(SystemSection system, LinkedHashMap<String, ReplicaInput> replicas, ClientInput client, TimeoutsSection timeouts, StorageSection storage,
-      KeysSection keys) {
+  private record RawConfig(SystemSection system, LinkedHashMap<String, ReplicaInput> replicas, ClientInput client, LinkedHashMap<String, ClientMapInput> clients,
+      TimeoutsSection timeouts, StorageSection storage, KeysSection keys) {
   }
 
   private record ReplicaInput(long senderId, String host, ReplicaPortsSection ports, ReplicaKeysSection keys) {
@@ -275,6 +310,13 @@ public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, 
     ClientSection toClient(KeysSection configKeys) {
       ClientKeysSection resolvedKeys = keys != null ? keys : ClientKeysSection.forClient(configKeys, id);
       return new ClientSection(id, senderId, host, resolvedKeys, requestTimeoutMs, knownReplicas);
+    }
+  }
+
+  private record ClientMapInput(long senderId, String host, ClientKeysSection keys, int requestTimeoutMs, List<String> knownReplicas) {
+    ClientSection toClient(String clientId, KeysSection configKeys) {
+      ClientKeysSection resolvedKeys = keys != null ? keys : ClientKeysSection.forClient(configKeys, clientId);
+      return new ClientSection(clientId, senderId, host, resolvedKeys, requestTimeoutMs, knownReplicas);
     }
   }
 }

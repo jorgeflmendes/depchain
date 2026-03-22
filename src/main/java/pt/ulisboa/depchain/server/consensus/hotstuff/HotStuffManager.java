@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
+import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 import org.slf4j.Logger;
@@ -55,7 +56,7 @@ public class HotStuffManager {
   private final Set<String> executedNodeHashes;
   private final EvmService evmService;
   private final IstCoin istCoin;
-  private final Address clientAccountAddress;
+  private final Map<Long, Address> clientAccountAddresses;
   private final Consumer<Node> onNodeExecuted;
 
   private int id;
@@ -82,11 +83,21 @@ public class HotStuffManager {
   private long totalFetchFailures;
 
   public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService) {
-    this(id, config, localThresholdShare, publicThresholdKey, clientPublicKey, evmService, node -> {
+    this(id, config, localThresholdShare, publicThresholdKey, Map.of(config.client().senderId(), clientPublicKey), evmService, node -> {
     });
   }
 
   public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService,
+      Consumer<Node> onNodeExecuted) {
+    this(id, config, localThresholdShare, publicThresholdKey, Map.of(config.client().senderId(), clientPublicKey), evmService, onNodeExecuted);
+  }
+
+  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, Map<Long, PublicKey> clientPublicKeys, EvmService evmService) {
+    this(id, config, localThresholdShare, publicThresholdKey, clientPublicKeys, evmService, node -> {
+    });
+  }
+
+  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, Map<Long, PublicKey> clientPublicKeys, EvmService evmService,
       Consumer<Node> onNodeExecuted) {
     this.id = id;
     this.logger = LoggerFactory.getLogger(HotStuffManager.class);
@@ -104,7 +115,7 @@ public class HotStuffManager {
     this.currentProposal = HotStuffSupport.GENESIS_NODE;
     this.viewNumber = 0;
     this.blockTree = new HashMap<>();
-    this.clientCommunication = new ClientRequestManager(config.client().senderId(), clientPublicKey, logger);
+    this.clientCommunication = new ClientRequestManager(clientPublicKeys, logger);
     this.replicaCommunication = new ReplicaMessenger(id, config, logger);
     this.executedNodeHashes = ConcurrentHashMap.newKeySet();
     this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
@@ -115,7 +126,7 @@ public class HotStuffManager {
       throw new IllegalStateException("Could not initialize IST Coin support from genesis", exception);
     }
     this.onNodeExecuted = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(onNodeExecuted, "onNodeExecuted");
-    this.clientAccountAddress = clientAddress(clientPublicKey);
+    this.clientAccountAddresses = clientAddresses(clientPublicKeys);
 
     blockTree.put(HotStuffSupport.GENESIS_NODE.getNodeHash(), HotStuffSupport.GENESIS_NODE);
     executedNodeHashes.add(HotStuffSupport.GENESIS_NODE.getNodeHash());
@@ -358,17 +369,23 @@ public class HotStuffManager {
   }
 
   private EvmService.TransactionResult executeTransaction(TransactionRequest transaction) {
+    Address senderAccount = clientAddressFor(transaction.getRequestKey().getClientSenderId());
     Address targetAccount = Address.fromHexString("0x" + transaction.getTo());
     Wei amount = Wei.of(transaction.getAmount());
     Wei gasPrice = Wei.of(transaction.getGasPrice());
     TransactionType type = transaction.getType();
 
     if (type == TransactionType.TRANSACTION_TYPE_TRANSFER) {
-      return evmService.transferNative(clientAccountAddress, targetAccount, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
+      return evmService.transferNative(senderAccount, targetAccount, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
+    }
+
+    if (type == TransactionType.TRANSACTION_TYPE_CONTRACT_CALL) {
+      Bytes input = transaction.hasInput() ? Bytes.wrap(transaction.getInput().toByteArray()) : Bytes.EMPTY;
+      return evmService.callContract(senderAccount, targetAccount, input, amount, transaction.getNonce(), transaction.getGasLimit(), gasPrice);
     }
 
     if (type == TransactionType.TRANSACTION_TYPE_IST_COIN_TRANSFER) {
-      return istCoin.transfer(clientAccountAddress, targetAccount, transaction.getAmount(), transaction.getNonce(), transaction.getGasLimit(), gasPrice);
+      return istCoin.transfer(senderAccount, targetAccount, transaction.getAmount(), transaction.getNonce(), transaction.getGasLimit(), gasPrice);
     }
 
     throw new IllegalArgumentException("unsupported transaction type: " + type);
@@ -406,8 +423,20 @@ public class HotStuffManager {
     }
   }
 
-  private static Address clientAddress(PublicKey clientPublicKey) {
-    return Address.fromHexString("0x" + CryptoUtil.deriveAddressHex(clientPublicKey));
+  private Address clientAddressFor(long clientSenderId) {
+    Address clientAccountAddress = clientAccountAddresses.get(clientSenderId);
+    if (clientAccountAddress == null) {
+      throw new IllegalArgumentException("unknown client senderId: " + clientSenderId);
+    }
+    return clientAccountAddress;
+  }
+
+  private static Map<Long, Address> clientAddresses(Map<Long, PublicKey> clientPublicKeys) {
+    Map<Long, Address> addressesBySenderId = new HashMap<>();
+    for (Map.Entry<Long, PublicKey> entry : clientPublicKeys.entrySet()) {
+      addressesBySenderId.put(entry.getKey(), Address.fromHexString("0x" + CryptoUtil.deriveAddressHex(entry.getValue())));
+    }
+    return Map.copyOf(addressesBySenderId);
   }
 
   private void broadcast(Message msg) {

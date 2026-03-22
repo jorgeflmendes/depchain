@@ -33,6 +33,12 @@ public final class PrivateKeyLoader {
     return loadPrivateKey(config.client().privateKeyPath());
   }
 
+  public static PrivateKey loadClientPrivateKey(ConfigParser config, long senderId) throws Exception {
+    ValidationUtils.requireNonNull(config, "config");
+    ValidationUtils.requireNonNegativeLong(senderId, "senderId");
+    return loadPrivateKey(config.requireClientBySenderId(senderId).privateKeyPath());
+  }
+
   public static PrivateKey decodePrivateKey(byte[] bytes) throws Exception {
     ValidationUtils.requireNonNull(bytes, "bytes");
 

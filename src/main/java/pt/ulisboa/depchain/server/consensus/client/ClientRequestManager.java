@@ -28,8 +28,7 @@ import pt.ulisboa.depchain.shared.utils.TimeUtil;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class ClientRequestManager {
-  private final long expectedClientSenderId;
-  private final PublicKey clientPublicKey;
+  private final Map<Long, PublicKey> clientPublicKeys;
   private final Logger logger;
   private final BlockingQueue<ClientRequest> pendingCommands = new LinkedBlockingQueue<>();
   private final Map<ClientRequestKey, ConnectionKey> clientContexts = new ConcurrentHashMap<>();
@@ -39,8 +38,15 @@ public final class ClientRequestManager {
   private AuthenticatedLink clientTransport;
 
   public ClientRequestManager(long expectedClientSenderId, PublicKey clientPublicKey, Logger logger) {
-    this.expectedClientSenderId = expectedClientSenderId;
-    this.clientPublicKey = ValidationUtils.requireNonNull(clientPublicKey, "clientPublicKey");
+    this(Map.of(expectedClientSenderId, ValidationUtils.requireNonNull(clientPublicKey, "clientPublicKey")), logger);
+  }
+
+  public ClientRequestManager(Map<Long, PublicKey> clientPublicKeys, Logger logger) {
+    ValidationUtils.requireNonNull(clientPublicKeys, "clientPublicKeys");
+    if (clientPublicKeys.isEmpty()) {
+      throw new IllegalArgumentException("clientPublicKeys must not be empty");
+    }
+    this.clientPublicKeys = Map.copyOf(clientPublicKeys);
     this.logger = ValidationUtils.requireNonNull(logger, "logger");
   }
 
@@ -199,15 +205,18 @@ public final class ClientRequestManager {
     if (request == null || requestKey == null) {
       return false;
     }
-    if (requestKey.getClientSenderId() != expectedClientSenderId) {
+    PublicKey clientPublicKey = clientPublicKeys.get(requestKey.getClientSenderId());
+    if (clientPublicKey == null) {
       return false;
     }
 
     try {
       if (request.hasTransaction()) {
         TransactionRequest transaction = request.getTransaction();
-        byte[] payload = ClientRequestSignaturePayloadUtil.signedTransactionRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), transaction
-            .getType(), transaction.getTo(), transaction.getAmount(), transaction.getNonce(), transaction.getGasLimit(), transaction.getGasPrice());
+        byte[] payload = ClientRequestSignaturePayloadUtil
+            .signedTransactionRequestPayload(requestKey.getClientSenderId(), requestKey.getRequestId(), transaction.getType(), transaction.getTo(), transaction
+                .getAmount(), transaction
+                    .getNonce(), transaction.getGasLimit(), transaction.getGasPrice(), transaction.hasInput() ? transaction.getInput().toByteArray() : new byte[0]);
         return CryptoUtil.verifyEcdsa(payload, transaction.getSignature().toByteArray(), clientPublicKey);
       }
 

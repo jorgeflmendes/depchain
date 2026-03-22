@@ -36,8 +36,10 @@ public final class TestKeyMaterialSupport {
   }
 
   private static boolean hasKeyMaterial(ConfigParser config) {
-    if (!Files.exists(config.client().publicKeyPath()) || !Files.exists(config.client().privateKeyPath())) {
-      return false;
+    for (ConfigParser.ClientSection client : config.clients()) {
+      if (!Files.exists(client.publicKeyPath()) || !Files.exists(client.privateKeyPath())) {
+        return false;
+      }
     }
 
     for (ReplicaSection replica : config.replicas()) {

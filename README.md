@@ -13,8 +13,8 @@ The YAML config includes:
 - system parameters (`system.n`, `system.f`),
 - replica ids as YAML keys under `replicas`,
 - replica network fields grouped under `ports`,
-- client identity and connectivity fields (`client.id`, `client.senderId`, `client.host`, `client.knownReplicas`),
-- client request timeout (`client.requestTimeoutMs`, where `0` means no timeout),
+- client identities and connectivity fields (`clients.<id>.senderId`, `clients.<id>.host`, `clients.<id>.knownReplicas`),
+- client request timeout (`clients.<id>.requestTimeoutMs`, where `0` means no timeout),
 - timeouts (`timeouts.viewChangeMs`, `timeouts.clientCommandWaitMs`, `timeouts.thresholdRoundMs`, `timeouts.fetchNodeMs`),
 - runtime key root (`keys.root`), from which replica/client key paths are derived,
 - runtime block storage root (`storage.blocksRoot`), from which per-replica block directories are derived.
@@ -45,27 +45,50 @@ mvn exec:java@populate "-Dexec.args=config/config.yaml"
 
 Client entrypoint usage:
 ```text
-Main <configPath>
+Main --config <configPath> --client-id <clientId>
 ```
 
 Maven:
 ```powershell
-mvn exec:java@client "-Dexec.args=config/config.yaml"
+mvn exec:java@client "-Dexec.args=--config config/config.yaml --client-id client"
+mvn exec:java@client "-Dexec.args=--config config/config.yaml --client-id client2"
+```
+
+Open a local cluster in separate PowerShell windows:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\open-local-cluster.ps1 -ProjectDir . -ClientId client
+powershell -ExecutionPolicy Bypass -File .\scripts\open-local-cluster.ps1 -ProjectDir . -ClientId client2
+```
+
+Open a local cluster on Linux in separate terminal windows:
+```bash
+./scripts/open-local-cluster.sh --project-dir . --client-id client
+./scripts/open-local-cluster.sh --project-dir . --client-id client2
+```
+
+Open a local cluster through Maven, selecting the Windows or Linux script automatically:
+```powershell
+mvn exec:exec@open-local-cluster "-Dcluster.client.id=client"
+mvn exec:exec@open-local-cluster "-Dcluster.client.id=client2"
 ```
 
 Client shell commands:
 ```text
 depcoin-transfer <to> <amount> <nonce> [gasLimit] [gasPrice]
-depcoin-balance <owner>
-ist-balance <owner>
+depcoin-balance [owner]
+my-address
+ist-balance [owner]
+contract-call <to> <inputHex> <nonce> [amount] [gasLimit] [gasPrice]
 ist-transfer <to> <rawValue> <nonce> [gasLimit] [gasPrice]
 ```
 
 Examples:
 ```text
 depcoin-transfer 3333333333333333333333333333333333333333 25 0
-depcoin-balance 1111111111111111111111111111111111111111
+depcoin-balance
+my-address
 ist-balance 1111111111111111111111111111111111111111
+contract-call 1234567890abcdef1234567890abcdef12345678 a9059cbb000000000000000000000000333333333333333333333333333333333333333300000000000000000000000000000000000000000000000000000000000001f4 2
 ist-transfer 3333333333333333333333333333333333333333 500 1
 ```
 

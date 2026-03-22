@@ -65,7 +65,7 @@ public final class ByzantineReplicaServer {
     this.replicaConfig = configParser.requireReplicaById(serverId);
     this.attackMode = attackMode;
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
-    this.clientStaticPKeys = Map.of(configParser.client().senderId(), PublicKeyLoader.loadClientPublicKey(configParser));
+    this.clientStaticPKeys = PublicKeyLoader.loadClientPublicKeys(configParser);
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
     this.consensusEndpointsBySenderId = buildConsensusEndpointsBySenderId(configParser);
@@ -125,7 +125,7 @@ public final class ByzantineReplicaServer {
   }
 
   private void handleClientRequest(InboundPacket inbound) {
-    if (inbound.authenticatedSenderId() == null || inbound.authenticatedSenderId() != configParser.client().senderId()) {
+    if (inbound.authenticatedSenderId() == null || !clientStaticPKeys.containsKey(inbound.authenticatedSenderId())) {
       return;
     }
 

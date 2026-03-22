@@ -53,9 +53,11 @@ public final class Populate {
       writeReplicaThresholdMaterial(replica, thresholdConfig, i);
     }
 
-    writeClientKeys(config.client());
+    for (ConfigParser.ClientSection client : config.clients()) {
+      writeClientKeys(client);
+    }
 
-    logger.info("Generated individual keys for {} replicas, threshold material for {} replicas, and 1 client", replicas.size(), replicas.size());
+    logger.info("Generated individual keys for {} replicas, threshold material for {} replicas, and {} clients", replicas.size(), replicas.size(), config.clients().size());
   }
 
   @Command(name = "populate", mixinStandardHelpOptions = true, description = "Generate replica, threshold, and client key material.")

@@ -28,7 +28,7 @@ public final class PublicKeyLoader {
     ValidationUtils.requireNonNull(config, "config");
 
     Map<Long, PublicKey> publicKeyBySenderId = new LinkedHashMap<>(loadReplicaPublicKeys(config));
-    publicKeyBySenderId.put(config.client().senderId(), loadClientPublicKey(config));
+    publicKeyBySenderId.putAll(loadClientPublicKeys(config));
     return Map.copyOf(publicKeyBySenderId);
   }
 
@@ -43,9 +43,25 @@ public final class PublicKeyLoader {
     return Map.copyOf(publicKeyBySenderId);
   }
 
+  public static Map<Long, PublicKey> loadClientPublicKeys(ConfigParser config) throws Exception {
+    ValidationUtils.requireNonNull(config, "config");
+
+    Map<Long, PublicKey> publicKeyBySenderId = new LinkedHashMap<>();
+    for (ConfigParser.ClientSection client : config.clients()) {
+      publicKeyBySenderId.put(client.senderId(), loadPemPublicKey(client.publicKeyPath()));
+    }
+    return Map.copyOf(publicKeyBySenderId);
+  }
+
   public static PublicKey loadClientPublicKey(ConfigParser config) throws Exception {
     ValidationUtils.requireNonNull(config, "config");
     return loadPemPublicKey(config.client().publicKeyPath());
+  }
+
+  public static PublicKey loadClientPublicKey(ConfigParser config, long senderId) throws Exception {
+    ValidationUtils.requireNonNull(config, "config");
+    ValidationUtils.requireNonNegativeLong(senderId, "senderId");
+    return loadPemPublicKey(config.requireClientBySenderId(senderId).publicKeyPath());
   }
 
   public static PublicKey decodePublicKey(byte[] bytes) throws Exception {

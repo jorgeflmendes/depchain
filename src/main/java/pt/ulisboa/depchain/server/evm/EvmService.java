@@ -117,18 +117,19 @@ public final class EvmService {
       return new TransactionResult(false, gasLimit, Bytes.EMPTY, "insufficient gas for native transfer");
     }
 
-    MutableAccount recipientAccount = account(recipient);
-    if (recipientAccount == null) {
+    if (account(recipient) == null) {
       world.createAccount(recipient, 0L, Wei.ZERO);
-      recipientAccount = account(recipient);
     }
 
-    senderAccount.decrementBalance(amount);
-    recipientAccount.incrementBalance(amount);
-    Wei chargedFee = calculateFee(gasPrice, gasLimit, TRANSFER_GAS_USED);
+    TransactionResult execution = execute(sender, recipient, recipient, Bytes.EMPTY, Bytes.EMPTY, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
+    long effectiveGasUsed = Math.max(TRANSFER_GAS_USED, execution.gasUsed());
+    Wei chargedFee = calculateFee(gasPrice, gasLimit, effectiveGasUsed);
     senderAccount.decrementBalance(chargedFee);
     senderAccount.incrementNonce();
-    return new TransactionResult(true, TRANSFER_GAS_USED, Bytes.EMPTY, null);
+    if (!execution.success()) {
+      return new TransactionResult(false, effectiveGasUsed, execution.returnData(), execution.errorMessage());
+    }
+    return new TransactionResult(true, effectiveGasUsed, Bytes.EMPTY, null);
   }
 
   public TransactionResult callContract(Address sender, Address contractAddress, Bytes callData, Wei amount, long nonce, long gasLimit, Wei gasPrice) {

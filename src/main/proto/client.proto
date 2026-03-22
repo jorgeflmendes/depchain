@@ -11,8 +11,8 @@ import "common.proto";
 enum TransactionType {
   TRANSACTION_TYPE_UNSPECIFIED = 0;
   TRANSACTION_TYPE_TRANSFER = 1;
-  reserved 2, 3;
   TRANSACTION_TYPE_IST_COIN_TRANSFER = 4;
+  TRANSACTION_TYPE_CONTRACT_CALL = 5;
 }
 
 message TransactionRequest {
@@ -34,7 +34,12 @@ message TransactionRequest {
   option (buf.validate.message).cel = {
     id: "transaction.transfer.disallows-data"
     message: "transfer transactions must not include input data"
-    expression: "true"
+    expression: "this.type == 1 ? (!has(this.input) || size(this.input) == 0) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.contract-call.requires-input"
+    message: "contract call transactions must include input data"
+    expression: "this.type == 5 ? (has(this.input) && size(this.input) > 0) : true"
   };
   option (buf.validate.message).cel = {
     id: "transaction.ist-transfer.requires-positive-amount"
@@ -44,7 +49,7 @@ message TransactionRequest {
   option (buf.validate.message).cel = {
     id: "transaction.ist-transfer.disallows-data"
     message: "IST Coin transfers must not include input data"
-    expression: "true"
+    expression: "this.type == 4 ? (!has(this.input) || size(this.input) == 0) : true"
   };
 
   ClientRequestKey request_key = 1 [(buf.validate.field).required = true];
@@ -72,7 +77,7 @@ message TransactionRequest {
     (buf.validate.field).uint64.gt = 0
   ];
 
-  reserved 8;
+  optional bytes input = 8;
 
   optional bytes signature = 9 [
     (buf.validate.field).required = true,

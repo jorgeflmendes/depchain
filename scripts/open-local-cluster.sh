@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=""
 config_path="config/config.yaml"
-client_id="client"
+client_id=""
 
 usage() {
   cat <<'EOF'
@@ -42,6 +42,12 @@ done
 
 if [[ -z "$project_dir" ]]; then
   echo "--project-dir is required" >&2
+  usage >&2
+  exit 1
+fi
+
+if [[ -z "$client_id" ]]; then
+  echo "--client-id is required" >&2
   usage >&2
   exit 1
 fi

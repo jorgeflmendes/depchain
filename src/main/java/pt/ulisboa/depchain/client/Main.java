@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.client;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
+import pt.ulisboa.depchain.client.shell.DpchClientShell;
 import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 import picocli.CommandLine;
@@ -26,18 +27,18 @@ public final class Main {
     @Option(names = {"-c", "--config"}, description = "Path to the cluster configuration file.")
     private Path configOption;
 
+    @Option(names = {"-i", "--client-id"}, required = true, description = "Configured client identifier to use.")
+    private String clientIdOption;
+
     @Parameters(index = "0", arity = "0..1", hidden = true, description = "Path to the cluster configuration file.")
     private Path configParameter;
 
     @Override
     public Integer call() throws Exception {
-      Path configPath = configParameter;
-      if (configOption != null) {
-        configPath = configOption;
-      }
+      Path configPath = configOption != null ? configOption : configParameter;
       ValidationUtils.requireNonNull(configPath, "config");
 
-      try (DpchClient client = DpchClient.open(configPath.toString())) {
+      try (DpchClient client = DpchClient.open(configPath.toString(), clientIdOption)) {
         new DpchClientShell(client).run();
       }
       return 0;

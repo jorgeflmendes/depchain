@@ -45,6 +45,14 @@ public final class IstCoin {
     return callAndNormalize(sender, transferCallData(recipient, amount), nonce, gasLimit, gasPrice, "invalid IST Coin transfer response", IstCoin::normalizeBooleanResult);
   }
 
+  public static Address resolveDefaultContractAddress() throws IOException {
+    return resolveContractAddress();
+  }
+
+  public static Bytes encodeTransferCallData(Address recipient, long amount) {
+    return transferCallData(recipient, amount);
+  }
+
   private EvmService.TransactionResult callAndNormalize(Address sender, Bytes callData, long nonce, long gasLimit, Wei gasPrice, String invalidResponseMessage, Function<Bytes, Bytes> normalizer) {
     EvmService.TransactionResult execution = evmService.callContract(sender, contractAddress, callData, Wei.ZERO, nonce, gasLimit, gasPrice);
     if (!execution.success()) {

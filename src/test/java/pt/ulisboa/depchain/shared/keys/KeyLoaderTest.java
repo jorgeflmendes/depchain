@@ -28,16 +28,20 @@ class KeyLoaderTest {
   void loadsReplicaAndClientPemKeysFromConfig() throws Exception {
     ConfigParser config = ConfigParser.load(configPath());
 
+    Map<Long, PublicKey> clientKeys = PublicKeyLoader.loadClientPublicKeys(config);
     Map<Long, PublicKey> replicaKeys = PublicKeyLoader.loadReplicaPublicKeys(config);
     Map<Long, PublicKey> staticKeys = PublicKeyLoader.loadStaticPublicKeys(config);
     PrivateKey replicaPrivateKey = PrivateKeyLoader.loadReplicaPrivateKey(config, 0L);
     PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
 
+    assertEquals(config.clients().size(), clientKeys.size());
     assertEquals(config.system().n(), replicaKeys.size());
-    assertEquals(config.system().n() + 1, staticKeys.size());
+    assertEquals(config.system().n() + config.clients().size(), staticKeys.size());
     assertNotNull(replicaPrivateKey);
     assertNotNull(clientPrivateKey);
     assertTrue(staticKeys.containsKey(config.client().senderId()));
+    assertTrue(clientKeys.containsKey(config.requireClientById("client2").senderId()));
+    assertTrue(clientKeys.containsKey(config.requireClientById("client3").senderId()));
   }
 
   @Test

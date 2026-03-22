@@ -28,16 +28,34 @@ replicas:
       consensus: 10004
       client: 11004
 
-client:
-  id: client
-  senderId: 100
-  host: 127.0.0.1
-  requestTimeoutMs: 0
-  knownReplicas:
-    - server1
-    - server2
-    - server3
-    - server4
+clients:
+  client:
+    senderId: 100
+    host: 127.0.0.1
+    requestTimeoutMs: 0
+    knownReplicas:
+      - server1
+      - server2
+      - server3
+      - server4
+  client2:
+    senderId: 101
+    host: 127.0.0.1
+    requestTimeoutMs: 0
+    knownReplicas:
+      - server1
+      - server2
+      - server3
+      - server4
+  client3:
+    senderId: 102
+    host: 127.0.0.1
+    requestTimeoutMs: 0
+    knownReplicas:
+      - server1
+      - server2
+      - server3
+      - server4
 
 timeouts:
   viewChangeMs: 1000

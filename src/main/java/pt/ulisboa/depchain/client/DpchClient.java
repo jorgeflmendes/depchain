@@ -1,5 +1,6 @@
 package pt.ulisboa.depchain.client;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -8,33 +9,30 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
+import org.hyperledger.besu.datatypes.Address;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import pt.ulisboa.depchain.proto.ClientRequest;
-import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
-import pt.ulisboa.depchain.proto.QueryRequest;
 import pt.ulisboa.depchain.proto.QueryResponse;
 import pt.ulisboa.depchain.proto.QueryType;
-import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionResponse;
 import pt.ulisboa.depchain.proto.TransactionType;
+import pt.ulisboa.depchain.server.evm.IstCoin;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
 import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
 import pt.ulisboa.depchain.shared.utils.QuorumAccumulator;
 import pt.ulisboa.depchain.shared.utils.TimeUtil;
+import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 public final class DpchClient implements AutoCloseable {
   private static final Logger logger = LoggerFactory.getLogger(DpchClient.class);
@@ -42,30 +40,41 @@ public final class DpchClient implements AutoCloseable {
   private static final String INCOHERENT_REPLICA_RESPONSE_MESSAGE = "could not obtain a majority of identical replies from replicas";
 
   private final List<InetSocketAddress> replicaEndpoints;
-  private final PrivateKey clientPrivateKey;
   private final Map<Long, PublicKey> replicaPublicKeys;
   private final long requestTimeoutMs;
   private final int coherentReplyQuorum;
-  private final long clientSenderId;
+  private final String walletAddress;
   private final AuthenticatedLink transport;
   private final Map<Long, InetSocketAddress> openConnections;
-  private final AtomicLong nextRequestId;
+  private final SignedClientRequestFactory requestFactory;
 
-  public DpchClient(String configPath) throws Exception {
+  public DpchClient(String configPath, String clientId) throws Exception {
+    ValidationUtils.requireNonBlank(configPath, "configPath");
+    ValidationUtils.requireNonBlank(clientId, "clientId");
+
     ConfigParser config = ConfigParser.load(java.nio.file.Path.of(configPath));
-    this.replicaEndpoints = config.replicas().stream().map(replica -> new InetSocketAddress(replica.host(), replica.clientPort())).toList();
-    this.clientSenderId = config.client().senderId();
-    this.clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
+    ConfigParser.ClientSection selectedClient = config.requireClientById(clientId);
+
+    this.replicaEndpoints = selectedClient.knownReplicas().stream().map(config::requireReplicaById).map(replica -> new InetSocketAddress(replica.host(), replica.clientPort()))
+        .toList();
+    long clientSenderId = selectedClient.senderId();
+    PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config, clientSenderId);
+    PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(config, clientSenderId);
     this.replicaPublicKeys = PublicKeyLoader.loadReplicaPublicKeys(config);
-    this.requestTimeoutMs = config.client().requestTimeoutMs();
+    this.requestTimeoutMs = selectedClient.requestTimeoutMs();
     this.coherentReplyQuorum = config.system().f() + 1;
-    this.transport = AuthenticatedLink.unbound(this.clientSenderId, this.clientPrivateKey, this.replicaPublicKeys);
+    this.walletAddress = CryptoUtil.deriveAddressHex(clientPublicKey);
+    this.transport = AuthenticatedLink.unbound(clientSenderId, clientPrivateKey, this.replicaPublicKeys);
     this.openConnections = new LinkedHashMap<>();
-    this.nextRequestId = new AtomicLong(0L);
+    this.requestFactory = new SignedClientRequestFactory(clientSenderId, clientPrivateKey);
   }
 
-  public static DpchClient open(String configPath) throws Exception {
-    return new DpchClient(configPath);
+  public static DpchClient open(String configPath, String clientId) throws Exception {
+    return new DpchClient(configPath, clientId);
+  }
+
+  public String walletAddress() {
+    return walletAddress;
   }
 
   public TransactionResponse requestDepCoinTransfer(String recipientAddress, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
@@ -76,16 +85,34 @@ public final class DpchClient implements AutoCloseable {
     return requestQuery(QueryType.QUERY_TYPE_DEPCOIN_BALANCE, ownerAddress);
   }
 
+  public QueryResponse requestOwnDepCoinBalance() throws Exception {
+    return requestDepCoinBalance(walletAddress);
+  }
+
   public QueryResponse requestIstCoinBalance(String ownerAddress) throws Exception {
     return requestQuery(QueryType.QUERY_TYPE_IST_COIN_BALANCE, ownerAddress);
   }
 
+  public QueryResponse requestOwnIstCoinBalance() throws Exception {
+    return requestIstCoinBalance(walletAddress);
+  }
+
   public TransactionResponse requestIstCoinTransfer(String recipientAddress, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
-    return requestTransaction(TransactionType.TRANSACTION_TYPE_IST_COIN_TRANSFER, recipientAddress, amount, nonce, gasLimit, gasPrice);
+    Address contractAddress = resolveIstCoinContractAddress();
+    byte[] input = IstCoin.encodeTransferCallData(Address.fromHexString("0x" + recipientAddress), amount).toArrayUnsafe();
+    return requestTransaction(TransactionType.TRANSACTION_TYPE_CONTRACT_CALL, contractAddress.toHexString().substring(2), 0L, nonce, gasLimit, gasPrice, input);
+  }
+
+  public TransactionResponse requestContractCall(String contractAddress, long amount, long nonce, long gasLimit, long gasPrice, byte[] input) throws Exception {
+    return requestTransaction(TransactionType.TRANSACTION_TYPE_CONTRACT_CALL, contractAddress, amount, nonce, gasLimit, gasPrice, input);
   }
 
   private TransactionResponse requestTransaction(TransactionType type, String to, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
-    ClientResponse response = broadcastAndCollectResponse(buildTransactionRequest(type, to, amount, nonce, gasLimit, gasPrice));
+    return requestTransaction(type, to, amount, nonce, gasLimit, gasPrice, new byte[0]);
+  }
+
+  private TransactionResponse requestTransaction(TransactionType type, String to, long amount, long nonce, long gasLimit, long gasPrice, byte[] input) throws Exception {
+    ClientResponse response = broadcastAndCollectResponse(requestFactory.newTransactionRequest(type, to, amount, nonce, gasLimit, gasPrice, input));
     if (response == null) {
       return null;
     }
@@ -96,7 +123,7 @@ public final class DpchClient implements AutoCloseable {
   }
 
   private QueryResponse requestQuery(QueryType type, String ownerAddress) throws Exception {
-    ClientResponse response = broadcastAndCollectResponse(buildQueryRequest(type, ownerAddress));
+    ClientResponse response = broadcastAndCollectResponse(requestFactory.newQueryRequest(type, ownerAddress));
     if (response == null) {
       return null;
     }
@@ -153,25 +180,6 @@ public final class DpchClient implements AutoCloseable {
       }
     }
     openConnections.clear();
-  }
-
-  private ClientRequest buildTransactionRequest(TransactionType type, String to, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
-    long requestId = nextRequestId.getAndIncrement();
-    byte[] signature = CryptoUtil
-        .signEcdsa(ClientRequestSignaturePayloadUtil.signedTransactionRequestPayload(clientSenderId, requestId, type, to, amount, nonce, gasLimit, gasPrice), clientPrivateKey);
-
-    TransactionRequest.Builder transaction = TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
-        .setType(type).setTo(to).setAmount(amount).setNonce(nonce).setGasLimit(gasLimit).setGasPrice(gasPrice).setSignature(ByteString.copyFrom(signature));
-    return ClientRequest.newBuilder().setTransaction(transaction).build();
-  }
-
-  private ClientRequest buildQueryRequest(QueryType type, String owner) throws Exception {
-    long requestId = nextRequestId.getAndIncrement();
-    byte[] signature = CryptoUtil.signEcdsa(ClientRequestSignaturePayloadUtil.signedQueryRequestPayload(clientSenderId, requestId, type, owner), clientPrivateKey);
-
-    QueryRequest.Builder query = QueryRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId)).setType(type)
-        .setOwner(owner).setSignature(ByteString.copyFrom(signature));
-    return ClientRequest.newBuilder().setQuery(query).build();
   }
 
   private ClientResponse awaitCoherentResponse(long deadlineNanos) throws IncoherentReplicaResponseException {
@@ -246,6 +254,10 @@ public final class DpchClient implements AutoCloseable {
   private boolean replyQuorumIsImpossible(QuorumAccumulator<Long, String, ClientResponse> repliesByValue) {
     int remainingPossibleReplies = openConnections.size() - repliesByValue.acceptedCount();
     return repliesByValue.maxCount() + remainingPossibleReplies < coherentReplyQuorum;
+  }
+
+  private static Address resolveIstCoinContractAddress() throws IOException {
+    return IstCoin.resolveDefaultContractAddress();
   }
 
   @Override

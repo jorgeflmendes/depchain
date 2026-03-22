@@ -52,18 +52,19 @@ public final class ReplicaServer {
     this.configParser = ConfigParser.load(Path.of(configPath));
     this.replicaConfig = configParser.requireReplicaById(serverId);
     this.localStaticSKey = PrivateKeyLoader.loadReplicaPrivateKey(configParser, replicaConfig.senderId());
-    PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(configParser);
-    this.clientStaticPKeys = Map.of(configParser.client().senderId(), clientPublicKey);
+    Map<Long, PublicKey> clientPublicKeys = PublicKeyLoader.loadClientPublicKeys(configParser);
+    PublicKey primaryClientPublicKey = PublicKeyLoader.loadClientPublicKey(configParser);
+    this.clientStaticPKeys = clientPublicKeys;
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
-    this.genesis = GenesisMaterializer.materializeDefault(clientPublicKey);
+    this.genesis = GenesisMaterializer.materializeDefault(clientPublicKeys, primaryClientPublicKey);
     this.evmService = new EvmService();
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
-    this.blockPersistence = new ReplicaBlockPersistence(BlockStore.forReplica(configParser, replicaConfig), evmService, clientPublicKey);
+    this.blockPersistence = new ReplicaBlockPersistence(BlockStore.forReplica(configParser, replicaConfig), evmService, clientPublicKeys);
     ReplicaBlockPersistence.RecoveryState recoveryState = blockPersistence.initialize(genesis);
     this.persistedGenesisBlock = recoveryState.genesisBlock();
     this.recoveredBlock = recoveryState.latestBlock();
-    this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKey,
+    this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKeys,
         evmService, this::onExecutedNode);
   }
 
@@ -138,7 +139,7 @@ public final class ReplicaServer {
     logger.debug("Client request from {}", sender);
 
     try {
-      if (inbound.authenticatedSenderId() == null || inbound.authenticatedSenderId() != configParser.client().senderId()) {
+      if (inbound.authenticatedSenderId() == null || !clientStaticPKeys.containsKey(inbound.authenticatedSenderId())) {
         logger.warn("Rejecting client request from {} with unauthenticated senderId {}", sender, inbound.authenticatedSenderId());
         return;
       }

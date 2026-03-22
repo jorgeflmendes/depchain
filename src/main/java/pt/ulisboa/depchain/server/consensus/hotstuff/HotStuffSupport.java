@@ -28,6 +28,8 @@ public final class HotStuffSupport {
       var transaction = command.getTransaction().getClientRequest().getTransaction();
       return switch (transaction.getType()) {
         case TRANSACTION_TYPE_TRANSFER -> "dep_transfer to=%s amount=%d nonce=%d".formatted(transaction.getTo(), transaction.getAmount(), transaction.getNonce());
+        case TRANSACTION_TYPE_CONTRACT_CALL -> "contract_call to=%s amount=%d nonce=%d inputBytes=%d"
+            .formatted(transaction.getTo(), transaction.getAmount(), transaction.getNonce(), transaction.hasInput() ? transaction.getInput().size() : 0);
         case TRANSACTION_TYPE_IST_COIN_TRANSFER -> "ist_transfer to=%s amount=%d nonce=%d".formatted(transaction.getTo(), transaction.getAmount(), transaction.getNonce());
         default -> "transaction type=%s to=%s nonce=%d".formatted(transaction.getType(), transaction.getTo(), transaction.getNonce());
       };
