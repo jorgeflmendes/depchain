@@ -407,8 +407,7 @@ public class HotStuffManager {
   }
 
   private static Address clientAddress(PublicKey clientPublicKey) {
-    String publicKeyHash = CryptoUtil.sha256Hex(clientPublicKey.getEncoded());
-    return Address.fromHexString("0x" + publicKeyHash.substring(publicKeyHash.length() - 40));
+    return Address.fromHexString("0x" + CryptoUtil.deriveAddressHex(clientPublicKey));
   }
 
   private void broadcast(Message msg) {
