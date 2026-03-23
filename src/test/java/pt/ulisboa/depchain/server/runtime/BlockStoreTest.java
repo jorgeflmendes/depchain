@@ -89,7 +89,8 @@ class BlockStoreTest {
     BlockStore.BlockDocument block = new BlockStore.BlockDocument(0L, "hash-0", null, 21_000L,
         List.of(new GenesisParser.GenesisTransaction("TRANSFER", "DepCoin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "0", 0L,
             250_000L, 1L, "0x", null), new GenesisParser.GenesisTransaction("IST_COIN_TRANSFER", "IST", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "25", 1L, 250_000L, 1L, "0x", null)),
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "25", 1L, 250_000L, 1L, "0x", null), new GenesisParser.GenesisTransaction("CONTRACT_CALL", "N/A",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cccccccccccccccccccccccccccccccccccccccc", "0", 2L, 250_000L, 1L, "0xdeadbeef", "0x01")),
         new LinkedHashMap<>());
 
     store.append(block);
@@ -97,7 +98,12 @@ class BlockStoreTest {
     var latest = store.loadLatest();
     assertTrue(latest.isPresent());
     assertEquals("TRANSFER", latest.get().transactions().get(0).type());
+    assertEquals("DepCoin", latest.get().transactions().get(0).currency());
     assertEquals("IST_COIN_TRANSFER", latest.get().transactions().get(1).type());
+    assertEquals("IST", latest.get().transactions().get(1).currency());
+    assertEquals("CONTRACT_CALL", latest.get().transactions().get(2).type());
+    assertEquals("N/A", latest.get().transactions().get(2).currency());
+    assertEquals("0xdeadbeef", latest.get().transactions().get(2).input());
   }
 
   private static BlockStore.BlockDocument block(long height, String hash, String previousHash) {
