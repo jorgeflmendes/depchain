@@ -46,7 +46,7 @@ target/
 Thumbs.db
 
 # Runtime artifacts
-runtime/
+/runtime/
 config/keys/
 
 # LaTeX auxiliary files

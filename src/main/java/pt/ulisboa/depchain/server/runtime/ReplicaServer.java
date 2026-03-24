@@ -58,7 +58,7 @@ public final class ReplicaServer {
     this.clientStaticPKeys = clientPublicKeys;
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
-    this.genesis = GenesisParser.loadForConfig(Path.of(configPath));
+    this.genesis = GenesisMaterializer.materialize(GenesisParser.loadForConfig(Path.of(configPath)), configParser, clientPublicKeys);
     this.evmService = new EvmService();
     Address istCoinContractAddress = IstCoin.resolveContractAddress(genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
@@ -147,6 +147,10 @@ public final class ReplicaServer {
       }
 
       ClientRequest request = ProtoValidationUtil.requireValid(ClientRequest.parseFrom(inbound.payload()), "ClientRequest");
+      if (requestSenderId(request) != inbound.authenticatedSenderId()) {
+        logger.warn("Rejecting client request from {} with mismatched senderId {}", sender, inbound.authenticatedSenderId());
+        return;
+      }
       ConnectionKey key = new ConnectionKey(sender, packet.getConnectionId());
       if (request.hasQuery()) {
         this.hotStuffManager.onClientQuery(request, key);
@@ -199,6 +203,16 @@ public final class ReplicaServer {
 
   private static String endpointKey(String host, int port) {
     return host + ":" + port;
+  }
+
+  private static long requestSenderId(ClientRequest request) {
+    if (request.hasTransaction()) {
+      return request.getTransaction().getRequestKey().getClientSenderId();
+    }
+    if (request.hasQuery()) {
+      return request.getQuery().getRequestKey().getClientSenderId();
+    }
+    throw new IllegalArgumentException("ClientRequest body is not set");
   }
 
   private static String shortHash(String hash) {
