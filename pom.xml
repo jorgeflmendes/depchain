@@ -240,6 +240,19 @@
         <version>3.5.0</version>
         <executions>
           <execution>
+            <id>populate-test-keys</id>
+            <phase>process-test-classes</phase>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
+              <arguments>
+                <argument>${cluster.config.path}</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
             <id>populate</id>
             <goals>
               <goal>java</goal>
