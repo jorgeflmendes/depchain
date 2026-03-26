@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.server.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.security.PublicKey;
 import java.util.List;
@@ -19,7 +20,7 @@ import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 class GenesisMaterializerTest {
   @Test
   void materializedGenesisFundsConfiguredClients() throws Exception {
-    Path configPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml");
+    Path configPath = configPath();
     TestKeyMaterialSupport.ensureKeyMaterial(configPath);
 
     ConfigParser config = ConfigParser.load(configPath);
@@ -41,5 +42,13 @@ class GenesisMaterializerTest {
   private static String decodeTransferRecipient(String input) {
     String hex = input.substring(2);
     return hex.substring(8 + 24, 8 + 64);
+  }
+
+  private static Path configPath() {
+    try {
+      return TestKeyMaterialSupport.isolatedConfigPath("GenesisMaterializerTest");
+    } catch (IOException exception) {
+      throw new IllegalStateException("Could not prepare isolated config for GenesisMaterializerTest", exception);
+    }
   }
 }

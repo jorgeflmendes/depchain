@@ -82,13 +82,15 @@ public abstract class IntegrationHarness {
   private static final Map<Path, AtomicLong> NEXT_NONCE_BY_CONFIG = new ConcurrentHashMap<>();
   private static final Pattern CONSENSUS_PORT_PATTERN = Pattern.compile("(consensus:\\s+)(\\d+)");
   private static final Pattern CLIENT_PORT_PATTERN = Pattern.compile("(client:\\s+)(\\d+)");
+  private static final Pattern KEYS_ROOT_PATTERN = Pattern.compile("(?m)^(\\s*root:\\s+).*$");
+  private static final Pattern BLOCKS_ROOT_PATTERN = Pattern.compile("(?m)^(\\s*blocksRoot:\\s+).*$");
   protected static Path integrationConfigPath() {
     Path baseConfigPath = projectConfigPath();
     return isolatedIntegrationConfigPath(baseConfigPath);
   }
 
   protected static Path projectConfigPath() {
-    Path baseConfigPath = Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
+    Path baseConfigPath = TestKeyMaterialSupport.projectConfigPath();
     assertTrue(Files.exists(baseConfigPath), "Missing config file: " + baseConfigPath);
     return baseConfigPath;
   }
@@ -311,13 +313,9 @@ public abstract class IntegrationHarness {
 
   private static Path isolatedIntegrationConfigPath(Path baseConfigPath) {
     try {
-      String baseConfig = Files.readString(baseConfigPath, StandardCharsets.UTF_8);
+      String isolatedConfig = Files.readString(baseConfigPath, StandardCharsets.UTF_8);
       int configIndex = PORT_BLOCK_COUNTER.getAndIncrement();
       List<Integer> availablePorts = reserveAvailableUdpPorts(8);
-      AtomicInteger portOffset = new AtomicInteger();
-      String configWithConsensusPorts = rewritePorts(baseConfig, CONSENSUS_PORT_PATTERN, availablePorts, portOffset);
-      String isolatedConfig = rewritePorts(configWithConsensusPorts, CLIENT_PORT_PATTERN, availablePorts, portOffset);
-
       Path targetDirectory = Path.of(System.getProperty("user.dir"), "target", "integration-configs");
       Files.createDirectories(targetDirectory);
       Path isolatedConfigDirectory = targetDirectory.resolve("config-" + configIndex);
@@ -333,6 +331,12 @@ public abstract class IntegrationHarness {
         }
       }
       Files.createDirectories(isolatedConfigDirectory);
+      Path isolatedRuntimeDirectory = isolatedConfigDirectory.resolve("runtime");
+      isolatedConfig = rewritePath(isolatedConfig, KEYS_ROOT_PATTERN, isolatedRuntimeDirectory.resolve("keys"));
+      isolatedConfig = rewritePath(isolatedConfig, BLOCKS_ROOT_PATTERN, isolatedRuntimeDirectory.resolve("storage"));
+      AtomicInteger portOffset = new AtomicInteger();
+      isolatedConfig = rewritePorts(isolatedConfig, CONSENSUS_PORT_PATTERN, availablePorts, portOffset);
+      isolatedConfig = rewritePorts(isolatedConfig, CLIENT_PORT_PATTERN, availablePorts, portOffset);
       Path isolatedConfigPath = isolatedConfigDirectory.resolve("config.yaml");
       Files.writeString(isolatedConfigPath, isolatedConfig, StandardCharsets.UTF_8);
       Path baseGenesisPath = baseConfigPath.getParent().resolve("genesis.json");
@@ -366,6 +370,19 @@ public abstract class IntegrationHarness {
     }
     matcher.appendTail(output);
     return output.toString();
+  }
+
+  private static String rewritePath(String configContents, Pattern pattern, Path path) {
+    String replacement = "$1" + "\"" + normalizePath(path) + "\"";
+    String updated = pattern.matcher(configContents).replaceFirst(replacement);
+    if (updated.equals(configContents)) {
+      throw new IllegalStateException("Could not rewrite config path using pattern " + pattern);
+    }
+    return updated;
+  }
+
+  private static String normalizePath(Path path) {
+    return path.toAbsolutePath().normalize().toString().replace('\\', '/');
   }
 
   private static InboundPacket sendAuthenticatedPayload(InetSocketAddress targetAddress, long senderId, PrivateKey privateKey, Map<Long, PublicKey> staticPublicKeys, byte[] payload, Duration timeout)

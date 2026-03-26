@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.server.consensus.threshold;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.util.List;
@@ -134,6 +135,10 @@ class ThresholdSignatureProtocolTest {
   }
 
   private static Path configPath() {
-    return Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
+    try {
+      return TestKeyMaterialSupport.isolatedConfigPath("ThresholdSignatureProtocolTest");
+    } catch (IOException exception) {
+      throw new IllegalStateException("Could not prepare isolated config for ThresholdSignatureProtocolTest", exception);
+    }
   }
 }

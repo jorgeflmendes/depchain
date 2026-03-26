@@ -8,13 +8,13 @@
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <jackson.version>2.21.1</jackson.version>
+    <jackson.version>2.21.2</jackson.version>
     <junit.version>6.0.3</junit.version>
     <awaitility.version>4.3.0</awaitility.version>
     <picocli.version>4.7.7</picocli.version>
     <netty.version>4.2.9.Final</netty.version>
     <surefire.version>3.5.5</surefire.version>
-    <protobuf.version>4.34.0</protobuf.version>
+    <protobuf.version>4.34.1</protobuf.version>
     <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
     <os.maven.version>1.7.1</os.maven.version>
     <protovalidate.version>1.1.1</protovalidate.version>
@@ -30,6 +30,7 @@
     <compiler.plugin.version>3.15.0</compiler.plugin.version>
     <impsort.plugin.version>1.13.0</impsort.plugin.version>
     <formatter.plugin.version>2.29.0</formatter.plugin.version>
+    <enforcer.plugin.version>3.6.2</enforcer.plugin.version>
     <exec.plugin.version>3.6.3</exec.plugin.version>
     <cluster.config.path>config/config.yaml</cluster.config.path>
     <cluster.client.id>__required__</cluster.client.id>
@@ -144,6 +145,30 @@
         <artifactId>os-maven-plugin</artifactId>
         <version>${os.maven.version}</version>
         <extensions>true</extensions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>${enforcer.plugin.version}</version>
+        <executions>
+          <execution>
+            <id>enforce-toolchain</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireMavenVersion>
+                  <version>[3.6.3,)</version>
+                </requireMavenVersion>
+                <requireJavaVersion>
+                  <version>[21,)</version>
+                </requireJavaVersion>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <plugin>

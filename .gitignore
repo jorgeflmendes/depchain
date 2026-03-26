@@ -1,16 +1,18 @@
-# Compiled class file
+# JVM and logs
 *.class
-
-# Log file
 *.log
+hs_err_pid*
+replay_pid*
 
-# BlueJ files
-*.ctxt
+# Java build outputs
+.m2-local/
+target/
+**/target/
+build/
+**/build/
+out/
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
+# Packaged artifacts
 *.jar
 *.war
 *.nar
@@ -19,39 +21,46 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
-
-# Build outputs
-build/
-**/build/
-out/
-
-# Maven
-.m2-local/
-target/
-**/target/
-
-# IDE
+# IDEs and editors
 .idea/
 .vscode/
 .vscode-test/
+.settings/
+.classpath
+.project
 *.iml
 *.ipr
 *.iws
+*.tmp
+*.bak
+*~
 
-# OS
+# Legacy tooling
+*.ctxt
+.mtj.tmp/
+
+# OS files
 .DS_Store
 Thumbs.db
 
-# Runtime artifacts
+# Runtime and local key material
 /runtime/
-config/keys/
+/config/keys/
+
+# Local course/reference folders
+/REFS/
+/lab2/
 
 # LaTeX auxiliary files
-*.tex
-
-REFS
-
-lab2
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc

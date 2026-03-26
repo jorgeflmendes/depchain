@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -244,6 +245,10 @@ class HotStuffCatchUpTest {
   }
 
   private static Path configPath() {
-    return Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
+    try {
+      return TestKeyMaterialSupport.isolatedConfigPath("HotStuffCatchUpTest");
+    } catch (IOException exception) {
+      throw new IllegalStateException("Could not prepare isolated config for HotStuffCatchUpTest", exception);
+    }
   }
 }

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.PrivateKey;
@@ -62,6 +63,10 @@ class KeyLoaderTest {
   }
 
   private static Path configPath() {
-    return Path.of(System.getProperty("user.dir"), "config", "config.yaml").toAbsolutePath();
+    try {
+      return TestKeyMaterialSupport.isolatedConfigPath("KeyLoaderTest");
+    } catch (IOException exception) {
+      throw new IllegalStateException("Could not prepare isolated config for KeyLoaderTest", exception);
+    }
   }
 }
