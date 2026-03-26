@@ -17,7 +17,7 @@ import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
+import pt.ulisboa.depchain.shared.time.TimeUtil;
 
 public final class PerfectLink implements BlockingLink<InboundPacket> {
   private static final Logger logger = LoggerFactory.getLogger(PerfectLink.class);
@@ -86,10 +86,6 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
     }
 
     return context.pollDelivered();
-  }
-
-  public boolean awaitNoPendingData(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingData(connectionId, remoteEndpoint, timeoutMs);
   }
 
   public void cancelPendingData(long connectionId, InetSocketAddress remoteEndpoint) {

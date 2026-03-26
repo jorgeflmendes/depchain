@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links;
 
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class LinkThreadUtil {
   private static final long SHUTDOWN_TIMEOUT_MS = 2_000L;

@@ -297,7 +297,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
+              <mainClass>pt.ulisboa.depchain.tool.keymaterial.KeyMaterialApplication</mainClass>
             </configuration>
           </execution>
           <execution>
@@ -306,7 +306,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.server.Main</mainClass>
+              <mainClass>pt.ulisboa.depchain.server.bootstrap.ServerApplication</mainClass>
             </configuration>
           </execution>
           <execution>
@@ -315,7 +315,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.client.Main</mainClass>
+              <mainClass>pt.ulisboa.depchain.client.bootstrap.ClientApplication</mainClass>
             </configuration>
           </execution>
         </executions>

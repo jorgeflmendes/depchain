@@ -11,7 +11,7 @@ import java.util.Objects;
 import org.eclipse.jdt.annotation.Nullable;
 
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class FairLossLink implements BlockingLink<InboundBytes> {
   public static final int MAX_PACKET_SIZE = 8_192;

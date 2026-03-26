@@ -12,9 +12,9 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
-import pt.ulisboa.depchain.shared.utils.QuorumAccumulator;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.quorum.QuorumAccumulator;
+import pt.ulisboa.depchain.shared.time.TimeUtil;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class HotStuffInbox {
   private static final Boolean MATCHING_GROUP = Boolean.TRUE;

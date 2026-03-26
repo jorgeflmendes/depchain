@@ -19,13 +19,13 @@ import com.google.protobuf.ByteString;
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
 import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 
 class AuthenticatedPayloadUtilTest {
   @Test
   void handshakeRoundTripVerifiesSignature() throws Exception {
-    KeyPair staticKeyPair = CryptoUtil.newECKeyPair();
-    KeyPair ephemeralKeyPair = CryptoUtil.newECKeyPair();
+    KeyPair staticKeyPair = CryptoUtil.createEcKeyPair();
+    KeyPair ephemeralKeyPair = CryptoUtil.createEcKeyPair();
 
     byte[] encoded = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_INIT, 17L, ephemeralKeyPair.getPublic(), staticKeyPair.getPrivate());
 
@@ -39,8 +39,8 @@ class AuthenticatedPayloadUtilTest {
 
   @Test
   void tamperedHandshakeSignatureFailsVerification() throws Exception {
-    KeyPair staticKeyPair = CryptoUtil.newECKeyPair();
-    KeyPair ephemeralKeyPair = CryptoUtil.newECKeyPair();
+    KeyPair staticKeyPair = CryptoUtil.createEcKeyPair();
+    KeyPair ephemeralKeyPair = CryptoUtil.createEcKeyPair();
     byte[] encoded = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_REPLY, 19L, ephemeralKeyPair.getPublic(), staticKeyPair.getPrivate());
 
     AuthenticatedHandshakeEnvelope tamperedHandshake = AuthenticatedHandshakeEnvelope.parseFrom(encoded).toBuilder().setSenderId(20L).build();
@@ -57,8 +57,8 @@ class AuthenticatedPayloadUtilTest {
 
   @Test
   void dataRoundTripVerifiesHmac() throws Exception {
-    KeyPair senderKeyPair = CryptoUtil.newECKeyPair();
-    KeyPair receiverKeyPair = CryptoUtil.newECKeyPair();
+    KeyPair senderKeyPair = CryptoUtil.createEcKeyPair();
+    KeyPair receiverKeyPair = CryptoUtil.createEcKeyPair();
     SecretKey secretKey = CryptoUtil.deriveCommonKey(senderKeyPair.getPrivate(), receiverKeyPair.getPublic(), new CryptoUtil.KeyContext("authenticated", "test"));
     byte[] payload = "application-payload".getBytes(StandardCharsets.UTF_8);
 
@@ -72,8 +72,8 @@ class AuthenticatedPayloadUtilTest {
 
   @Test
   void tamperedDataNonceOrPayloadFailsVerification() throws Exception {
-    KeyPair senderKeyPair = CryptoUtil.newECKeyPair();
-    KeyPair receiverKeyPair = CryptoUtil.newECKeyPair();
+    KeyPair senderKeyPair = CryptoUtil.createEcKeyPair();
+    KeyPair receiverKeyPair = CryptoUtil.createEcKeyPair();
     SecretKey secretKey = CryptoUtil.deriveCommonKey(senderKeyPair.getPrivate(), receiverKeyPair.getPublic(), new CryptoUtil.KeyContext("authenticated", "tamper-test"));
     byte[] encoded = AuthenticatedPayloadUtil.encodeHmac(AuthOpcode.AUTH_OPCODE_DATA, "payload".getBytes(StandardCharsets.UTF_8), secretKey, 5L);
     AuthenticatedDataEnvelope decoded = AuthenticatedPayloadUtil.decodeHmac(encoded);

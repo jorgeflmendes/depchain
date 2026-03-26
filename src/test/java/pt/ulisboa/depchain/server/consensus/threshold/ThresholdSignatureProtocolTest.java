@@ -27,11 +27,11 @@ import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffCryptoPayloads;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
-import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
-import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
-import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.ClientRequestSignaturePayloadUtil;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.ThresholdCryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader;
+import pt.ulisboa.depchain.shared.crypto.key.ThresholdKeyLoader;
 import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 class ThresholdSignatureProtocolTest {
@@ -60,13 +60,13 @@ class ThresholdSignatureProtocolTest {
     Scalar share0 = ThresholdKeyLoader.loadReplicaThresholdPrivateShare(config, 0L);
     Scalar share1 = ThresholdKeyLoader.loadReplicaThresholdPrivateShare(config, 1L);
     Scalar share2 = ThresholdKeyLoader.loadReplicaThresholdPrivateShare(config, 2L);
-    Node node = newNode(1, "command-one", 77L);
+    Node node = createNode(1, "command-one", 77L);
 
     QuorumCertificate validQc = signedQc(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, 1, node, publicThresholdKey, List.of(share0, share1, share2), Set.of(0, 1, 2), config
         .system().n(), config.system().n() - config.system().f());
     QuorumCertificate tamperedView = validQc.toBuilder().setViewNumber(2).build();
     QuorumCertificate tamperedType = validQc.toBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT).build();
-    QuorumCertificate tamperedNode = validQc.toBuilder().setCertifiedNode(newNode(1, "command-two", 78L)).build();
+    QuorumCertificate tamperedNode = validQc.toBuilder().setCertifiedNode(createNode(1, "command-two", 78L)).build();
 
     assertTrue(protocol.verifyQC(validQc));
     assertFalse(protocol.verifyQC(tamperedView));
@@ -77,7 +77,7 @@ class ThresholdSignatureProtocolTest {
   @Test
   void verifyQcRejectsRandomSignatureWithValidShape() throws Exception {
     ThresholdSignatureProtocol protocol = protocol();
-    Node node = newNode(2, "command-three", 79L);
+    Node node = createNode(2, "command-three", 79L);
     QuorumCertificate invalidQc = QuorumCertificate.newBuilder().setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT).setViewNumber(2).setCertifiedNode(node)
         .setQuorumSignature(ByteString.copyFrom(new byte[64])).build();
 
@@ -109,7 +109,7 @@ class ThresholdSignatureProtocolTest {
     return QuorumCertificate.newBuilder().setMessageType(type).setViewNumber(viewNumber).setCertifiedNode(node).setQuorumSignature(ByteString.copyFrom(quorumSignature)).build();
   }
 
-  private static Node newNode(int viewNumber, String value, long requestId) {
+  private static Node createNode(int viewNumber, String value, long requestId) {
     NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(signedTransferRequest(requestId, value, viewNumber)))
         .build();
     String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(HotStuffSupport.GENESIS_NODE.getNodeHash(), viewNumber, command));

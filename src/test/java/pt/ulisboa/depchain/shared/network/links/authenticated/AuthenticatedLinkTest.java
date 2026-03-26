@@ -16,8 +16,8 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
 
 class AuthenticatedLinkTest {
   private static final long CONNECTION_ID = 1L;
@@ -30,8 +30,8 @@ class AuthenticatedLinkTest {
     byte[] requestPayload = "authenticated-test-request".getBytes(StandardCharsets.UTF_8);
     byte[] responsePayload = "authenticated-test-response".getBytes(StandardCharsets.UTF_8);
 
-    KeyPair senderStaticKeys = CryptoUtil.newECKeyPair();
-    KeyPair receiverStaticKeys = CryptoUtil.newECKeyPair();
+    KeyPair senderStaticKeys = CryptoUtil.createEcKeyPair();
+    KeyPair receiverStaticKeys = CryptoUtil.createEcKeyPair();
     Map<Long, PublicKey> staticPublicKeys = Map.of(SENDER_ID, senderStaticKeys.getPublic(), RECEIVER_ID, receiverStaticKeys.getPublic());
 
     try (AuthenticatedLink receiver = AuthenticatedLink.bind(receiverEndpoint, RECEIVER_ID, receiverStaticKeys.getPrivate(), staticPublicKeys);

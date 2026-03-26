@@ -18,14 +18,14 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 
 class AuthenticatedConnectionStateTest {
   @Test
   void planSendQueuesPayloadUntilHandshakeCompletes() throws Exception {
     AuthenticatedConnectionState state = new AuthenticatedConnectionState();
     byte[] payload = new byte[]{1, 2, 3};
-    KeyPair localEphemeral = CryptoUtil.newECKeyPair();
+    KeyPair localEphemeral = CryptoUtil.createEcKeyPair();
     SecretKey secretKey = new SecretKeySpec(new byte[32], "HmacSHA256");
 
     assertEquals(AuthenticatedConnectionState.SendAction.START_HANDSHAKE, state.planSend(payload));
@@ -44,7 +44,7 @@ class AuthenticatedConnectionStateTest {
   @Test
   void decideHandshakeRestartsOnlyForHigherSenderInit() throws Exception {
     AuthenticatedConnectionState state = new AuthenticatedConnectionState();
-    KeyPair localEphemeral = CryptoUtil.newECKeyPair();
+    KeyPair localEphemeral = CryptoUtil.createEcKeyPair();
     assertTrue(state.tryMarkHandshakeInitiated(localEphemeral.getPrivate()));
 
     assertEquals(AuthenticatedConnectionState.HandshakeAction.IGNORE, state.decideHandshake(AuthOpcode.AUTH_OPCODE_INIT, 4L, 5L));
@@ -58,7 +58,7 @@ class AuthenticatedConnectionStateTest {
   @Test
   void decideHandshakeUsesReplyDuringInitiatedPhase() throws Exception {
     AuthenticatedConnectionState state = new AuthenticatedConnectionState();
-    KeyPair localEphemeral = CryptoUtil.newECKeyPair();
+    KeyPair localEphemeral = CryptoUtil.createEcKeyPair();
     assertTrue(state.tryMarkHandshakeInitiated(localEphemeral.getPrivate()));
 
     assertEquals(AuthenticatedConnectionState.HandshakeAction.USE_REPLY, state.decideHandshake(AuthOpcode.AUTH_OPCODE_REPLY, 6L, 5L));

@@ -66,7 +66,12 @@ public final class TestKeyMaterialSupport {
   }
 
   private static boolean hasPopulateOutputs(Path configPath, ConfigParser config) {
-    if (!Files.exists(GenesisPathSupport.genesisPathFor(configPath)) || !Files.exists(addressesPathFor(configPath))) {
+    Path configParent = configPath.toAbsolutePath().normalize().getParent();
+    if (configParent == null) {
+      throw new IllegalArgumentException("configPath must have a parent directory");
+    }
+
+    if (!Files.exists(configParent.resolve("genesis.json")) || !Files.exists(addressesPathFor(configPath))) {
       return false;
     }
 
@@ -148,8 +153,8 @@ public final class TestKeyMaterialSupport {
   }
 
   private static ProcessResult runPopulate(Path configPath) throws IOException, InterruptedException {
-    ProcessBuilder processBuilder = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"), "pt.ulisboa.depchain.populate.Populate",
-        configPath.toString());
+    ProcessBuilder processBuilder = new ProcessBuilder(javaExecutable(), "-cp", System.getProperty("java.class.path"),
+        "pt.ulisboa.depchain.tool.keymaterial.KeyMaterialApplication", configPath.toString());
     processBuilder.redirectErrorStream(true);
 
     Process process = processBuilder.start();
@@ -174,15 +179,5 @@ public final class TestKeyMaterialSupport {
   }
 
   private record ProcessResult(int exitCode, String output) {
-  }
-
-  private static final class GenesisPathSupport {
-    private static Path genesisPathFor(Path configPath) {
-      Path parent = configPath.toAbsolutePath().normalize().getParent();
-      if (parent == null) {
-        throw new IllegalArgumentException("configPath must have a parent directory");
-      }
-      return parent.resolve("genesis.json");
-    }
   }
 }

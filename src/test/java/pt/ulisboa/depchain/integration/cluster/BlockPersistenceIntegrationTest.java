@@ -27,12 +27,12 @@ import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionType;
-import pt.ulisboa.depchain.server.runtime.BlockStore;
+import pt.ulisboa.depchain.server.node.BlockStore;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
-import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
-import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
+import pt.ulisboa.depchain.shared.crypto.ClientRequestSignaturePayloadUtil;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader;
+import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
 
 @Tag("integration")
 class BlockPersistenceIntegrationTest extends IntegrationHarness {

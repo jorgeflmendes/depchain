@@ -4,7 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.network.packet.DpchPacketUtil;
+import pt.ulisboa.depchain.shared.network.packet.PacketLimits;
 
 final class ReceiverState {
   private int nextExpectedSeq;
@@ -27,7 +27,7 @@ final class ReceiverState {
   }
 
   void markNextDelivered() {
-    if (nextExpectedSeq > DpchPacketUtil.MAX_PACKET_NUMBER) {
+    if (nextExpectedSeq > PacketLimits.MAX_PACKET_NUMBER) {
       throw new IllegalStateException("Receiver sequence number exhausted for stream");
     }
     nextExpectedSeq++;

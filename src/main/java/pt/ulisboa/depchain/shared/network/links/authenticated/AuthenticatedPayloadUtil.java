@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -13,9 +13,9 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
 import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
+import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class AuthenticatedPayloadUtil {
   public static final int HMAC_BYTES = 32;

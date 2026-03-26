@@ -13,7 +13,7 @@ import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 import io.netty.util.HashedWheelTimer;
 import io.netty.util.Timeout;

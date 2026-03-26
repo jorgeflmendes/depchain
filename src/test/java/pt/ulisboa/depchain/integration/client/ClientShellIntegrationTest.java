@@ -16,11 +16,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.Timeout;
 
-import pt.ulisboa.depchain.client.DpchClient;
-import pt.ulisboa.depchain.client.shell.DpchClientShell;
+import pt.ulisboa.depchain.client.api.ClientReplicaApi;
+import pt.ulisboa.depchain.client.cli.ClientShell;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness.ManagedCluster;
-import pt.ulisboa.depchain.server.evm.IstCoin;
+import pt.ulisboa.depchain.server.execution.IstCoin;
 
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -45,7 +45,7 @@ class ClientShellIntegrationTest extends IntegrationHarness {
   @Test
   @Timeout(60)
   void shellCommandsWorkEndToEnd() throws Exception {
-    try (DpchClient client = DpchClient.open(sharedCluster.configPath().toString(), CLIENT_ID)) {
+    try (ClientReplicaApi client = ClientReplicaApi.connect(sharedCluster.configPath().toString(), CLIENT_ID)) {
       String contractAddress = IstCoin.resolveContractAddress(sharedCluster.configPath()).toHexString().substring(2);
       String transferCallData = IstCoin.encodeTransferCallData(Address.fromHexString("0x" + RECIPIENT_ADDRESS), 11L).toHexString().substring(2);
       String script = String
@@ -65,7 +65,7 @@ class ClientShellIntegrationTest extends IntegrationHarness {
         System.setOut(new PrintStream(stdoutBytes, true, StandardCharsets.UTF_8));
         System.setErr(new PrintStream(stderrBytes, true, StandardCharsets.UTF_8));
 
-        new DpchClientShell(client).run();
+        new ClientShell(client).run();
       } finally {
         System.setIn(originalIn);
         System.setOut(originalOut);
@@ -75,8 +75,8 @@ class ClientShellIntegrationTest extends IntegrationHarness {
       String stdout = stdoutBytes.toString(StandardCharsets.UTF_8);
       String stderr = stderrBytes.toString(StandardCharsets.UTF_8);
 
-      assertTrue(stdout.contains("Wallet address: " + client.walletAddress()), stdout);
-      assertTrue(stdout.contains("walletAddress=" + client.walletAddress()), stdout);
+      assertTrue(stdout.contains("Wallet address: " + client.getWalletAddress()), stdout);
+      assertTrue(stdout.contains("walletAddress=" + client.getWalletAddress()), stdout);
       assertTrue(stdout.contains("depcoinBalance=1000000000"), stdout);
       assertTrue(stdout.contains("depcoinBalance=7"), stdout);
       assertTrue(stdout.contains("transferResult=true"), stdout);

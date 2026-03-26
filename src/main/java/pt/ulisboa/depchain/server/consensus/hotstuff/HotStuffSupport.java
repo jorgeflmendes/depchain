@@ -5,7 +5,7 @@ import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.NoOpCommand;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class HotStuffSupport {
   public static final String NO_OP_VALUE = "no-op";

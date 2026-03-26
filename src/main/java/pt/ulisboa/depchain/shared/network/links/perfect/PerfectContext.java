@@ -16,7 +16,7 @@ import pt.ulisboa.depchain.shared.network.links.fairloss.InboundBytes;
 import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class PerfectContext {
   final StubbornLink stubbornLink;

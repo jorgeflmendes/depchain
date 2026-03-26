@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -20,15 +20,15 @@ import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
 import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.key.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   private static final Logger logger = LoggerFactory.getLogger(AuthenticatedLink.class);
@@ -298,7 +298,7 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
     KeyPair localEphemeralKeys;
     try {
-      localEphemeralKeys = CryptoUtil.newECKeyPair();
+      localEphemeralKeys = CryptoUtil.createEcKeyPair();
     } catch (Exception exception) {
       throw new IllegalStateException("Failed to create ephemeral EC key pair", exception);
     }

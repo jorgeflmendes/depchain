@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.shared.config;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,7 +15,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public record ConfigParser(SystemSection system, List<ReplicaSection> replicas, List<ClientSection> clients, TimeoutsSection timeouts, StorageSection storage, KeysSection keys) {
   private static final ObjectMapper YAML = YAMLMapper.builder().build();

@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.shared.config;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public record GenesisParser(long height, @JsonProperty("block_hash") String blockHash, @JsonProperty("previous_block_hash") @Nullable String previousBlockHash,
     @JsonProperty("gas_used") long gasUsed, List<GenesisTransaction> transactions, LinkedHashMap<String, GenesisAccount> state) {

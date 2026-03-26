@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -11,7 +11,7 @@ import pt.ulisboa.depchain.shared.network.links.AsyncLinkContext;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class AuthenticatedContext extends AsyncLinkContext<InboundPacket> {
   private static final long WORKER_WAIT_MS = 100L;
@@ -36,7 +36,7 @@ final class AuthenticatedContext extends AsyncLinkContext<InboundPacket> {
 
   AuthenticatedConnectionState getOrCreateConnectionState(ConnectionKey connectionKey) {
     ValidationUtils.requireNonNull(connectionKey, "connectionKey");
-    return connectionStates.computeIfAbsent(connectionKey, this::newConnectionState);
+    return connectionStates.computeIfAbsent(connectionKey, key -> new AuthenticatedConnectionState(() -> connectionStates.remove(key)));
   }
 
   AuthenticatedConnectionState getConnectionStateOrNull(ConnectionKey connectionKey) {
@@ -105,9 +105,5 @@ final class AuthenticatedContext extends AsyncLinkContext<InboundPacket> {
       receiveModeLock.notifyAll();
     }
     shutdownInbox();
-  }
-
-  private AuthenticatedConnectionState newConnectionState(ConnectionKey connectionKey) {
-    return new AuthenticatedConnectionState(() -> connectionStates.remove(connectionKey));
   }
 }

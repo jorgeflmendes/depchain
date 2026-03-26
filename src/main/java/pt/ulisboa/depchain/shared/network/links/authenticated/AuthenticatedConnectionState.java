@@ -9,7 +9,7 @@ import javax.crypto.SecretKey;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.shared.network.links.RunOnce;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class AuthenticatedConnectionState {
   enum SendAction {

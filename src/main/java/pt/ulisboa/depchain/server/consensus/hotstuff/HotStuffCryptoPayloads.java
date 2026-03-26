@@ -5,8 +5,8 @@ import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.NodeHashPayload;
 import pt.ulisboa.depchain.proto.ThresholdVotePayload;
-import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class HotStuffCryptoPayloads {
   private HotStuffCryptoPayloads() {

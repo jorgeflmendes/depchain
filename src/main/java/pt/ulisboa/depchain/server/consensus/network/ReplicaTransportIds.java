@@ -7,7 +7,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class ReplicaTransportIds {
   public static final int REPLICA_MESSAGE_LANE = 1;

@@ -9,7 +9,7 @@ import java.util.Objects;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class StubbornSender {
   private record RetryCandidate(InetSocketAddress remoteEndpoint, TrackedMessage trackedMessage) {

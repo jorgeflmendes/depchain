@@ -38,21 +38,21 @@ import pt.ulisboa.depchain.proto.TransactionReceipt;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionResponse;
 import pt.ulisboa.depchain.proto.TransactionType;
+import pt.ulisboa.depchain.server.api.ReplicaClientApi;
+import pt.ulisboa.depchain.server.api.ReplicaPeerApi;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
-import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
-import pt.ulisboa.depchain.server.consensus.network.ReplicaMessenger;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
-import pt.ulisboa.depchain.server.evm.EvmService;
-import pt.ulisboa.depchain.server.evm.IstCoin;
+import pt.ulisboa.depchain.server.execution.EvmService;
+import pt.ulisboa.depchain.server.execution.IstCoin;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
+import pt.ulisboa.depchain.shared.time.TimeUtil;
 
 public class HotStuffManager {
-  private final ClientRequestManager clientCommunication;
-  private final ReplicaMessenger replicaCommunication;
+  private final ReplicaClientApi clientApi;
+  private final ReplicaPeerApi replicaApi;
   private final Set<String> executedNodeHashes;
   private final EvmService evmService;
   private final IstCoin istCoin;
@@ -82,26 +82,6 @@ public class HotStuffManager {
   private long totalFetchAttempts;
   private long totalFetchFailures;
 
-  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService) {
-    this(id, config, localThresholdShare, publicThresholdKey, Map.of(config.client().senderId(), clientPublicKey), evmService, node -> {
-    });
-  }
-
-  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, PublicKey clientPublicKey, EvmService evmService,
-      Consumer<Node> onNodeExecuted) {
-    this(id, config, localThresholdShare, publicThresholdKey, Map.of(config.client().senderId(), clientPublicKey), evmService, onNodeExecuted);
-  }
-
-  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, Map<Long, PublicKey> clientPublicKeys, EvmService evmService) {
-    this(id, config, localThresholdShare, publicThresholdKey, clientPublicKeys, evmService, node -> {
-    });
-  }
-
-  public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, Map<Long, PublicKey> clientPublicKeys, EvmService evmService,
-      Consumer<Node> onNodeExecuted) {
-    this(id, config, localThresholdShare, publicThresholdKey, clientPublicKeys, evmService, null, onNodeExecuted);
-  }
-
   public HotStuffManager(int id, ConfigParser config, Scalar localThresholdShare, byte[] publicThresholdKey, Map<Long, PublicKey> clientPublicKeys, EvmService evmService,
       Address istCoinContractAddress, Consumer<Node> onNodeExecuted) {
     this.id = id;
@@ -120,17 +100,17 @@ public class HotStuffManager {
     this.currentProposal = HotStuffSupport.GENESIS_NODE;
     this.viewNumber = 0;
     this.blockTree = new HashMap<>();
-    this.clientCommunication = new ClientRequestManager(clientPublicKeys, logger);
-    this.replicaCommunication = new ReplicaMessenger(id, config, logger);
+    this.clientApi = new ReplicaClientApi(clientPublicKeys, logger);
+    this.replicaApi = new ReplicaPeerApi(id, config, logger);
     this.executedNodeHashes = ConcurrentHashMap.newKeySet();
     this.messageInbox = new HotStuffInbox(id, thresholdProtocol);
-    this.evmService = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(evmService, "evmService");
+    this.evmService = pt.ulisboa.depchain.shared.validation.ValidationUtils.requireNonNull(evmService, "evmService");
     try {
       this.istCoin = istCoinContractAddress == null ? new IstCoin(this.evmService) : new IstCoin(this.evmService, istCoinContractAddress);
     } catch (java.io.IOException exception) {
       throw new IllegalStateException("Could not initialize IST Coin support from genesis", exception);
     }
-    this.onNodeExecuted = pt.ulisboa.depchain.shared.utils.ValidationUtils.requireNonNull(onNodeExecuted, "onNodeExecuted");
+    this.onNodeExecuted = pt.ulisboa.depchain.shared.validation.ValidationUtils.requireNonNull(onNodeExecuted, "onNodeExecuted");
     this.clientAccountAddresses = clientAddresses(clientPublicKeys);
 
     blockTree.put(HotStuffSupport.GENESIS_NODE.getNodeHash(), HotStuffSupport.GENESIS_NODE);
@@ -138,14 +118,14 @@ public class HotStuffManager {
   }
 
   public void initNetwork(AuthenticatedLink nodeTransport, AuthenticatedLink clientTransport) {
-    this.replicaCommunication.init(nodeTransport);
-    this.clientCommunication.init(clientTransport);
+    this.replicaApi.bindTransport(nodeTransport);
+    this.clientApi.bindTransport(clientTransport);
     this.thresholdProtocol.initTransport(nodeTransport);
   }
 
   public void run() {
     logger.info("Starting at view {}", viewNumber);
-    sendToLeader(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
+    sendToLeader(createPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
 
     while (true) {
       try {
@@ -171,18 +151,18 @@ public class HotStuffManager {
   }
 
   public void onClientRequest(ClientRequest request, ConnectionKey key) {
-    clientCommunication.onClientRequest(request, key, isLeader());
+    clientApi.registerClientRequest(request, key, isLeader());
   }
 
   public void onClientQuery(ClientRequest request, ConnectionKey key) {
     if (!request.hasQuery()) {
       throw new IllegalArgumentException("Client query request body is not set");
     }
-    if (!clientCommunication.hasValidClientRequest(request)) {
+    if (!clientApi.isValidClientRequest(request)) {
       return;
     }
 
-    clientCommunication.replyToClient(key, ClientResponse.newBuilder().setQuery(queryResponse(request.getQuery())).build());
+    clientApi.sendClientResponse(key, ClientResponse.newBuilder().setQuery(queryResponse(request.getQuery())).build());
   }
 
   private void onPrepare() {
@@ -199,7 +179,7 @@ public class HotStuffManager {
       updateHighQC(selectedHighQC);
 
       long commandDeadlineNanos = TimeUtil.boundedMonotonicDeadlineAfterNow(viewDeadlineNanos, clientCommandWaitTimeoutMs);
-      ClientRequest request = clientCommunication.awaitNextPending(commandDeadlineNanos);
+      ClientRequest request = clientApi.awaitNextPendingRequest(commandDeadlineNanos);
       if (request == null) {
         throw new ConsensusTimeoutException("Timed out waiting for client command");
       }
@@ -210,7 +190,7 @@ public class HotStuffManager {
 
       Message proposal = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE)
           .setProposal(ProposalMessage.newBuilder().setProposedNode(currentProposal).setJustifyQc(selectedHighQC)).build();
-      broadcast(proposal);
+      replicaApi.broadcastMessage(proposal);
     } else {
       long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
       Message prepareMsg = messageInbox.waitForMessageFromSenderUntil(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber), phaseDeadlineNanos);
@@ -222,12 +202,12 @@ public class HotStuffManager {
         proposedNode = prepareMsg.getProposal().getProposedNode();
       }
 
-      boolean hasValidJustify = justify != null && verifyQC(justify);
-      boolean hasValidProposedNode = proposedNode != null && hasValidNode(proposedNode);
-      boolean hasAvailableProposedRequest = proposedNode != null && clientCommunication.observeProposedCommand(proposedNode.getCommand());
+      boolean isValidJustify = justify != null && verifyQC(justify);
+      boolean isValidProposedNode = proposedNode != null && isValidNode(proposedNode);
+      boolean hasAvailableProposedRequest = proposedNode != null && clientApi.registerProposedCommand(proposedNode.getCommand());
       boolean extendsJustifiedNode = justify != null && proposedNode != null && HotStuffSupport.extendsNode(proposedNode, justify.getCertifiedNode());
       boolean isSafeProposal = proposedNode != null && safeNode(proposedNode, justify);
-      if (hasValidJustify && hasValidProposedNode && hasAvailableProposedRequest && extendsJustifiedNode && isSafeProposal) {
+      if (isValidJustify && isValidProposedNode && hasAvailableProposedRequest && extendsJustifiedNode && isSafeProposal) {
         observeQuorumCertificate(justify);
         observeNode(proposedNode);
         ensureDeliveredBranch(proposedNode, prepareMsg.getReplicaSenderId(), phaseDeadlineNanos);
@@ -241,7 +221,7 @@ public class HotStuffManager {
     if (isLeader()) {
       prepareQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, currentProposal);
       updateHighQC(prepareQC);
-      broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC));
+      replicaApi.broadcastMessage(createPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, prepareQC));
     } else {
       long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
       Message msg = messageInbox.waitForQcMessageUntil(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE, viewNumber, getLeader(viewNumber), phaseDeadlineNanos, this::verifyQC);
@@ -256,7 +236,7 @@ public class HotStuffManager {
       QuorumCertificate preCommitQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT, currentProposal);
       lockedQC = preCommitQC;
       updateHighQC(preCommitQC);
-      broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, preCommitQC));
+      replicaApi.broadcastMessage(createPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, preCommitQC));
     } else {
       long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
       Message msg = messageInbox
@@ -271,7 +251,7 @@ public class HotStuffManager {
     if (isLeader()) {
       QuorumCertificate commitQC = buildQC(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT, currentProposal);
       updateHighQC(commitQC);
-      broadcast(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE, commitQC));
+      replicaApi.broadcastMessage(createPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE, commitQC));
       executeCommittedBranch(currentProposal);
     } else {
       long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
@@ -286,18 +266,17 @@ public class HotStuffManager {
   private void onNewView() {
     viewNumber++;
     totalViewChanges++;
-    int reenqueuedPendingRequests = clientCommunication.enqueuePendingKnownRequestsIfLeader(isLeader());
+    int reenqueuedPendingRequests = clientApi.enqueuePendingRequestsIfLeader(isLeader());
     if (logger.isDebugEnabled()) {
-      logger
-          .debug("View change to {}. pendingRequests={}, reenqueuedThisView={}, totalViewChanges={}, totalFetchAttempts={}, totalFetchFailures={}", viewNumber, clientCommunication
-              .pendingCount(), reenqueuedPendingRequests, totalViewChanges, totalFetchAttempts, totalFetchFailures);
+      logger.debug("View change to {}. pendingRequests={}, reenqueuedThisView={}, totalViewChanges={}, totalFetchAttempts={}, totalFetchFailures={}", viewNumber, clientApi
+          .getPendingRequestCount(), reenqueuedPendingRequests, totalViewChanges, totalFetchAttempts, totalFetchFailures);
     }
-    sendToLeader(newPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
+    sendToLeader(createPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
   }
 
   private void executeCommand(Node node) {
     NodeCommand command = node.getCommand();
-    ClientRequestManager.ExecutionResult executionResult = clientCommunication.markExecuted(node);
+    ReplicaClientApi.ExecutionResult executionResult = clientApi.recordExecutedNode(node);
     String clientCommand = executionResult.commandSummary();
 
     if (!HotStuffSupport.isNoOp(command)) {
@@ -318,7 +297,7 @@ public class HotStuffManager {
     if (executionResult.replyTarget() == null) {
       return;
     }
-    clientCommunication.replyToClient(executionResult.replyTarget(), clientResponse);
+    clientApi.sendClientResponse(executionResult.replyTarget(), clientResponse);
   }
 
   private static Node nodeWithObservedGasUsed(Node node, ClientResponse response) {
@@ -401,8 +380,8 @@ public class HotStuffManager {
 
     try {
       EvmService.TransactionResult execution = switch (query.getType()) {
-        case QUERY_TYPE_DEPCOIN_BALANCE -> evmService.readNativeBalance(owner);
-        case QUERY_TYPE_IST_COIN_BALANCE -> istCoin.readBalanceOf(owner);
+        case QUERY_TYPE_DEPCOIN_BALANCE -> evmService.getNativeBalance(owner);
+        case QUERY_TYPE_IST_COIN_BALANCE -> istCoin.getBalance(owner);
         default -> throw new IllegalArgumentException("unsupported query type: " + query.getType());
       };
       QueryResponse.Builder response = QueryResponse.newBuilder().setSuccess(execution.success());
@@ -444,10 +423,6 @@ public class HotStuffManager {
     return Map.copyOf(addressesBySenderId);
   }
 
-  private void broadcast(Message msg) {
-    replicaCommunication.broadcast(msg);
-  }
-
   private void sendToLeader(Message msg) {
     try {
       int leaderId = getLeader(viewNumber);
@@ -457,14 +432,10 @@ public class HotStuffManager {
         }
         return;
       }
-      replicaCommunication.sendToReplica(leaderId, msg);
+      replicaApi.sendMessageToReplica(leaderId, msg);
     } catch (Exception e) {
       logger.error("Error sending message to leader", e);
     }
-  }
-
-  private void sendToReplica(int replicaSenderId, Message msg) {
-    replicaCommunication.sendToReplica(replicaSenderId, msg);
   }
 
   private Message voteMessage(ConsensusMessageType type, Node node) {
@@ -500,7 +471,7 @@ public class HotStuffManager {
     return getLeader(viewNumber) == id;
   }
 
-  private Message newPhaseCertificateMessage(ConsensusMessageType type, QuorumCertificate justifyQc) {
+  private Message createPhaseCertificateMessage(ConsensusMessageType type, QuorumCertificate justifyQc) {
     return Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(type)
         .setPhaseCertificate(PhaseCertificateMessage.newBuilder().setJustifyQc(justifyQc)).build();
   }
@@ -557,14 +528,14 @@ public class HotStuffManager {
   }
 
   private void observeNode(Node node) {
-    if (node == null || !hasValidNode(node)) {
+    if (node == null || !isValidNode(node)) {
       return;
     }
 
     blockTree.putIfAbsent(node.getNodeHash(), node);
   }
 
-  private boolean hasValidNode(Node node) {
+  private boolean isValidNode(Node node) {
     if (node == null) {
       return false;
     }
@@ -654,11 +625,11 @@ public class HotStuffManager {
       return knownNode;
     }
 
-    int[] candidateSenderIds = candidateFetchSources(sourceSenderId);
+    int[] candidateSenderIds = replicaApi.getCandidateReplicaSenderIds(sourceSenderId);
     Message request = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FETCH_NODE_REQUEST)
         .setFetchNodeRequest(FetchNodeRequestMessage.newBuilder().setNodeHash(nodeHash)).build();
     for (int candidateSenderId : candidateSenderIds) {
-      sendToReplica(candidateSenderId, request);
+      replicaApi.sendMessageToReplica(candidateSenderId, request);
     }
     totalFetchAttempts++;
 
@@ -669,7 +640,7 @@ public class HotStuffManager {
         if (msg.getMessageType() == ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE && containsSender(candidateSenderIds, msg.getReplicaSenderId())
             && msg.hasFetchNodeResponse() && nodeHash.equals(msg.getFetchNodeResponse().getNode().getNodeHash())) {
           Node fetchedNode = msg.getFetchNodeResponse().getNode();
-          if (!hasValidNode(fetchedNode)) {
+          if (!isValidNode(fetchedNode)) {
             deferredMessages.addLast(msg);
             continue;
           }
@@ -686,10 +657,6 @@ public class HotStuffManager {
     }
   }
 
-  private int[] candidateFetchSources(int preferredSourceSenderId) {
-    return replicaCommunication.candidateReplicaSenderIds(preferredSourceSenderId);
-  }
-
   private static boolean containsSender(int[] candidateSenderIds, int senderId) {
     return Arrays.stream(candidateSenderIds).anyMatch(candidate -> candidate == senderId);
   }
@@ -700,13 +667,13 @@ public class HotStuffManager {
     }
 
     Node requestedNode = blockTree.get(msg.getFetchNodeRequest().getNodeHash());
-    if (requestedNode == null || !isServableFetchedNode(requestedNode)) {
+    if (requestedNode == null || !canServeFetchedNode(requestedNode)) {
       return;
     }
 
     Message response = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE)
         .setFetchNodeResponse(FetchNodeResponseMessage.newBuilder().setNode(requestedNode)).build();
-    sendToReplica(msg.getReplicaSenderId(), response);
+    replicaApi.sendMessageToReplica(msg.getReplicaSenderId(), response);
   }
 
   private boolean isValidParentLink(Node childNode, Node parentNode) {
@@ -722,7 +689,7 @@ public class HotStuffManager {
     return parentNode.getViewNumber() < childNode.getViewNumber();
   }
 
-  private boolean isServableFetchedNode(Node node) {
+  private boolean canServeFetchedNode(Node node) {
     if (node == null) {
       return false;
     }

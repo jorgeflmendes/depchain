@@ -34,15 +34,15 @@ import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.TransactionNodeCommand;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionType;
-import pt.ulisboa.depchain.server.consensus.client.ClientRequestManager;
-import pt.ulisboa.depchain.server.evm.EvmService;
+import pt.ulisboa.depchain.server.api.ReplicaClientApi;
+import pt.ulisboa.depchain.server.execution.EvmService;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
-import pt.ulisboa.depchain.shared.keys.PrivateKeyLoader;
-import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
-import pt.ulisboa.depchain.shared.keys.ThresholdKeyLoader;
-import pt.ulisboa.depchain.shared.utils.ClientRequestSignaturePayloadUtil;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
+import pt.ulisboa.depchain.shared.crypto.ClientRequestSignaturePayloadUtil;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader;
+import pt.ulisboa.depchain.shared.crypto.key.PublicKeyLoader;
+import pt.ulisboa.depchain.shared.crypto.key.ThresholdKeyLoader;
+import pt.ulisboa.depchain.shared.time.TimeUtil;
 import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 class HotStuffCatchUpTest {
@@ -55,10 +55,10 @@ class HotStuffCatchUpTest {
 
   @Test
   void executeCommittedBranchExecutesAllUnexecutedAncestorsAndIsIdempotent() throws Exception {
-    HotStuffManager hotStuffManager = newHotStuffManager();
-    Node node1 = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 101L, "one");
-    Node node2 = newNode(2, node1.getNodeHash(), 102L, "two");
-    Node node3 = newNode(3, node2.getNodeHash(), 103L, "three");
+    HotStuffManager hotStuffManager = createHotStuffManager();
+    Node node1 = createNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 101L, "one");
+    Node node2 = createNode(2, node1.getNodeHash(), 102L, "two");
+    Node node3 = createNode(3, node2.getNodeHash(), 103L, "three");
 
     putKnownNode(hotStuffManager, node1);
     putKnownNode(hotStuffManager, node2);
@@ -87,8 +87,8 @@ class HotStuffCatchUpTest {
 
   @Test
   void fetchNodeFromReplicasRejectsInvalidResponseAndFallsBackToAlternateReplica() throws Exception {
-    HotStuffManager hotStuffManager = newHotStuffManager();
-    Node parent = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 201L, "parent");
+    HotStuffManager hotStuffManager = createHotStuffManager();
+    Node parent = createNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 201L, "parent");
     ClientRequest tamperedRequest = parent.getCommand().getTransaction().getClientRequest().toBuilder()
         .setTransaction(parent.getCommand().getTransaction().getClientRequest().getTransaction().toBuilder().setAmount(999L)).build();
     Node invalidParent = parent.toBuilder()
@@ -105,9 +105,9 @@ class HotStuffCatchUpTest {
 
   @Test
   void executeCommittedBranchFetchesMissingAncestorsBeforeExecution() throws Exception {
-    HotStuffManager hotStuffManager = newHotStuffManager();
-    Node parent = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 301L, "parent");
-    Node child = newNode(2, parent.getNodeHash(), 302L, "child");
+    HotStuffManager hotStuffManager = createHotStuffManager();
+    Node parent = createNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 301L, "parent");
+    Node child = createNode(2, parent.getNodeHash(), 302L, "child");
     putKnownNode(hotStuffManager, child);
 
     Thread.ofVirtual().start(() -> {
@@ -127,10 +127,10 @@ class HotStuffCatchUpTest {
   @Test
   void executeCommittedBranchInvokesExecutionHookForEachUnexecutedNode() throws Exception {
     List<String> executedByHook = new ArrayList<>();
-    HotStuffManager hotStuffManager = newHotStuffManager(node -> executedByHook.add(node.getNodeHash()));
-    Node node1 = newNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 401L, "one");
-    Node node2 = newNode(2, node1.getNodeHash(), 402L, "two");
-    Node node3 = newNode(3, node2.getNodeHash(), 403L, "three");
+    HotStuffManager hotStuffManager = createHotStuffManager(node -> executedByHook.add(node.getNodeHash()));
+    Node node1 = createNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 401L, "one");
+    Node node2 = createNode(2, node1.getNodeHash(), 402L, "two");
+    Node node3 = createNode(3, node2.getNodeHash(), 403L, "three");
 
     putKnownNode(hotStuffManager, node1);
     putKnownNode(hotStuffManager, node2);
@@ -142,19 +142,19 @@ class HotStuffCatchUpTest {
     assertEquals(List.of(node1.getNodeHash(), node2.getNodeHash(), node3.getNodeHash()), executedByHook);
   }
 
-  private static HotStuffManager newHotStuffManager() throws Exception {
-    return newHotStuffManager(node -> {
+  private static HotStuffManager createHotStuffManager() throws Exception {
+    return createHotStuffManager(node -> {
     });
   }
 
-  private static HotStuffManager newHotStuffManager(Consumer<Node> onNodeExecuted) throws Exception {
+  private static HotStuffManager createHotStuffManager(Consumer<Node> onNodeExecuted) throws Exception {
     ConfigParser config = ConfigParser.load(configPath());
     PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(config);
     return new HotStuffManager(0, config, ThresholdKeyLoader.loadReplicaThresholdPrivateShare(config, 0L), ThresholdKeyLoader.loadReplicaThresholdPublicKey(config, 0L),
-        clientPublicKey, new EvmService(), onNodeExecuted);
+        Map.of(config.client().senderId(), clientPublicKey), new EvmService(), null, onNodeExecuted);
   }
 
-  private static Node newNode(int viewNumber, String parentHash, long requestId, String value) {
+  private static Node createNode(int viewNumber, String parentHash, long requestId, String value) {
     NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(signedTransferRequest(requestId, value, viewNumber - 1L)))
         .build();
     String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(parentHash, viewNumber, command));
@@ -202,10 +202,10 @@ class HotStuffCatchUpTest {
 
   @SuppressWarnings("unchecked")
   private static Set<ClientRequestKey> completedRequestIds(HotStuffManager hotStuffManager) throws Exception {
-    Object clientCommunication = getField(hotStuffManager, "clientCommunication");
-    Field field = ClientRequestManager.class.getDeclaredField("completedRequestIds");
+    Object clientApi = getField(hotStuffManager, "clientApi");
+    Field field = ReplicaClientApi.class.getDeclaredField("completedRequestIds");
     field.setAccessible(true);
-    return (Set<ClientRequestKey>) field.get(clientCommunication);
+    return (Set<ClientRequestKey>) field.get(clientApi);
   }
 
   private static void putKnownNode(HotStuffManager hotStuffManager, Node node) throws Exception {

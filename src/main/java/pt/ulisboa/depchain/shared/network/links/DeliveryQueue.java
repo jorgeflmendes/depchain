@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.Nullable;
 
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class DeliveryQueue<T> {
   private final Deque<T> queue = new ArrayDeque<>();
