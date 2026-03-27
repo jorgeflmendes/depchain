@@ -164,6 +164,8 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
       assertEquals(Long.toString(expectedAmount), latest.transactions().getFirst().amount(), "Persisted transfer should keep the expected amount for " + replicaId);
       assertEquals(expectedNonce, latest.transactions().getFirst().nonce(), "Persisted transfer should keep the expected nonce for " + replicaId);
       assertEquals(TRANSFER_GAS_LIMIT, latest.gasUsed(), "Persisted transfer should keep the observed gas usage for " + replicaId);
+      assertEquals(BlockStore.computeBlockHash(latest.previousBlockHash(), latest.gasUsed(), latest.transactions()), latest
+          .blockHash(), "Persisted block should derive its hash from the previous block hash plus the block transactions for " + replicaId);
       assertTrue(latest.state().containsKey(RECIPIENT), "Persisted state should include the recipient for " + replicaId);
     }
   }

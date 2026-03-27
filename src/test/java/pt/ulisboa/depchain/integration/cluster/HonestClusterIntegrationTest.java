@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Timeout;
 
 import pt.ulisboa.depchain.integration.support.IntegrationHarness;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness.ManagedCluster;
+import pt.ulisboa.depchain.integration.support.IntegrationHarness.StartedServer;
+import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
 
 @Tag("integration")
@@ -62,8 +64,10 @@ class HonestClusterIntegrationTest extends IntegrationHarness {
   void followerCrashTest() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       cluster.assertRequestSucceeds("before-follower-crash", STANDARD_REQUEST_TIMEOUT, "Client request should succeed before follower crash");
+      StartedServer crashedFollower = cluster.servers().get(2);
+      pauseForReplicaStabilization(cluster);
 
-      stopProcess(cluster.servers().get(2));
+      stopProcess(crashedFollower);
 
       cluster.assertRequestSucceeds("after-follower-crash", VIEW_CHANGE_REQUEST_TIMEOUT, "Client request should still succeed after a follower crashes");
     }
@@ -74,10 +78,17 @@ class HonestClusterIntegrationTest extends IntegrationHarness {
   void leaderCrashTest() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       cluster.assertRequestSucceeds("before-leader-crash", STANDARD_REQUEST_TIMEOUT, "Client request should succeed before leader crash");
+      StartedServer crashedLeader = cluster.servers().getFirst();
+      pauseForReplicaStabilization(cluster);
 
-      stopProcess(cluster.servers().getFirst());
+      stopProcess(crashedLeader);
 
       cluster.assertRequestSucceeds("after-leader-crash", VIEW_CHANGE_REQUEST_TIMEOUT, "Client request should still succeed after the leader crashes");
     }
+  }
+
+  private static void pauseForReplicaStabilization(ManagedCluster cluster) throws Exception {
+    ConfigParser config = ConfigParser.load(cluster.configPath());
+    Thread.sleep(Math.max(500L, config.timeouts().viewChangeMs() * 3L));
   }
 }

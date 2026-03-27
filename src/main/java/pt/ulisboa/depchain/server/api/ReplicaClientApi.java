@@ -95,22 +95,6 @@ public final class ReplicaClientApi {
     }
   }
 
-  private boolean enqueueIfNotQueued(ClientRequest request) {
-    ClientRequestKey requestKey = requestKeyOrNull(request);
-    if (requestKey == null) {
-      return false;
-    }
-    if (completedRequestIds.contains(requestKey)) {
-      return false;
-    }
-
-    if (queuedRequestIds.add(requestKey)) {
-      pendingCommands.offer(new QueuedClientRequest(request, enqueueSequence.getAndIncrement()));
-      return true;
-    }
-    return false;
-  }
-
   public ExecutionResult recordExecutedNode(Node node) {
     NodeCommand command = node.getCommand();
     String commandSummary = HotStuffSupport.commandSummary(command);
@@ -227,6 +211,22 @@ public final class ReplicaClientApi {
       }
     } catch (Exception exception) {
       return false;
+    }
+    return false;
+  }
+
+  private boolean enqueueIfNotQueued(ClientRequest request) {
+    ClientRequestKey requestKey = requestKeyOrNull(request);
+    if (requestKey == null) {
+      return false;
+    }
+    if (completedRequestIds.contains(requestKey)) {
+      return false;
+    }
+
+    if (queuedRequestIds.add(requestKey)) {
+      pendingCommands.offer(new QueuedClientRequest(request, enqueueSequence.getAndIncrement()));
+      return true;
     }
     return false;
   }

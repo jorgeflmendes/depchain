@@ -52,8 +52,11 @@ final class ReplicaBlockPersistence {
     ValidationUtils.requireNonNull(node, "node");
 
     BlockStore.BlockDocument parentBlock = requireInitialized();
-    BlockStore.BlockDocument nextBlock = new BlockStore.BlockDocument(parentBlock.height() + 1L, node.getNodeHash(), parentBlock.blockHash(), gasUsed(node),
-        persistedTransactions(node), captureWorldState(evmService));
+    long observedGasUsed = gasUsed(node);
+    List<GenesisParser.GenesisTransaction> persistedTransactions = persistedTransactions(node);
+    String blockHash = BlockStore.computeBlockHash(parentBlock.blockHash(), observedGasUsed, persistedTransactions);
+    BlockStore.BlockDocument nextBlock = new BlockStore.BlockDocument(parentBlock.height() + 1L, blockHash, parentBlock.blockHash(), observedGasUsed, persistedTransactions,
+        captureWorldState(evmService));
 
     blockStore.append(nextBlock);
     latestBlock = nextBlock;

@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.server.node;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -20,6 +21,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.config.GenesisParser;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class BlockStore {
@@ -27,6 +29,8 @@ public final class BlockStore {
   private static final String BLOCK_FILE_PREFIX = "block-";
   private static final String BLOCK_FILE_SUFFIX = ".json";
   private static final Pattern BLOCK_FILE_PATTERN = Pattern.compile("^block-\\d{8}\\.json$");
+  private static final Pattern SHA_256_HEX_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
+  public static final long MAX_BLOCK_GAS_LIMIT = 30_000_000L;
 
   private final Path blocksDirectory;
 
@@ -119,6 +123,37 @@ public final class BlockStore {
     return Optional.of(readBlock(blockPath));
   }
 
+  public List<BlockDocument> loadAll() throws IOException {
+    Files.createDirectories(blocksDirectory);
+
+    List<Path> blockPaths;
+    try (var paths = Files.list(blocksDirectory)) {
+      blockPaths = paths.filter(BlockStore::isBlockFile).sorted(Comparator.comparingLong(BlockStore::parseHeightFromPath)).toList();
+    }
+
+    java.util.ArrayList<BlockDocument> blocks = new java.util.ArrayList<>(blockPaths.size());
+    for (Path blockPath : blockPaths) {
+      blocks.add(readBlock(blockPath));
+    }
+    return List.copyOf(blocks);
+  }
+
+  public static String computeBlockHash(@Nullable String previousBlockHash, long gasUsed, List<GenesisParser.GenesisTransaction> transactions) {
+    ValidationUtils.requireAllNonNull(ValidationUtils.named("transactions", transactions));
+    ValidationUtils.requireNonNegativeLong(gasUsed, "gas_used");
+
+    StringBuilder payload = new StringBuilder(previousBlockHash == null ? "GENESIS" : previousBlockHash);
+    payload.append("|gas_used=").append(gasUsed);
+    for (GenesisParser.GenesisTransaction transaction : transactions) {
+      ValidationUtils.requireNonNull(transaction, "transaction");
+      payload.append("|tx{type=").append(transaction.type()).append(",currency=").append(transaction.currency()).append(",from=").append(transaction.from()).append(",to=")
+          .append(transaction.to() == null ? "" : transaction.to()).append(",amount=").append(transaction.amount()).append(",nonce=").append(transaction.nonce())
+          .append(",gas_limit=").append(transaction.gasLimit()).append(",gas_price=").append(transaction.gasPrice()).append(",input=").append(transaction.input())
+          .append(",signature=").append(transaction.signature() == null ? "" : transaction.signature()).append('}');
+    }
+    return CryptoUtil.sha256Hex(payload.toString().getBytes(StandardCharsets.UTF_8));
+  }
+
   private void writeBlock(BlockDocument block) throws IOException {
     Path blockPath = blockFilePath(block.height());
     Path temporaryPath = Files.createTempFile(blocksDirectory, blockPath.getFileName() + ".tmp-", ".json");
@@ -155,11 +190,58 @@ public final class BlockStore {
 
     public BlockDocument {
       ValidationUtils.requireNonNegativeLong(height, "height");
-      ValidationUtils.requireNonBlank(blockHash, "block_hash");
+      blockHash = requireSha256Hash(blockHash, "block_hash");
       ValidationUtils.requireAllNonNull(ValidationUtils.named("transactions", transactions), ValidationUtils.named("state", state));
       ValidationUtils.requireNonNegativeLong(gasUsed, "gas_used");
       transactions = List.copyOf(transactions);
+      validateTransactionLayout(height, previousBlockHash, gasUsed, transactions, blockHash);
       state = new LinkedHashMap<>(state);
     }
+
+    private static void validateTransactionLayout(long height, @Nullable String previousBlockHash, long gasUsed, List<GenesisParser.GenesisTransaction> transactions, String blockHash) {
+      if (height == 0L) {
+        if (previousBlockHash != null) {
+          throw new IllegalArgumentException("genesis persisted block must not set previous_block_hash");
+        }
+      } else {
+        String normalizedPreviousHash = requireSha256Hash(previousBlockHash, "previous_block_hash");
+        String expectedHash = computeBlockHash(normalizedPreviousHash, gasUsed, transactions);
+        if (!blockHash.equals(expectedHash)) {
+          throw new IllegalArgumentException("block_hash must match the hash of previous_block_hash plus the block transactions");
+        }
+      }
+
+      long totalGasLimit = 0L;
+      LinkedHashMap<String, Long> latestNonceBySender = new LinkedHashMap<>();
+      for (GenesisParser.GenesisTransaction transaction : transactions) {
+        totalGasLimit = Math.addExact(totalGasLimit, transaction.gasLimit());
+        if (totalGasLimit > MAX_BLOCK_GAS_LIMIT) {
+          throw new IllegalArgumentException("sum of transaction gas_limit values must not exceed the block gas limit");
+        }
+
+        Long previousNonce = latestNonceBySender.put(transaction.from(), transaction.nonce());
+        if (previousNonce != null && transaction.nonce() != previousNonce + 1L) {
+          throw new IllegalArgumentException("transactions from the same sender must use consecutive nonces inside a block");
+        }
+      }
+
+      if (gasUsed > MAX_BLOCK_GAS_LIMIT) {
+        throw new IllegalArgumentException("gas_used must not exceed the block gas limit");
+      }
+      if (!transactions.isEmpty() && gasUsed > totalGasLimit) {
+        throw new IllegalArgumentException("gas_used must not exceed the sum of transaction gas_limit values");
+      }
+      if (transactions.isEmpty() && gasUsed != 0L) {
+        throw new IllegalArgumentException("blocks without transactions must use gas_used = 0");
+      }
+    }
+  }
+
+  private static String requireSha256Hash(@Nullable String value, String fieldName) {
+    String nonBlankValue = ValidationUtils.requireNonBlank(value, fieldName);
+    if (!SHA_256_HEX_PATTERN.matcher(nonBlankValue).matches()) {
+      throw new IllegalArgumentException(fieldName + " must be a 64-char lowercase SHA-256 hex string");
+    }
+    return nonBlankValue;
   }
 }
