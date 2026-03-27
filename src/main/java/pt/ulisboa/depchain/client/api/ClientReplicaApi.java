@@ -9,7 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.hyperledger.besu.datatypes.Address;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,7 +22,6 @@ import pt.ulisboa.depchain.proto.QueryResponse;
 import pt.ulisboa.depchain.proto.QueryType;
 import pt.ulisboa.depchain.proto.TransactionResponse;
 import pt.ulisboa.depchain.proto.TransactionType;
-import pt.ulisboa.depchain.server.execution.IstCoin;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader;
@@ -45,7 +43,6 @@ public final class ClientReplicaApi implements AutoCloseable {
   private final long requestTimeoutMs;
   private final int coherentReplyQuorum;
   private final String walletAddress;
-  private final Address istCoinContractAddress;
   private final AuthenticatedLink transport;
   private final Map<Long, InetSocketAddress> openConnections;
   private final SignedClientRequestFactory requestFactory;
@@ -66,7 +63,6 @@ public final class ClientReplicaApi implements AutoCloseable {
     this.requestTimeoutMs = selectedClient.requestTimeoutMs();
     this.coherentReplyQuorum = config.system().f() + 1;
     this.walletAddress = CryptoUtil.deriveAddressHex(clientPublicKey);
-    this.istCoinContractAddress = IstCoin.resolveContractAddress(java.nio.file.Path.of(configPath));
     this.transport = AuthenticatedLink.unbound(clientSenderId, clientPrivateKey, this.replicaPublicKeys);
     this.openConnections = new LinkedHashMap<>();
     this.requestFactory = new SignedClientRequestFactory(clientSenderId, clientPrivateKey);
@@ -101,8 +97,7 @@ public final class ClientReplicaApi implements AutoCloseable {
   }
 
   public TransactionResponse transferIstCoin(String recipientAddress, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
-    byte[] input = IstCoin.encodeTransferCallData(Address.fromHexString("0x" + recipientAddress), amount).toArrayUnsafe();
-    return submitTransactionRequest(TransactionType.TRANSACTION_TYPE_CONTRACT_CALL, istCoinContractAddress.toHexString().substring(2), 0L, nonce, gasLimit, gasPrice, input);
+    return submitTransactionRequest(TransactionType.TRANSACTION_TYPE_IST_COIN_TRANSFER, recipientAddress, amount, nonce, gasLimit, gasPrice);
   }
 
   public TransactionResponse callContract(String contractAddress, long amount, long nonce, long gasLimit, long gasPrice, byte[] input) throws Exception {
