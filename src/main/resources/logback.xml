@@ -1,8 +1,10 @@
 <configuration>
   <property name="ROOT_LOG_LEVEL" value="${ROOT_LOG_LEVEL:-INFO}" />
   <property name="APP_LOG_LEVEL" value="${APP_LOG_LEVEL:-INFO}" />
-  <property name="LINKS_LOG_LEVEL" value="${LINKS_LOG_LEVEL:-DEBUG}" />
-  <property name="CONSOLE_LOG_PATTERN" value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{40} - %msg%n" />
+  <property name="LINKS_LOG_LEVEL" value="${LINKS_LOG_LEVEL:-INFO}" />
+  <property name="LOG_CONTEXT" value="${LOG_CONTEXT:-depchain}" />
+  <property name="CONSOLE_LOG_PATTERN"
+            value="%d{HH:mm:ss.SSS} %highlight(%-5level) %cyan([%thread]) %magenta(${LOG_CONTEXT}) %blue(%logger{28}) %gray(-) %msg%n%ex{5}" />
 
   <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
@@ -13,6 +15,7 @@
   <logger name="pt.ulisboa.depchain" level="${APP_LOG_LEVEL}" />
   <logger name="pt.ulisboa.depchain.shared.network.links" level="${LINKS_LOG_LEVEL}" />
   <logger name="io.netty" level="WARN" />
+  <logger name="org.hyperledger.besu" level="WARN" />
   <logger name="org.bouncycastle" level="WARN" />
   <logger name="com.google.protobuf" level="WARN" />
 

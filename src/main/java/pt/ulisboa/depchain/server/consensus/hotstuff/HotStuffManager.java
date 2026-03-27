@@ -341,14 +341,14 @@ public class HotStuffManager {
       if (!execution.success()) {
         message = "Transaction execution failed";
       }
-      return ClientResponse.newBuilder().setTransaction(TransactionResponse.newBuilder().setAccepted(true).setMessage(message).setReceipt(receipt)).build();
+      return ClientResponse.newBuilder().setTransaction(TransactionResponse.newBuilder().setMessage(message).setReceipt(receipt)).build();
     } catch (RuntimeException exception) {
       String errorMessage = exception.getMessage();
       if (errorMessage == null || errorMessage.isBlank()) {
         errorMessage = "unexpected transaction execution error";
       }
       receipt.setSuccess(false).setGasUsed(0L).setErrorMessage(errorMessage);
-      return ClientResponse.newBuilder().setTransaction(TransactionResponse.newBuilder().setAccepted(true).setMessage("Transaction execution failed").setReceipt(receipt)).build();
+      return ClientResponse.newBuilder().setTransaction(TransactionResponse.newBuilder().setMessage("Transaction execution failed").setReceipt(receipt)).build();
     }
   }
 

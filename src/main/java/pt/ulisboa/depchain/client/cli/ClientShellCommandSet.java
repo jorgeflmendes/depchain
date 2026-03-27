@@ -21,6 +21,8 @@ final class ClientShellCommandSet {
   private static final long DEFAULT_DEP_TRANSFER_GAS_LIMIT = 21_000L;
   private static final long DEFAULT_CONTRACT_CALL_GAS_LIMIT = 250_000L;
   private static final long DEFAULT_GAS_PRICE = 1L;
+  private static final String OUTPUT_INDENT = "  ";
+  private static final Ansi SHELL_ANSI = Ansi.ON;
 
   private final ClientReplicaApi client;
   private final PrintWriter out;
@@ -46,13 +48,15 @@ final class ClientShellCommandSet {
     commandLine.addSubcommand("help", new CommandLine.HelpCommand());
     commandLine.setOut(out);
     commandLine.setErr(err);
+    commandLine.setUsageHelpAutoWidth(true);
+    commandLine.setColorScheme(CommandLine.Help.defaultColorScheme(SHELL_ANSI));
     commandLine.setExecutionExceptionHandler((exception, commandLineRef, parseResult) -> {
-      err.println(Ansi.AUTO.string("@|bold,red error:|@ " + exception.getMessage()));
+      err.println(SHELL_ANSI.string("@|bold,red ERROR|@ " + exception.getMessage()));
       logger.debug("Client command failed", exception);
       return commandLineRef.getCommandSpec().exitCodeOnExecutionException();
     });
     commandLine.setParameterExceptionHandler((exception, parseResult) -> {
-      err.println(Ansi.AUTO.string("@|bold,yellow input error:|@ " + exception.getMessage()));
+      err.println(SHELL_ANSI.string("@|bold,yellow INPUT ERROR|@ " + exception.getMessage()));
       exception.getCommandLine().usage(err);
       return exception.getCommandLine().getCommandSpec().exitCodeOnInvalidInput();
     });
@@ -95,7 +99,7 @@ final class ClientShellCommandSet {
       } catch (IncoherentReplicaResponseException exception) {
         printIncoherentReplyError("DepCoin transfer");
       } catch (Exception exception) {
-        err.println(Ansi.AUTO.string("@|bold,red error:|@ could not execute DepCoin transfer"));
+        err.println(SHELL_ANSI.string("@|bold,red ERROR|@ Could not execute DepCoin transfer."));
         logger.error("Error executing DepCoin transfer", exception);
       }
     }
@@ -113,7 +117,7 @@ final class ClientShellCommandSet {
       } catch (IncoherentReplicaResponseException exception) {
         printIncoherentReplyError("DepCoin balance query");
       } catch (Exception exception) {
-        err.println(Ansi.AUTO.string("@|bold,red error:|@ could not query DepCoin balance"));
+        err.println(SHELL_ANSI.string("@|bold,red ERROR|@ Could not query DepCoin balance."));
         logger.error("Error querying DepCoin balance", exception);
       }
     }
@@ -131,7 +135,7 @@ final class ClientShellCommandSet {
       } catch (IncoherentReplicaResponseException exception) {
         printIncoherentReplyError("IST Coin balance query");
       } catch (Exception exception) {
-        err.println(Ansi.AUTO.string("@|bold,red error:|@ could not query IST Coin balance"));
+        err.println(SHELL_ANSI.string("@|bold,red ERROR|@ Could not query IST Coin balance."));
         logger.error("Error querying IST Coin balance", exception);
       }
     }
@@ -141,7 +145,7 @@ final class ClientShellCommandSet {
   private final class WalletAddressCommand implements Runnable {
     @Override
     public void run() {
-      out.println(Ansi.AUTO.string("@|bold,green ok|@ walletAddress=" + client.getWalletAddress()));
+      printSuccessLine("walletAddress=" + client.getWalletAddress());
     }
   }
 
@@ -169,7 +173,7 @@ final class ClientShellCommandSet {
       } catch (IncoherentReplicaResponseException exception) {
         printIncoherentReplyError("IST Coin transfer");
       } catch (Exception exception) {
-        err.println(Ansi.AUTO.string("@|bold,red error:|@ could not execute IST Coin transfer"));
+        err.println(SHELL_ANSI.string("@|bold,red ERROR|@ Could not execute IST Coin transfer."));
         logger.error("Error executing IST Coin transfer", exception);
       }
     }
@@ -203,7 +207,7 @@ final class ClientShellCommandSet {
       } catch (IncoherentReplicaResponseException exception) {
         printIncoherentReplyError("contract call");
       } catch (Exception exception) {
-        err.println(Ansi.AUTO.string("@|bold,red error:|@ could not execute contract call"));
+        err.println(SHELL_ANSI.string("@|bold,red ERROR|@ Could not execute contract call."));
         logger.error("Error executing generic contract call", exception);
       }
     }
@@ -219,52 +223,55 @@ final class ClientShellCommandSet {
 
   private void printTransactionResponse(pt.ulisboa.depchain.proto.TransactionResponse response) {
     if (response == null) {
-      out.println(Ansi.AUTO.string("@|bold,yellow timeout|@ waiting for coherent replies"));
+      printTimeoutLine();
       return;
     }
 
     if (!response.hasReceipt()) {
-      out.println(Ansi.AUTO.string("@|bold,yellow pending|@ " + response.getMessage()));
+      out.println(SHELL_ANSI.string("@|bold,yellow STATUS|@ PENDING"));
+      out.println(SHELL_ANSI.string(OUTPUT_INDENT + "@|faint message|@=" + response.getMessage()));
       return;
     }
 
     var receipt = response.getReceipt();
     if (receipt.getSuccess()) {
-      StringBuilder success = new StringBuilder();
-      success.append("@|bold,green ok|@ ").append(response.getMessage());
-      success.append(" tx=").append(receipt.getTransactionHash());
-      success.append(" gas=").append(receipt.getGasUsed());
-      success.append(" node=").append(receipt.getNodeHash());
+      StringBuilder success = new StringBuilder("@|bold,green STATUS|@ SUCCESS");
+      success.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint message|@=").append(response.getMessage());
+      success.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint tx|@=").append(receipt.getTransactionHash());
+      success.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint gas|@=").append(receipt.getGasUsed());
+      success.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint node|@=").append(receipt.getNodeHash());
       if (receipt.hasReturnData()) {
-        success.append(" return=0x").append(HexFormat.of().formatHex(receipt.getReturnData().toByteArray()));
+        success.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint return|@=0x").append(HexFormat.of().formatHex(receipt.getReturnData().toByteArray()));
       }
-      out.println(Ansi.AUTO.string(success.toString()));
+      out.println(SHELL_ANSI.string(success.toString()));
       return;
     }
 
     StringBuilder failure = new StringBuilder();
-    failure.append("@|bold,yellow failed|@ ").append(response.getMessage());
-    failure.append(" tx=").append(receipt.getTransactionHash());
-    failure.append(" gas=").append(receipt.getGasUsed());
+    failure.append("@|bold,red STATUS|@ FAILED");
+    failure.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint message|@=").append(response.getMessage());
+    failure.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint tx|@=").append(receipt.getTransactionHash());
+    failure.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint gas|@=").append(receipt.getGasUsed());
     if (receipt.hasErrorMessage()) {
-      failure.append(" error=").append(receipt.getErrorMessage());
+      failure.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint error|@=").append(receipt.getErrorMessage());
     }
-    out.println(Ansi.AUTO.string(failure.toString()));
+    out.println(SHELL_ANSI.string(failure.toString()));
   }
 
   private void printQueryResponse(String label, pt.ulisboa.depchain.proto.QueryResponse response) {
     if (response == null) {
-      out.println(Ansi.AUTO.string("@|bold,yellow timeout|@ waiting for coherent replies"));
+      printTimeoutLine();
       return;
     }
 
     if (!response.getSuccess()) {
       StringBuilder failure = new StringBuilder();
-      failure.append("@|bold,yellow failed|@ ").append(response.getMessage());
+      failure.append("@|bold,red STATUS|@ FAILED");
+      failure.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint message|@=").append(response.getMessage());
       if (response.hasErrorMessage()) {
-        failure.append(" error=").append(response.getErrorMessage());
+        failure.append(System.lineSeparator()).append(OUTPUT_INDENT).append("@|faint error|@=").append(response.getErrorMessage());
       }
-      out.println(Ansi.AUTO.string(failure.toString()));
+      out.println(SHELL_ANSI.string(failure.toString()));
       return;
     }
 
@@ -273,7 +280,7 @@ final class ClientShellCommandSet {
     }
 
     BigInteger decoded = decodeUnsignedResult(response.getReturnData().toByteArray());
-    out.println(Ansi.AUTO.string("@|bold,green ok|@ " + label + "=" + decoded));
+    printSuccessLine(label + "=" + decoded);
   }
 
   private void printBooleanResponse(String label, pt.ulisboa.depchain.proto.TransactionResponse response) {
@@ -282,13 +289,14 @@ final class ClientShellCommandSet {
     }
 
     boolean decoded = decodeBooleanResult(response.getReceipt().getReturnData().toByteArray());
-    out.println(Ansi.AUTO
-        .string("@|bold,green ok|@ " + label + "=" + decoded + " tx=" + response.getReceipt().getTransactionHash() + " gas=" + response.getReceipt().getGasUsed()));
+    out.println(SHELL_ANSI
+        .string("@|bold,green STATUS|@ SUCCESS" + System.lineSeparator() + OUTPUT_INDENT + "@|faint " + label + "|@=" + decoded + System.lineSeparator() + OUTPUT_INDENT
+            + "@|faint tx|@=" + response.getReceipt().getTransactionHash() + System.lineSeparator() + OUTPUT_INDENT + "@|faint gas|@=" + response.getReceipt().getGasUsed()));
   }
 
   private boolean printSuccessfulTransactionWithReturnData(pt.ulisboa.depchain.proto.TransactionResponse response) {
     if (response == null) {
-      out.println(Ansi.AUTO.string("@|bold,yellow timeout|@ waiting for coherent replies"));
+      printTimeoutLine();
       return false;
     }
 
@@ -305,7 +313,15 @@ final class ClientShellCommandSet {
   }
 
   private void printIncoherentReplyError(String operation) {
-    err.println(Ansi.AUTO.string("@|bold,red error:|@ replicas did not return a coherent majority for " + operation));
+    err.println(SHELL_ANSI.string("@|bold,red ERROR|@ Replicas did not return a coherent majority for " + operation + "."));
+  }
+
+  private void printSuccessLine(String message) {
+    out.println(SHELL_ANSI.string("@|bold,green STATUS|@ SUCCESS" + System.lineSeparator() + OUTPUT_INDENT + "@|faint result|@=" + message));
+  }
+
+  private void printTimeoutLine() {
+    out.println(SHELL_ANSI.string("@|bold,yellow STATUS|@ TIMEOUT" + System.lineSeparator() + OUTPUT_INDENT + "@|faint message|@=Waiting for coherent replica replies."));
   }
 
   private static BigInteger decodeUnsignedResult(byte[] encoded) {

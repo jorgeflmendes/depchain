@@ -20,6 +20,16 @@ import javax.crypto.spec.SecretKeySpec;
 import org.bouncycastle.jcajce.provider.digest.Keccak;
 
 public class CryptoUtil {
+  private static final int EC_KEY_SIZE_BITS = 256;
+  private static final int HMAC_SHA_256_KEY_BYTES = 32;
+  private static final HexFormat HEX_FORMAT = HexFormat.of();
+  private static final SecretKeySpec ZERO_HMAC_SHA_256_KEY = new SecretKeySpec(new byte[HMAC_SHA_256_KEY_BYTES], "HmacSHA256");
+  private static final ThreadLocal<KeyPairGenerator> EC_KEY_PAIR_GENERATOR = ThreadLocal.withInitial(CryptoUtil::newEcKeyPairGenerator);
+  private static final ThreadLocal<KeyAgreement> ECDH_KEY_AGREEMENT = ThreadLocal.withInitial(() -> newKeyAgreement("ECDH"));
+  private static final ThreadLocal<Mac> HMAC_SHA_256 = ThreadLocal.withInitial(() -> newMac("HmacSHA256"));
+  private static final ThreadLocal<MessageDigest> SHA_256 = ThreadLocal.withInitial(() -> newMessageDigest("SHA-256"));
+  private static final ThreadLocal<Keccak.Digest256> KECCAK_256 = ThreadLocal.withInitial(Keccak.Digest256::new);
+
   public record KeyContext(String label, String step) {
     public byte[] toHkdfContext() {
       if (label == null) {
@@ -41,85 +51,59 @@ public class CryptoUtil {
   }
 
   public static KeyPair createEcKeyPair() throws Exception {
-    KeyPairGenerator gen = KeyPairGenerator.getInstance("EC");
-    gen.initialize(256);
-    return gen.generateKeyPair();
+    return EC_KEY_PAIR_GENERATOR.get().generateKeyPair();
   }
 
   public static SecretKey deriveCommonKey(PrivateKey privateKey, PublicKey publicKey, KeyContext keyContext) throws Exception {
-    // ECDH key agreement
-    KeyAgreement agreement = KeyAgreement.getInstance("ECDH");
+    KeyAgreement agreement = ECDH_KEY_AGREEMENT.get();
     agreement.init(privateKey);
     agreement.doPhase(publicKey, true);
-
-    // Derive a shared secret
     byte[] sharedSecret = agreement.generateSecret();
-
-    // Use HKDF to derive a symmetric key from the shared secret
-    Mac mac = Mac.getInstance("HmacSHA256");
-
-    // HKDF-Extract
-    byte[] effectiveSalt = new byte[32];
-    mac.init(new SecretKeySpec(effectiveSalt, "HmacSHA256"));
+    Mac mac = HMAC_SHA_256.get();
+    mac.init(ZERO_HMAC_SHA_256_KEY);
     byte[] prk = mac.doFinal(sharedSecret);
-
-    // HKDF-Expand
     mac.init(new SecretKeySpec(prk, "HmacSHA256"));
     if (keyContext != null) {
       mac.update(keyContext.toHkdfContext());
     }
-    mac.update((byte) 0x01); // RFC requires this
+    mac.update((byte) 0x01);
     byte[] okm = mac.doFinal();
-
-    // Cleanup
     Arrays.fill(sharedSecret, (byte) 0);
     Arrays.fill(prk, (byte) 0);
-
-    return new SecretKeySpec(Arrays.copyOf(okm, 32), "HmacSHA256");
+    SecretKeySpec derivedKey = new SecretKeySpec(okm, 0, HMAC_SHA_256_KEY_BYTES, "HmacSHA256");
+    Arrays.fill(okm, (byte) 0);
+    return derivedKey;
   }
 
   public static byte[] signHmacWithNonce(byte[] message, SecretKey key, long nonce) throws Exception {
-    // [Message + Nonce]
-    ByteBuffer buffer = ByteBuffer.allocate(message.length + Long.BYTES);
-    buffer.put(message);
-    buffer.putLong(nonce);
-    byte[] dataToSign = buffer.array();
-
-    // HMAC
-    Mac mac = Mac.getInstance("HmacSHA256");
+    Mac mac = HMAC_SHA_256.get();
     mac.init(key);
-
-    return mac.doFinal(dataToSign);
+    mac.update(message);
+    updateLong(mac, nonce);
+    return mac.doFinal();
   }
 
   public static boolean verifyHmacWithNonce(byte[] message, byte[] hmac, long nonce, SecretKey key) throws Exception {
-    // [Message + Nonce]
-    ByteBuffer buffer = ByteBuffer.allocate(message.length + Long.BYTES);
-    buffer.put(message);
-    buffer.putLong(nonce);
-    byte[] dataToVerify = buffer.array();
-
-    // HMAC
-    Mac mac = Mac.getInstance("HmacSHA256");
+    Mac mac = HMAC_SHA_256.get();
     mac.init(key);
-    byte[] expectedHmac = mac.doFinal(dataToVerify);
+    mac.update(message);
+    updateLong(mac, nonce);
+    byte[] expectedHmac = mac.doFinal();
 
     return MessageDigest.isEqual(expectedHmac, hmac);
   }
 
   public static byte[] signEcdsa(byte[] data, PrivateKey secretKey) throws Exception {
-    Signature ecdsaSign = Signature.getInstance("SHA256withECDSA");
+    Signature ecdsaSign = newSignature("SHA256withECDSA");
     ecdsaSign.initSign(secretKey);
     ecdsaSign.update(data);
-
     return ecdsaSign.sign();
   }
 
   public static boolean verifyEcdsa(byte[] data, byte[] signature, PublicKey publicKey) throws Exception {
-    Signature ecdsaVerify = Signature.getInstance("SHA256withECDSA");
+    Signature ecdsaVerify = newSignature("SHA256withECDSA");
     ecdsaVerify.initVerify(publicKey);
     ecdsaVerify.update(data);
-
     return ecdsaVerify.verify(signature);
   }
 
@@ -129,28 +113,16 @@ public class CryptoUtil {
     }
 
     byte[] rawPublicKey = rawEcPublicKey(ecPublicKey);
-    byte[] hash = new Keccak.Digest256().digest(rawPublicKey);
-    return HexFormat.of().formatHex(Arrays.copyOfRange(hash, hash.length - 20, hash.length));
+    byte[] hash = KECCAK_256.get().digest(rawPublicKey);
+    return HEX_FORMAT.formatHex(hash, hash.length - 20, hash.length);
   }
 
   public static String sha256Hex(byte[] value) {
     if (value == null) {
       throw new IllegalArgumentException("value cannot be null");
     }
-
-    MessageDigest digest;
-    try {
-      digest = MessageDigest.getInstance("SHA-256");
-    } catch (Exception exception) {
-      throw new IllegalStateException("SHA-256 is not available", exception);
-    }
-    byte[] hash = digest.digest(value);
-    StringBuilder hex = new StringBuilder(hash.length * 2);
-    for (byte currentByte : hash) {
-      hex.append(Character.forDigit((currentByte >>> 4) & 0x0F, 16));
-      hex.append(Character.forDigit(currentByte & 0x0F, 16));
-    }
-    return hex.toString();
+    byte[] hash = SHA_256.get().digest(value);
+    return HEX_FORMAT.formatHex(hash);
   }
 
   private static byte[] rawEcPublicKey(ECPublicKey publicKey) {
@@ -177,5 +149,58 @@ public class CryptoUtil {
     byte[] padded = new byte[expectedLength];
     System.arraycopy(value, 0, padded, expectedLength - value.length, value.length);
     return padded;
+  }
+
+  private static Mac newMac(String algorithm) {
+    try {
+      return Mac.getInstance(algorithm);
+    } catch (Exception exception) {
+      throw new IllegalStateException(algorithm + " is not available", exception);
+    }
+  }
+
+  private static KeyPairGenerator newEcKeyPairGenerator() {
+    try {
+      KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+      generator.initialize(EC_KEY_SIZE_BITS);
+      return generator;
+    } catch (Exception exception) {
+      throw new IllegalStateException("EC key pair generation is not available", exception);
+    }
+  }
+
+  private static KeyAgreement newKeyAgreement(String algorithm) {
+    try {
+      return KeyAgreement.getInstance(algorithm);
+    } catch (Exception exception) {
+      throw new IllegalStateException(algorithm + " is not available", exception);
+    }
+  }
+
+  private static Signature newSignature(String algorithm) {
+    try {
+      return Signature.getInstance(algorithm);
+    } catch (Exception exception) {
+      throw new IllegalStateException(algorithm + " is not available", exception);
+    }
+  }
+
+  private static MessageDigest newMessageDigest(String algorithm) {
+    try {
+      return MessageDigest.getInstance(algorithm);
+    } catch (Exception exception) {
+      throw new IllegalStateException(algorithm + " is not available", exception);
+    }
+  }
+
+  private static void updateLong(Mac mac, long value) {
+    mac.update((byte) (value >>> 56));
+    mac.update((byte) (value >>> 48));
+    mac.update((byte) (value >>> 40));
+    mac.update((byte) (value >>> 32));
+    mac.update((byte) (value >>> 24));
+    mac.update((byte) (value >>> 16));
+    mac.update((byte) (value >>> 8));
+    mac.update((byte) value);
   }
 }

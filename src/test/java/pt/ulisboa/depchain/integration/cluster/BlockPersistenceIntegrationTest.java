@@ -145,7 +145,6 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
 
     ClientResponse response = decodeClientResponse(responsePacket);
     assertTrue(response.hasTransaction(), message);
-    assertTrue(response.getTransaction().getAccepted(), message);
     assertTrue(response.getTransaction().getReceipt().getSuccess(), message);
   }
 

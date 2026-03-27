@@ -67,7 +67,6 @@ message Node {
   ];
   NodeCommand command = 4 [(buf.validate.field).required = true];
   optional uint64 gas_used = 5;
-  optional string state_root = 6;
 }
 
 message NodeHashPayload {
@@ -77,54 +76,6 @@ message NodeHashPayload {
     (buf.validate.field).int32.gte = 0
   ];
   NodeCommand command = 3 [(buf.validate.field).required = true];
-}
-
-message AccountState {
-  option (buf.validate.message).cel = {
-    id: "account.address.shape"
-    message: "address must be a lowercase 40-hex-character account address"
-    expression: "this.address.matches('^[0-9a-f]{40}$')"
-  };
-
-  optional string address = 1 [
-    (buf.validate.field).required = true,
-    (buf.validate.field).string.min_len = 1
-  ];
-  optional uint64 balance = 2 [(buf.validate.field).required = true];
-  optional uint64 nonce = 3 [(buf.validate.field).required = true];
-}
-
-message Block {
-  option (buf.validate.message).cel = {
-    id: "block.hash.shape"
-    message: "block_hash must be a 64-char lowercase SHA-256 hex string"
-    expression: "this.block_hash.matches('^[0-9a-f]{64}$')"
-  };
-  option (buf.validate.message).cel = {
-    id: "block.previous-hash.shape"
-    message: "previous_block_hash must be empty for genesis or a 64-char lowercase SHA-256 hex string"
-    expression: "!has(this.previous_block_hash) || this.previous_block_hash == '' || this.previous_block_hash.matches('^[0-9a-f]{64}$')"
-  };
-  option (buf.validate.message).cel = {
-    id: "block.genesis.previous-null"
-    message: "genesis block must not reference a previous block hash"
-    expression: "this.height == 0u ? (!has(this.previous_block_hash) || this.previous_block_hash == '') : true"
-  };
-  option (buf.validate.message).cel = {
-    id: "block.non-genesis.previous-required"
-    message: "non-genesis blocks must reference the previous block hash"
-    expression: "this.height > 0u ? (has(this.previous_block_hash) && size(this.previous_block_hash) == 64) : true"
-  };
-
-  optional uint64 height = 1 [(buf.validate.field).required = true];
-  optional string block_hash = 2 [
-    (buf.validate.field).required = true,
-    (buf.validate.field).string.min_len = 1
-  ];
-  optional string previous_block_hash = 3;
-  repeated depchain.TransactionRequest transactions = 4;
-  repeated AccountState state = 5;
-  optional uint64 gas_used = 6 [(buf.validate.field).required = true];
 }
 
 message QuorumCertificate {

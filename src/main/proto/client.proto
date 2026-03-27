@@ -126,18 +126,11 @@ message TransactionReceipt {
 }
 
 message TransactionResponse {
-  option (buf.validate.message).cel = {
-    id: "transaction.response.accepted-receipt-consistency"
-    message: "accepted responses must include a receipt and rejected responses must not"
-    expression: "this.accepted ? has(this.receipt) : !has(this.receipt)"
-  };
-
-  optional bool accepted = 1 [(buf.validate.field).required = true];
-  optional string message = 2 [
+  optional string message = 1 [
     (buf.validate.field).required = true,
     (buf.validate.field).string.min_len = 1
   ];
-  optional TransactionReceipt receipt = 3;
+  optional TransactionReceipt receipt = 2;
 }
 
 enum QueryType {

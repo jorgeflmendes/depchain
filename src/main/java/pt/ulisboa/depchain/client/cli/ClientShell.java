@@ -10,6 +10,8 @@ import picocli.CommandLine.Help.Ansi;
 
 public final class ClientShell {
   private static final String PROMPT = "depchain> ";
+  private static final String DIVIDER = "============================================================";
+  private static final Ansi SHELL_ANSI = Ansi.ON;
 
   private final ClientReplicaApi client;
 
@@ -22,22 +24,23 @@ public final class ClientShell {
     PrintWriter out = new PrintWriter(System.out, true);
     PrintWriter err = new PrintWriter(System.err, true);
     runInputLoop(scanner, out, err);
-    System.out.println("Bye.");
+    out.println(SHELL_ANSI.string("@|faint " + DIVIDER + "|@"));
+    out.println(SHELL_ANSI.string("@|bold,cyan Session closed.|@"));
   }
 
   private void runInputLoop(Scanner scanner, PrintWriter out, PrintWriter err) {
     ClientShellCommandSet commandSet = new ClientShellCommandSet(client, out, err);
     CommandLine shellCommandLine = commandSet.commandLine();
 
-    out.print(Ansi.AUTO.string("@|bold,cyan " + banner().stripTrailing() + "|@"));
+    out.println(SHELL_ANSI.string(renderBanner().stripTrailing()));
+    out.println(SHELL_ANSI.string("@|faint Type 'help' to list commands or 'exit' to quit.|@"));
     out.println();
     while (!commandSet.shouldExit()) {
+      out.print(SHELL_ANSI.string(prompt()));
+      out.flush();
       if (!scanner.hasNextLine()) {
         break;
       }
-
-      out.print(Ansi.AUTO.string("@|bold,cyan " + PROMPT + "|@"));
-      out.flush();
       String input = scanner.nextLine();
       if (input == null || input.isBlank()) {
         continue;
@@ -51,17 +54,24 @@ public final class ClientShell {
     return ClientShellTokenizer.shellArgs(input);
   }
 
-  private String banner() {
+  private String prompt() {
+    return "@|bold,cyan " + PROMPT + "|@";
+  }
+
+  private String renderBanner() {
+    String walletAddress = client.getWalletAddress();
     return """
-        DepChain Client
-        Wallet address: %s
-        Type 'depcoin-transfer <to> <amount> <nonce> [gasLimit] [gasPrice]' to transfer native DepCoin.
-        Type 'depcoin-balance [owner]' to query native DepCoin balances.
-        Type 'ist-balance [owner]' to query IST Coin balances.
-        Type 'my-address' to print the local wallet address.
-        Type 'ist-transfer <to> <rawValue> <nonce> [gasLimit] [gasPrice]' to transfer IST Coin tokens.
-        Type 'contract-call <to> <inputHex> <nonce> [amount] [gasLimit] [gasPrice]' to call an EVM contract directly.
-        Type 'help' to list commands. Type 'exit' to quit.
-        """.formatted(client.getWalletAddress());
+        @|faint %s|@
+        @|bold,cyan DEPCHAIN CLIENT CONSOLE|@
+        @|bold,green Active Wallet|@  %s
+        @|bold,white Available Commands|@
+          @|bold depcoin-transfer|@ <to> <amount> <nonce> [gasLimit] [gasPrice]
+          @|bold depcoin-balance|@ [owner]
+          @|bold ist-transfer|@ <to> <rawValue> <nonce> [gasLimit] [gasPrice]
+          @|bold ist-balance|@ [owner]
+          @|bold contract-call|@ <to> <inputHex> <nonce> [amount] [gasLimit] [gasPrice]
+          @|bold my-address|@
+        @|faint %s|@
+        """.formatted(DIVIDER, walletAddress, DIVIDER);
   }
 }

@@ -25,6 +25,7 @@ import pt.ulisboa.depchain.server.execution.IstCoin;
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ClientShellIntegrationTest extends IntegrationHarness {
+  private static final String ANSI_ESCAPE_PATTERN = "\\u001B\\[[;\\d]*m";
   private static final String RECIPIENT_ADDRESS = "cccccccccccccccccccccccccccccccccccccccc";
   private static final String CLIENT_ID = "client";
 
@@ -72,10 +73,11 @@ class ClientShellIntegrationTest extends IntegrationHarness {
         System.setErr(originalErr);
       }
 
-      String stdout = stdoutBytes.toString(StandardCharsets.UTF_8);
+      String stdout = stdoutBytes.toString(StandardCharsets.UTF_8).replaceAll(ANSI_ESCAPE_PATTERN, "");
       String stderr = stderrBytes.toString(StandardCharsets.UTF_8);
 
-      assertTrue(stdout.contains("Wallet address: " + client.getWalletAddress()), stdout);
+      assertTrue(stdout.contains("DEPCHAIN CLIENT CONSOLE"), stdout);
+      assertTrue(stdout.contains("Active Wallet  " + client.getWalletAddress()), stdout);
       assertTrue(stdout.contains("walletAddress=" + client.getWalletAddress()), stdout);
       assertTrue(stdout.contains("depcoinBalance=1000000000"), stdout);
       assertTrue(stdout.contains("depcoinBalance=7"), stdout);
@@ -83,7 +85,7 @@ class ClientShellIntegrationTest extends IntegrationHarness {
       assertTrue(stdout.contains("istBalance=25"), stdout);
       assertTrue(stdout.contains("return=0x"), stdout);
       assertTrue(stdout.contains("istBalance=36"), stdout);
-      assertTrue(stdout.contains("Bye."), stdout);
+      assertTrue(stdout.contains("Session closed."), stdout);
       assertEquals("", stderr, stderr);
     }
   }

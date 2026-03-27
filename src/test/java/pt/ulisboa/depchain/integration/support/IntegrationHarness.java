@@ -207,7 +207,6 @@ public abstract class IntegrationHarness {
   private static void assertSuccessfulTransactionResponse(ClientResponse response, String message) {
     assertTrue(response.hasTransaction(), message + " (expected transaction response)");
     TransactionResponse transaction = response.getTransaction();
-    assertTrue(transaction.getAccepted(), message + " (transaction should be accepted)");
     assertTrue(transaction.hasReceipt(), message + " (missing transaction receipt)");
     assertTrue(transaction.getReceipt().getSuccess(), message + " (transaction should succeed)");
   }
