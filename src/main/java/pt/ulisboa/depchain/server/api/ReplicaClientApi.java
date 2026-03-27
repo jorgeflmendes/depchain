@@ -1,7 +1,9 @@
 package pt.ulisboa.depchain.server.api;
 
 import java.security.PublicKey;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -20,7 +22,7 @@ import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.QueryRequest;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
-import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
+import pt.ulisboa.depchain.server.node.BlockStore;
 import pt.ulisboa.depchain.shared.crypto.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
@@ -61,11 +63,19 @@ public final class ReplicaClientApi {
   }
 
   public boolean registerProposedCommand(NodeCommand command) {
-    ClientRequest request = clientRequestOrNull(command);
-    if (request == null) {
+    List<ClientRequest> requests = clientRequests(command);
+    if (requests.isEmpty()) {
       return true;
     }
-    return registerKnownRequest(request, null) != null;
+    if (!canAcceptAllRequests(requests)) {
+      return false;
+    }
+
+    for (ClientRequest request : requests) {
+      ClientRequestKey requestKey = requestKeyOrNull(request);
+      pendingRequests.putIfAbsent(requestKey, request);
+    }
+    return true;
   }
 
   public int getPendingRequestCount() {
@@ -77,6 +87,28 @@ public final class ReplicaClientApi {
       return 0;
     }
     return enqueuePendingRequests();
+  }
+
+  public void requeuePendingRequests(List<ClientRequest> requests) {
+    ValidationUtils.requireNonNull(requests, "requests");
+    for (ClientRequest request : requests) {
+      ClientRequestKey requestKey = requestKeyOrNull(request);
+      if (requestKey == null || !pendingRequests.containsKey(requestKey) || completedRequestIds.contains(requestKey)) {
+        continue;
+      }
+      enqueueIfNotQueued(request);
+    }
+  }
+
+  public void discardPendingRequest(ClientRequest request) {
+    ClientRequestKey requestKey = requestKeyOrNull(request);
+    if (requestKey == null) {
+      return;
+    }
+
+    pendingRequests.remove(requestKey);
+    queuedRequestIds.remove(requestKey);
+    clientContexts.remove(requestKey);
   }
 
   public ClientRequest awaitNextPendingRequest(long deadlineNanos) {
@@ -95,18 +127,81 @@ public final class ReplicaClientApi {
     }
   }
 
-  public ExecutionResult recordExecutedNode(Node node) {
-    NodeCommand command = node.getCommand();
-    String commandSummary = HotStuffSupport.commandSummary(command);
-    ClientRequestKey requestKey = requestKeyOrNull(command);
-    if (requestKey == null) {
-      return new ExecutionResult(commandSummary, null);
+  public List<ClientRequest> awaitNextPendingBatch(long deadlineNanos, long maxBlockGasLimit, int maxBatchSize) {
+    ValidationUtils.requireNonNegativeLong(maxBlockGasLimit, "maxBlockGasLimit");
+    ValidationUtils.requirePositiveInt(maxBatchSize, "maxBatchSize");
+
+    List<ClientRequest> batch = new ArrayList<>();
+    List<QueuedClientRequest> deferred = new ArrayList<>();
+    long totalGasLimit = 0L;
+
+    try {
+      while (batch.isEmpty()) {
+        QueuedClientRequest firstQueuedRequest = pollPendingCommand(deadlineNanos);
+        if (firstQueuedRequest == null) {
+          return List.of();
+        }
+
+        ClientRequest firstRequest = activeRequestOrNull(firstQueuedRequest);
+        if (firstRequest == null) {
+          continue;
+        }
+
+        selectQueuedRequest(firstRequest);
+        batch.add(firstRequest);
+        totalGasLimit = gasLimitOf(firstRequest);
+      }
+
+      while (batch.size() < maxBatchSize) {
+        QueuedClientRequest nextQueuedRequest = pendingCommands.poll();
+        if (nextQueuedRequest == null) {
+          break;
+        }
+
+        ClientRequest nextRequest = activeRequestOrNull(nextQueuedRequest);
+        if (nextRequest == null) {
+          continue;
+        }
+
+        long nextGasLimit = gasLimitOf(nextRequest);
+        if (totalGasLimit + nextGasLimit > maxBlockGasLimit) {
+          deferred.add(nextQueuedRequest);
+          continue;
+        }
+
+        selectQueuedRequest(nextRequest);
+        batch.add(nextRequest);
+        totalGasLimit += nextGasLimit;
+      }
+    } finally {
+      for (QueuedClientRequest deferredRequest : deferred) {
+        pendingCommands.offer(deferredRequest);
+      }
     }
 
-    completedRequestIds.add(requestKey);
-    pendingRequests.remove(requestKey);
-    queuedRequestIds.remove(requestKey);
-    return new ExecutionResult(commandSummary, clientContexts.remove(requestKey));
+    return List.copyOf(batch);
+  }
+
+  public List<ExecutionContext> recordExecutedNode(Node node) {
+    NodeCommand command = node.getCommand();
+    List<ClientRequest> requests = clientRequests(command);
+    if (requests.isEmpty()) {
+      return List.of();
+    }
+
+    List<ExecutionContext> results = new ArrayList<>(requests.size());
+    for (ClientRequest request : requests) {
+      ClientRequestKey requestKey = requestKeyOrNull(request);
+      if (requestKey == null) {
+        continue;
+      }
+
+      completedRequestIds.add(requestKey);
+      pendingRequests.remove(requestKey);
+      queuedRequestIds.remove(requestKey);
+      results.add(new ExecutionContext(request, clientContexts.remove(requestKey)));
+    }
+    return List.copyOf(results);
   }
 
   public void sendClientResponse(ConnectionKey key, ClientResponse response) {
@@ -123,15 +218,15 @@ public final class ReplicaClientApi {
   }
 
   public boolean isValidClientRequest(ClientRequest request) {
-    return isValidClientRequestSignature(request);
+    return fitsBlockGasPolicy(request) && isValidClientRequestSignature(request);
   }
 
   private ClientRequest registerKnownRequest(ClientRequest request, ConnectionKey key) {
-    ClientRequestKey requestKey = requestKeyOrNull(request);
-    if (requestKey == null) {
+    if (!canAcceptAllRequests(List.of(request))) {
       return null;
     }
 
+    ClientRequestKey requestKey = requestKeyOrNull(request);
     if (completedRequestIds.contains(requestKey)) {
       return null;
     }
@@ -145,10 +240,6 @@ public final class ReplicaClientApi {
         clientContexts.putIfAbsent(requestKey, key);
       }
       return knownRequest;
-    }
-
-    if (!isValidClientRequestSignature(request)) {
-      return null;
     }
 
     if (key != null) {
@@ -231,8 +322,84 @@ public final class ReplicaClientApi {
     return false;
   }
 
+  private boolean canAcceptAllRequests(List<ClientRequest> requests) {
+    for (ClientRequest request : requests) {
+      ClientRequestKey requestKey = requestKeyOrNull(request);
+      if (request == null || requestKey == null) {
+        return false;
+      }
+      if (completedRequestIds.contains(requestKey)) {
+        return false;
+      }
+
+      ClientRequest knownRequest = pendingRequests.get(requestKey);
+      if (knownRequest != null) {
+        if (!knownRequest.equals(request)) {
+          return false;
+        }
+        continue;
+      }
+
+      if (!isValidClientRequest(request)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean fitsBlockGasPolicy(ClientRequest request) {
+    if (request == null || !request.hasTransaction()) {
+      return true;
+    }
+    return request.getTransaction().getGasLimit() <= BlockStore.MAX_BLOCK_GAS_LIMIT;
+  }
+
+  private ClientRequest activeRequestOrNull(QueuedClientRequest queuedRequest) {
+    if (queuedRequest == null) {
+      return null;
+    }
+
+    ClientRequest request = queuedRequest.request();
+    ClientRequestKey requestKey = requestKeyOrNull(request);
+    if (requestKey == null) {
+      return null;
+    }
+
+    if (completedRequestIds.contains(requestKey)) {
+      queuedRequestIds.remove(requestKey);
+      pendingRequests.remove(requestKey);
+      return null;
+    }
+
+    ClientRequest knownRequest = pendingRequests.get(requestKey);
+    if (knownRequest == null || !knownRequest.equals(request)) {
+      queuedRequestIds.remove(requestKey);
+      return null;
+    }
+
+    return knownRequest;
+  }
+
+  private void selectQueuedRequest(ClientRequest request) {
+    ClientRequestKey requestKey = requestKeyOrNull(request);
+    if (requestKey != null) {
+      queuedRequestIds.remove(requestKey);
+    }
+  }
+
+  private static long gasLimitOf(ClientRequest request) {
+    if (request != null && request.hasTransaction()) {
+      return request.getTransaction().getGasLimit();
+    }
+    return 0L;
+  }
+
   private static ClientRequestKey requestKeyOrNull(NodeCommand command) {
-    return requestKeyOrNull(clientRequestOrNull(command));
+    List<ClientRequest> requests = clientRequests(command);
+    if (requests.size() == 1) {
+      return requestKeyOrNull(requests.getFirst());
+    }
+    return null;
   }
 
   private static ClientRequestKey requestKeyOrNull(ClientRequest request) {
@@ -248,17 +415,17 @@ public final class ReplicaClientApi {
     return null;
   }
 
-  private static ClientRequest clientRequestOrNull(NodeCommand command) {
+  private static List<ClientRequest> clientRequests(NodeCommand command) {
     if (command == null) {
-      return null;
+      return List.of();
     }
-    if (command.hasTransaction() && command.getTransaction().hasClientRequest()) {
-      return command.getTransaction().getClientRequest();
+    if (command.hasTransactionBatch()) {
+      return List.copyOf(command.getTransactionBatch().getClientRequestsList());
     }
-    return null;
+    return List.of();
   }
 
-  public record ExecutionResult(String commandSummary, ConnectionKey replyTarget) {
+  public record ExecutionContext(ClientRequest request, ConnectionKey replyTarget) {
   }
 
   private record QueuedClientRequest(ClientRequest request, long enqueueSequence) {

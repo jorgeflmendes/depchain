@@ -21,7 +21,7 @@ import pt.ulisboa.depchain.proto.ConsensusMessageType;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
-import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionBatchNodeCommand;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffCryptoPayloads;
@@ -110,8 +110,8 @@ class ThresholdSignatureProtocolTest {
   }
 
   private static Node createNode(int viewNumber, String value, long requestId) {
-    NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(signedTransferRequest(requestId, value, viewNumber)))
-        .build();
+    NodeCommand command = NodeCommand.newBuilder()
+        .setTransactionBatch(TransactionBatchNodeCommand.newBuilder().addClientRequests(signedTransferRequest(requestId, value, viewNumber))).build();
     String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(HotStuffSupport.GENESIS_NODE.getNodeHash(), viewNumber, command));
     return Node.newBuilder().setParentNodeHash(HotStuffSupport.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
   }

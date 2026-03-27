@@ -13,6 +13,7 @@ import org.apache.tuweni.units.bigints.UInt256;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 
+import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.server.execution.EvmService;
@@ -166,12 +167,12 @@ final class ReplicaBlockPersistence {
   }
 
   private List<GenesisParser.GenesisTransaction> persistedTransactions(Node node) {
-    if (!node.getCommand().hasTransaction()) {
-      return List.of();
+    if (node.getCommand().hasTransactionBatch()) {
+      return node.getCommand().getTransactionBatch().getClientRequestsList().stream().filter(ClientRequest::hasTransaction).map(ClientRequest::getTransaction)
+          .map(this::toPersistedTransaction).toList();
     }
 
-    TransactionRequest transaction = node.getCommand().getTransaction().getClientRequest().getTransaction();
-    return List.of(toPersistedTransaction(transaction));
+    return List.of();
   }
 
   private static GenesisParser.GenesisAccount snapshotAccount(EvmService evmService, String addressHex) {

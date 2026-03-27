@@ -33,7 +33,7 @@ import pt.ulisboa.depchain.proto.ProposalMessage;
 import pt.ulisboa.depchain.proto.QueryRequest;
 import pt.ulisboa.depchain.proto.QueryResponse;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
-import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionBatchNodeCommand;
 import pt.ulisboa.depchain.proto.TransactionReceipt;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionResponse;
@@ -44,13 +44,16 @@ import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.threshold.ThresholdSignatureProtocol;
 import pt.ulisboa.depchain.server.execution.EvmService;
 import pt.ulisboa.depchain.server.execution.IstCoin;
+import pt.ulisboa.depchain.server.node.BlockStore;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
+import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.time.TimeUtil;
 
 public class HotStuffManager {
+  private static final int MAX_TRANSACTIONS_PER_BLOCK = 32;
   private final ReplicaClientApi clientApi;
   private final ReplicaPeerApi replicaApi;
   private final Set<String> executedNodeHashes;
@@ -179,12 +182,16 @@ public class HotStuffManager {
       updateHighQC(selectedHighQC);
 
       long commandDeadlineNanos = TimeUtil.boundedMonotonicDeadlineAfterNow(viewDeadlineNanos, clientCommandWaitTimeoutMs);
-      ClientRequest request = clientApi.awaitNextPendingRequest(commandDeadlineNanos);
-      if (request == null) {
-        throw new ConsensusTimeoutException("Timed out waiting for client command");
+      List<ClientRequest> batch = clientApi.awaitNextPendingBatch(commandDeadlineNanos, BlockStore.MAX_BLOCK_GAS_LIMIT, MAX_TRANSACTIONS_PER_BLOCK);
+      if (batch.isEmpty()) {
+        throw new ConsensusTimeoutException("Timed out waiting for client command batch");
+      }
+      batch = fitBatchToProposalTransportBudget(selectedHighQC, batch);
+      if (batch.isEmpty()) {
+        throw new ConsensusTimeoutException("No pending client command fits the UDP proposal transport budget");
       }
 
-      NodeCommand command = nodeCommandForRequest(request);
+      NodeCommand command = nodeCommandForBatch(batch);
       currentProposal = createLeaf(selectedHighQC.getCertifiedNode().getNodeHash(), command);
       observeNode(currentProposal);
 
@@ -276,50 +283,89 @@ public class HotStuffManager {
 
   private void executeCommand(Node node) {
     NodeCommand command = node.getCommand();
-    ReplicaClientApi.ExecutionResult executionResult = clientApi.recordExecutedNode(node);
-    String clientCommand = executionResult.commandSummary();
-
     if (!HotStuffSupport.isNoOp(command)) {
-      logger.debug("Executing command: {}", clientCommand);
+      logger.debug("Executing command: {}", HotStuffSupport.commandSummary(command));
     }
     observeNode(node);
     executedNodeHashes.add(node.getNodeHash());
 
-    // Execute state transitions even when there is no reply target (e.g., catch-up paths).
-    ClientResponse clientResponse = clientResponseForExecution(node, clientCommand);
-    Node nodeForExecutionHook = nodeWithObservedGasUsed(node, clientResponse);
+    long totalGasUsed = 0L;
+    List<ReplicaClientApi.ExecutionContext> executionContexts = clientApi.recordExecutedNode(node);
+    for (ReplicaClientApi.ExecutionContext executionContext : executionContexts) {
+      if (!executionContext.request().hasTransaction()) {
+        continue;
+      }
 
+      ClientResponse clientResponse = transactionResponse(node, executionContext.request().getTransaction());
+      totalGasUsed = Math.addExact(totalGasUsed, gasUsedOf(clientResponse));
+
+      if (executionContext.replyTarget() != null) {
+        clientApi.sendClientResponse(executionContext.replyTarget(), clientResponse);
+      }
+    }
+
+    Node nodeForExecutionHook = node.toBuilder().setGasUsed(totalGasUsed).build();
     try {
       onNodeExecuted.accept(nodeForExecutionHook);
     } catch (RuntimeException exception) {
       logger.error("Node execution hook failed for node {}", node.getNodeHash(), exception);
     }
-    if (executionResult.replyTarget() == null) {
-      return;
-    }
-    clientApi.sendClientResponse(executionResult.replyTarget(), clientResponse);
   }
 
-  private static Node nodeWithObservedGasUsed(Node node, ClientResponse response) {
+  private NodeCommand nodeCommandForBatch(List<ClientRequest> requests) {
+    pt.ulisboa.depchain.shared.validation.ValidationUtils.requireNonEmpty(requests, "requests");
+    return NodeCommand.newBuilder().setTransactionBatch(TransactionBatchNodeCommand.newBuilder().addAllClientRequests(requests)).build();
+  }
+
+  private List<ClientRequest> fitBatchToProposalTransportBudget(QuorumCertificate justifyQc, List<ClientRequest> candidateBatch) {
+    pt.ulisboa.depchain.shared.validation.ValidationUtils.requireAllNonNull(pt.ulisboa.depchain.shared.validation.ValidationUtils
+        .named("justifyQc", justifyQc), pt.ulisboa.depchain.shared.validation.ValidationUtils.named("candidateBatch", candidateBatch));
+
+    ArrayList<ClientRequest> remainingRequests = new ArrayList<>(candidateBatch);
+    while (!remainingRequests.isEmpty()) {
+      ArrayList<ClientRequest> selectedRequests = new ArrayList<>();
+      for (ClientRequest request : remainingRequests) {
+        selectedRequests.add(request);
+        if (proposalDatagramSize(nodeCommandForBatch(selectedRequests), justifyQc) <= FairLossLink.MAX_PACKET_SIZE) {
+          continue;
+        }
+
+        selectedRequests.remove(selectedRequests.size() - 1);
+        break;
+      }
+
+      if (!selectedRequests.isEmpty()) {
+        if (selectedRequests.size() < remainingRequests.size()) {
+          clientApi.requeuePendingRequests(remainingRequests.subList(selectedRequests.size(), remainingRequests.size()));
+        }
+        return List.copyOf(selectedRequests);
+      }
+
+      ClientRequest oversizedRequest = remainingRequests.remove(0);
+      clientApi.discardPendingRequest(oversizedRequest);
+      logger.warn("Dropping client request {} because its PREPARE proposal would exceed UDP MAX_PACKET_SIZE ({})", requestSummary(oversizedRequest), FairLossLink.MAX_PACKET_SIZE);
+    }
+
+    return List.of();
+  }
+
+  private int proposalDatagramSize(NodeCommand command, QuorumCertificate justifyQc) {
+    return HotStuffSupport.estimatePrepareProposalDatagramSize(command, justifyQc, viewNumber, id);
+  }
+
+  private static String requestSummary(ClientRequest request) {
+    if (request == null || !request.hasTransaction()) {
+      return "<invalid>";
+    }
+    TransactionRequest transaction = request.getTransaction();
+    return "%d:%d/%s@%d".formatted(transaction.getRequestKey().getClientSenderId(), transaction.getRequestKey().getRequestId(), transaction.getType(), transaction.getGasPrice());
+  }
+
+  private static long gasUsedOf(ClientResponse response) {
     if (!response.hasTransaction() || !response.getTransaction().hasReceipt()) {
-      return node;
+      return 0L;
     }
-    return node.toBuilder().setGasUsed(response.getTransaction().getReceipt().getGasUsed()).build();
-  }
-
-  private NodeCommand nodeCommandForRequest(ClientRequest request) {
-    if (request.hasTransaction()) {
-      return NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(request)).build();
-    }
-    throw new IllegalArgumentException("ClientRequest body is not set");
-  }
-
-  private ClientResponse clientResponseForExecution(Node node, String clientCommand) {
-    NodeCommand command = node.getCommand();
-    if (command.hasTransaction()) {
-      return transactionResponse(node, command.getTransaction().getClientRequest().getTransaction());
-    }
-    throw new IllegalArgumentException("Node command body is not executable");
+    return response.getTransaction().getReceipt().getGasUsed();
   }
 
   private ClientResponse transactionResponse(Node node, TransactionRequest transaction) {

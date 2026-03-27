@@ -27,7 +27,7 @@ import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.PhaseCertificateMessage;
 import pt.ulisboa.depchain.proto.ProposalMessage;
 import pt.ulisboa.depchain.proto.QuorumCertificate;
-import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionBatchNodeCommand;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.proto.VoteMessage;
@@ -291,7 +291,7 @@ public final class ByzantineReplicaNode {
               .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(TEST_RECIPIENT_ADDRESS).setAmount(requestId + 1).setNonce(nonce).setGasLimit(21_000L).setGasPrice(1L)
               .setSignature(ByteString.copyFrom(signature)))
           .build();
-      NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(request)).build();
+      NodeCommand command = NodeCommand.newBuilder().setTransactionBatch(TransactionBatchNodeCommand.newBuilder().addClientRequests(request)).build();
       String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(HotStuffSupport.GENESIS_NODE.getNodeHash(), view, command));
       return Node.newBuilder().setParentNodeHash(HotStuffSupport.GENESIS_NODE.getNodeHash()).setNodeHash(nodeHash).setViewNumber(view).setCommand(command).build();
     } catch (Exception exception) {

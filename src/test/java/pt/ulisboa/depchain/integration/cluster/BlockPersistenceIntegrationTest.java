@@ -6,10 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.jupiter.api.AfterEach;
@@ -32,6 +36,8 @@ import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.crypto.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader;
+import pt.ulisboa.depchain.shared.crypto.key.PublicKeyLoader;
+import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
 import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
 
 @Tag("integration")
@@ -123,11 +129,35 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
     }
   }
 
+  @Test
+  @Timeout(90)
+  void multipleClientTransactionsArePersistedInSingleBlockOrderedByGasPrice() throws Exception {
+    populateConfig(configPath);
+
+    List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
+    try {
+      waitForServersStartupWithDiagnostics(servers, Duration.ofSeconds(35));
+
+      List<ClientRequest> requests = List
+          .of(signedTransferRequest(configPath, 100L, RECIPIENT, 3L, 0L, TRANSFER_GAS_LIMIT, 1L), signedTransferRequest(configPath, 101L, RECIPIENT, 11L, 0L, TRANSFER_GAS_LIMIT, 9L), signedTransferRequest(configPath, 102L, RECIPIENT, 7L, 0L, TRANSFER_GAS_LIMIT, 5L));
+
+      try (BatchSubmission batchSubmission = submitRequestsToLeaderWithoutWaiting(configPath, requests)) {
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertPersistedBatchForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
+      }
+    } finally {
+      stopProcesses(servers);
+    }
+  }
+
   private static ClientRequest signedTransferRequest(Path configPath, String to, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    long clientSenderId = config.client().senderId();
+    return signedTransferRequest(configPath, config.client().senderId(), to, amount, nonce, gasLimit, gasPrice);
+  }
+
+  private static ClientRequest signedTransferRequest(Path configPath, long clientSenderId, String to, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
+    ConfigParser config = ConfigParser.load(configPath);
     long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config);
+    PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config, clientSenderId);
 
     byte[] signaturePayload = ClientRequestSignaturePayloadUtil
         .signedTransactionRequestPayload(clientSenderId, requestId, TransactionType.TRANSACTION_TYPE_TRANSFER, to, amount, nonce, gasLimit, gasPrice);
@@ -170,10 +200,95 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
     }
   }
 
+  private void assertPersistedBatchForReplicas(List<String> replicaIds) {
+    try {
+      ConfigParser config = ConfigParser.load(configPath);
+      List<String> expectedFromOrder = List.of(clientAddress(config, 101L), clientAddress(config, 102L), clientAddress(config, 100L));
+      List<Long> expectedGasPrices = List.of(9L, 5L, 1L);
+      List<String> expectedAmounts = List.of("11", "7", "3");
+
+      for (String replicaId : replicaIds) {
+        BlockStore store = BlockStore.forReplica(config, replicaId);
+        BlockStore.BlockDocument genesis = store.load(0L).orElseThrow(() -> new AssertionError("Genesis block was not persisted for " + replicaId));
+        BlockStore.BlockDocument latest = store.loadLatest().orElseThrow(() -> new AssertionError("Latest block was not persisted for " + replicaId));
+
+        assertEquals(1L, latest.height(), "Batch should be persisted as a single block for " + replicaId);
+        assertEquals(genesis.blockHash(), latest.previousBlockHash(), "Batch block should link to the persisted genesis block for " + replicaId);
+        assertEquals(3, latest.transactions().size(), "Batch block should contain all three transactions for " + replicaId);
+        assertEquals(TRANSFER_GAS_LIMIT * 3L, latest.gasUsed(), "Batch block should aggregate gas used across all transactions for " + replicaId);
+        assertEquals(expectedFromOrder, latest.transactions().stream().map(transaction -> transaction.from())
+            .toList(), "Transactions should be ordered by descending gas price for " + replicaId);
+        assertEquals(expectedGasPrices, latest.transactions().stream().map(transaction -> transaction.gasPrice())
+            .toList(), "Persisted gas price order should match mempool priority for " + replicaId);
+        assertEquals(expectedAmounts, latest.transactions().stream().map(transaction -> transaction.amount())
+            .toList(), "Persisted transaction amounts should match the submitted batch for " + replicaId);
+        assertEquals("21", latest.state().get(RECIPIENT).balance(), "Recipient balance should include the full batch for " + replicaId);
+        assertEquals(BlockStore.computeBlockHash(latest.previousBlockHash(), latest.gasUsed(), latest.transactions()), latest
+            .blockHash(), "Persisted batch block hash should match its transaction array for " + replicaId);
+      }
+    } catch (Exception exception) {
+      throw new IllegalStateException("Failed to assert persisted batch state", exception);
+    }
+  }
+
+  private static String clientAddress(ConfigParser config, long clientSenderId) {
+    try {
+      PublicKey clientPublicKey = PublicKeyLoader.loadClientPublicKey(config, clientSenderId);
+      return CryptoUtil.deriveAddressHex(clientPublicKey);
+    } catch (Exception exception) {
+      throw new IllegalStateException("Could not derive client address for senderId " + clientSenderId, exception);
+    }
+  }
+
+  private static BatchSubmission submitRequestsToLeaderWithoutWaiting(Path configPath, List<ClientRequest> requests) throws Exception {
+    ConfigParser config = ConfigParser.load(configPath);
+    Map<Long, PublicKey> staticPublicKeys = PublicKeyLoader.loadStaticPublicKeys(config);
+    ConfigParser.ReplicaSection leader = config.requireReplicaById(LEADER_REPLICA_ID);
+    InetSocketAddress leaderEndpoint = new InetSocketAddress(leader.host(), leader.clientPort());
+
+    List<AuthenticatedLink> transports = new ArrayList<>(requests.size());
+    try {
+      for (ClientRequest request : requests) {
+        long clientSenderId = request.getTransaction().getRequestKey().getClientSenderId();
+        AuthenticatedLink transport = AuthenticatedLink.unbound(clientSenderId, PrivateKeyLoader.loadClientPrivateKey(config, clientSenderId), staticPublicKeys);
+        transports.add(transport);
+        transport.send(ThreadLocalRandom.current().nextLong(Long.MAX_VALUE), ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray(), leaderEndpoint);
+      }
+      return new BatchSubmission(transports);
+    } catch (Exception exception) {
+      for (AuthenticatedLink transport : transports) {
+        try {
+          transport.close();
+        } catch (Exception ignored) {
+        }
+      }
+      throw exception;
+    }
+  }
+
   private static void waitForServersStartupWithDiagnostics(List<StartedServer> servers, Duration timeout) throws Exception {
     for (StartedServer server : servers) {
       if (!server.awaitReady(timeout)) {
         fail("Server did not become ready: " + System.lineSeparator() + server.describeState());
+      }
+    }
+  }
+
+  private record BatchSubmission(List<AuthenticatedLink> transports) implements AutoCloseable {
+    @Override
+    public void close() throws Exception {
+      Exception firstFailure = null;
+      for (AuthenticatedLink transport : transports) {
+        try {
+          transport.close();
+        } catch (Exception exception) {
+          if (firstFailure == null) {
+            firstFailure = exception;
+          }
+        }
+      }
+      if (firstFailure != null) {
+        throw firstFailure;
       }
     }
   }

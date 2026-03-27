@@ -31,7 +31,7 @@ import pt.ulisboa.depchain.proto.FetchNodeResponseMessage;
 import pt.ulisboa.depchain.proto.Message;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
-import pt.ulisboa.depchain.proto.TransactionNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionBatchNodeCommand;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.server.api.ReplicaClientApi;
@@ -89,10 +89,10 @@ class HotStuffCatchUpTest {
   void fetchNodeFromReplicasRejectsInvalidResponseAndFallsBackToAlternateReplica() throws Exception {
     HotStuffManager hotStuffManager = createHotStuffManager();
     Node parent = createNode(1, HotStuffSupport.GENESIS_NODE.getNodeHash(), 201L, "parent");
-    ClientRequest tamperedRequest = parent.getCommand().getTransaction().getClientRequest().toBuilder()
-        .setTransaction(parent.getCommand().getTransaction().getClientRequest().getTransaction().toBuilder().setAmount(999L)).build();
+    ClientRequest tamperedRequest = parent.getCommand().getTransactionBatch().getClientRequests(0).toBuilder()
+        .setTransaction(parent.getCommand().getTransactionBatch().getClientRequests(0).getTransaction().toBuilder().setAmount(999L)).build();
     Node invalidParent = parent.toBuilder()
-        .setCommand(parent.getCommand().toBuilder().setTransaction(parent.getCommand().getTransaction().toBuilder().setClientRequest(tamperedRequest))).build();
+        .setCommand(parent.getCommand().toBuilder().setTransactionBatch(parent.getCommand().getTransactionBatch().toBuilder().setClientRequests(0, tamperedRequest))).build();
 
     hotStuffManager.onReplicaMessage(fetchNodeResponse(1, invalidParent));
     hotStuffManager.onReplicaMessage(fetchNodeResponse(2, parent));
@@ -155,8 +155,8 @@ class HotStuffCatchUpTest {
   }
 
   private static Node createNode(int viewNumber, String parentHash, long requestId, String value) {
-    NodeCommand command = NodeCommand.newBuilder().setTransaction(TransactionNodeCommand.newBuilder().setClientRequest(signedTransferRequest(requestId, value, viewNumber - 1L)))
-        .build();
+    NodeCommand command = NodeCommand.newBuilder()
+        .setTransactionBatch(TransactionBatchNodeCommand.newBuilder().addClientRequests(signedTransferRequest(requestId, value, viewNumber - 1L))).build();
     String nodeHash = CryptoUtil.sha256Hex(HotStuffCryptoPayloads.nodeHashPayload(parentHash, viewNumber, command));
     return Node.newBuilder().setParentNodeHash(parentHash).setNodeHash(nodeHash).setViewNumber(viewNumber).setCommand(command).build();
   }
