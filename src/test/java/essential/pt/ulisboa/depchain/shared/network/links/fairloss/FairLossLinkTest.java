@@ -1,9 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.fairloss;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -25,7 +22,7 @@ class FairLossLinkTest {
     InetSocketAddress receiverEndpoint = new InetSocketAddress(InetAddress.getLoopbackAddress(), freeUdpPort());
 
     try (FairLossLink receiver = FairLossLink.bind(receiverEndpoint)) {
-      assertNull(receiver.receive(50L));
+      assertThat(receiver.receive(50L)).isNull();
     }
   }
 
@@ -39,8 +36,9 @@ class FairLossLinkTest {
 
       InboundBytes inbound = receiver.receive(1_000L);
 
-      assertNotNull(inbound.sender());
-      assertArrayEquals(payload, inbound.payload());
+      assertThat(inbound).isNotNull();
+      assertThat(inbound.sender()).isNotNull();
+      assertThat(inbound.payload()).isEqualTo(payload);
     }
   }
 
@@ -56,11 +54,24 @@ class FairLossLinkTest {
       InboundBytes firstInbound = receiver.receive(1_000L);
       InboundBytes secondInbound = receiver.receive(1_000L);
 
-      assertNotNull(firstInbound);
-      assertNotNull(secondInbound);
-      assertArrayEquals(payload, firstInbound.payload());
-      assertArrayEquals(payload, secondInbound.payload());
-      assertTrue(firstInbound.sender().getPort() > 0);
+      assertThat(firstInbound).isNotNull();
+      assertThat(secondInbound).isNotNull();
+      assertThat(firstInbound.payload()).isEqualTo(payload);
+      assertThat(secondInbound.payload()).isEqualTo(payload);
+      assertThat(firstInbound.sender().getPort()).isPositive();
+    }
+  }
+
+  @Test
+  void dropProbabilityCanSuppressOutboundDatagrams() throws Exception {
+    InetSocketAddress receiverEndpoint = new InetSocketAddress(InetAddress.getLoopbackAddress(), freeUdpPort());
+    byte[] payload = "dropped".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    System.setProperty(FairLossLink.DROP_PROBABILITY_PROPERTY, "1.0");
+
+    try (FairLossLink receiver = FairLossLink.bind(receiverEndpoint); FairLossLink sender = FairLossLink.unbound()) {
+      sender.send(payload, receiverEndpoint);
+
+      assertThat(receiver.receive(200L)).isNull();
     }
   }
 
