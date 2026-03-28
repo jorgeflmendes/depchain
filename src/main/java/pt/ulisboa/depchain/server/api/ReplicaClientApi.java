@@ -430,13 +430,40 @@ public final class ReplicaClientApi {
 
   private record QueuedClientRequest(ClientRequest request, long enqueueSequence) {
     private static final Comparator<QueuedClientRequest> ORDERING = Comparator.comparingLong(QueuedClientRequest::gasPrice).reversed()
-        .thenComparingLong(QueuedClientRequest::enqueueSequence);
+        .thenComparingLong(QueuedClientRequest::clientSenderId).thenComparingLong(QueuedClientRequest::requestId).thenComparingLong(QueuedClientRequest::nonce);
 
     private long gasPrice() {
       if (request.hasTransaction()) {
         return request.getTransaction().getGasPrice();
       }
       return Long.MIN_VALUE;
+    }
+
+    private long clientSenderId() {
+      ClientRequestKey key = requestKey();
+      if (key == null) {
+        return Long.MAX_VALUE;
+      }
+      return key.getClientSenderId();
+    }
+
+    private long requestId() {
+      ClientRequestKey key = requestKey();
+      if (key == null) {
+        return Long.MAX_VALUE;
+      }
+      return key.getRequestId();
+    }
+
+    private long nonce() {
+      if (request.hasTransaction()) {
+        return request.getTransaction().getNonce();
+      }
+      return Long.MAX_VALUE;
+    }
+
+    private ClientRequestKey requestKey() {
+      return requestKeyOrNull(request);
     }
   }
 }
