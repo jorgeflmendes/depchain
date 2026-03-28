@@ -17,6 +17,8 @@ import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.evm.account.MutableAccount;
 import org.junit.jupiter.api.Test;
 
+import pt.ulisboa.depchain.shared.model.AccountKind;
+
 class EvmServiceTest {
   private static final Address SENDER = Address.fromHexString("0x1000000000000000000000000000000000000001");
   private static final Address RECIPIENT = Address.fromHexString("0x2000000000000000000000000000000000000002");
@@ -48,6 +50,8 @@ class EvmServiceTest {
 
     assertNotNull(deployedContract);
     assertNotNull(deployedContract.getCode());
+    assertEquals(AccountKind.EOA, evmService.accountKind(SENDER));
+    assertEquals(AccountKind.CONTRACT, evmService.accountKind(contractAddress));
     assertEquals(1L, senderAccount.getNonce());
     assertEquals("IST Coin", decodeAbiString(evmService.callContract(SENDER, contractAddress, NAME_SELECTOR)));
     assertEquals("IST", decodeAbiString(evmService.callContract(SENDER, contractAddress, SYMBOL_SELECTOR)));
@@ -101,6 +105,30 @@ class EvmServiceTest {
     assertNull(result.errorMessage());
     assertEquals(2L, senderAccount.getNonce());
     assertEquals(Wei.of(2_000_000L - result.gasUsed()), senderAccount.getBalance());
+  }
+
+  @Test
+  void nativeTransferRejectsContractTargets() {
+    EvmService evmService = new EvmService();
+    evmService.createAccount(SENDER, 0L, Wei.of(500_000L));
+    Address contractAddress = evmService.deployContract(SENDER, IST_COIN_CREATION_BYTECODE, abiEncodeAddress(SENDER));
+
+    EvmService.TransactionResult result = evmService.transferNative(SENDER, contractAddress, Wei.of(1L), 1L, 21_000L, Wei.ONE);
+
+    assertFalse(result.success());
+    assertEquals("native transfer target is a contract account; use CONTRACT_CALL", result.errorMessage());
+  }
+
+  @Test
+  void contractCallRejectsExternallyOwnedAccounts() {
+    EvmService evmService = new EvmService();
+    evmService.createAccount(SENDER, 0L, Wei.of(500_000L));
+    evmService.createAccount(RECIPIENT, 0L, Wei.ZERO);
+
+    EvmService.TransactionResult result = evmService.callContract(SENDER, RECIPIENT, NAME_SELECTOR, Wei.ZERO, 0L, 250_000L, Wei.ONE);
+
+    assertFalse(result.success());
+    assertEquals("target account is not a contract", result.errorMessage());
   }
 
   private static Bytes balanceOfCallData(Address address) {

@@ -64,11 +64,6 @@ final class StubbornContext {
     return TimeUnit.MILLISECONDS.toNanos(retryDelayMs(attempt));
   }
 
-  boolean reachedRetryLimit(TrackedMessage tracked) {
-    ValidationUtils.requireNonNull(tracked, "tracked");
-    return tracked.retryAttempt() >= StubbornLink.DEFAULT_MAX_RETRY_ATTEMPTS;
-  }
-
   void scheduleNextRetrySweep(StubbornSender sender) {
     if (!running.get()) {
       return;

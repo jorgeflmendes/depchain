@@ -19,6 +19,7 @@ import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.server.execution.EvmService;
 import pt.ulisboa.depchain.shared.config.GenesisParser;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
+import pt.ulisboa.depchain.shared.model.AccountKind;
 import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class ReplicaBlockPersistence {
@@ -80,11 +81,12 @@ final class ReplicaBlockPersistence {
     for (Map.Entry<String, GenesisParser.GenesisAccount> entry : block.state().entrySet()) {
       String addressHex = entry.getKey();
       GenesisParser.GenesisAccount snapshot = entry.getValue();
-      var account = evmService.createAccount(parseAddress(addressHex, "persisted state address"), snapshot.nonce(), Wei.of(new BigInteger(snapshot.balance())));
+      var account = evmService.createAccount(parseAddress(addressHex, "persisted state address"), snapshot.nonce(), Wei.of(new BigInteger(snapshot.balance())), snapshot.kind());
 
       if (snapshot.code() != null && !snapshot.code().isBlank()) {
         account.setCode(Bytes.fromHexString(snapshot.code()));
       }
+      evmService.restoreAccountKind(parseAddress(addressHex, "persisted state address"), snapshot.kind());
 
       for (Map.Entry<String, String> storageEntry : snapshot.storage().entrySet()) {
         account.setStorageValue(parseStorageWordHex(storageEntry.getKey(), "persisted state storage key"), parseStorageWordHex(storageEntry
@@ -97,11 +99,13 @@ final class ReplicaBlockPersistence {
     for (Map.Entry<String, GenesisParser.GenesisAccount> entry : genesis.state().entrySet()) {
       String addressHex = entry.getKey();
       GenesisParser.GenesisAccount genesisAccount = entry.getValue();
-      var account = evmService.createAccount(parseAddress(addressHex, "state address"), genesisAccount.nonce(), Wei.of(new BigInteger(genesisAccount.balance())));
+      var account = evmService
+          .createAccount(parseAddress(addressHex, "state address"), genesisAccount.nonce(), Wei.of(new BigInteger(genesisAccount.balance())), genesisAccount.kind());
 
       if (genesisAccount.code() != null && !genesisAccount.code().isBlank()) {
         account.setCode(Bytes.fromHexString(genesisAccount.code()));
       }
+      evmService.restoreAccountKind(parseAddress(addressHex, "state address"), genesisAccount.kind());
 
       for (Map.Entry<String, String> storageEntry : genesisAccount.storage().entrySet()) {
         account.setStorageValue(parseStorageWordHex(storageEntry.getKey(), "state storage key"), parseStorageWordHex(storageEntry.getValue(), "state storage value"));
@@ -189,7 +193,11 @@ final class ReplicaBlockPersistence {
     LinkedHashMap<String, String> storage = new LinkedHashMap<>();
     account.getUpdatedStorage().entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> storage.put(entry.getKey().toHexString(), entry.getValue().toHexString()));
 
-    return new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, storage);
+    AccountKind kind = evmService.accountKind(account.getAddress());
+    if (kind == null) {
+      kind = code == null ? AccountKind.EOA : AccountKind.CONTRACT;
+    }
+    return new GenesisParser.GenesisAccount(account.getBalance().toBigInteger().toString(), account.getNonce(), code, storage, kind);
   }
 
   private GenesisParser.GenesisTransaction toPersistedTransaction(TransactionRequest transaction) {

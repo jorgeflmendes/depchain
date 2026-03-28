@@ -4,6 +4,8 @@ import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.math.BigInteger;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Address;
@@ -15,6 +17,7 @@ import org.hyperledger.besu.evm.fluent.SimpleWorld;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.tracing.OperationTracer;
 
+import pt.ulisboa.depchain.shared.model.AccountKind;
 import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class EvmService {
@@ -23,6 +26,7 @@ public final class EvmService {
 
   private final EvmSpecVersion specVersion;
   private final SimpleWorld world;
+  private final Map<Address, AccountKind> accountKinds;
 
   // TODO: replace placeholder gas defaults with the project gas schedule.
   private static final long DEFAULT_GAS_LIMIT = 10_000_000L;
@@ -35,15 +39,23 @@ public final class EvmService {
   public EvmService(EvmSpecVersion specVersion) {
     this.specVersion = ValidationUtils.requireNonNull(specVersion, "specVersion");
     this.world = new SimpleWorld();
+    this.accountKinds = new HashMap<>();
   }
 
   public MutableAccount createAccount(Address address, long nonce, Wei balance) {
+    return createAccount(address, nonce, balance, AccountKind.EOA);
+  }
+
+  public MutableAccount createAccount(Address address, long nonce, Wei balance, AccountKind accountKind) {
     ValidationUtils.requireNonNull(address, "address");
     ValidationUtils.requireNonNegativeLong(nonce, "nonce");
     ValidationUtils.requireNonNull(balance, "balance");
+    ValidationUtils.requireNonNull(accountKind, "accountKind");
 
     world.createAccount(address, nonce, balance);
-    return account(address);
+    MutableAccount createdAccount = account(address);
+    accountKinds.put(address, accountKind);
+    return createdAccount;
   }
 
   public MutableAccount account(Address address) {
@@ -56,9 +68,25 @@ public final class EvmService {
     return world;
   }
 
+  public AccountKind accountKind(Address address) {
+    ValidationUtils.requireNonNull(address, "address");
+    return accountKinds.get(address);
+  }
+
+  public boolean isAccountKind(Address address, AccountKind expectedKind) {
+    ValidationUtils.requireAllNonNull(named("address", address), named("expectedKind", expectedKind));
+    return expectedKind.equals(accountKinds.get(address));
+  }
+
+  public void restoreAccountKind(Address address, AccountKind accountKind) {
+    ValidationUtils.requireAllNonNull(named("address", address), named("accountKind", accountKind));
+    ValidationUtils.requirePresent(account(address), "unknown account: " + address);
+    accountKinds.put(address, accountKind);
+  }
+
   public Address deployContract(Address sender, Bytes creationBytecode, Bytes constructorArguments) {
     ValidationUtils.requireAllNonNull(named("sender", sender), named("creationBytecode", creationBytecode), named("constructorArguments", constructorArguments));
-    MutableAccount senderAccount = ValidationUtils.requirePresent(account(sender), "unknown sender account: " + sender);
+    MutableAccount senderAccount = requireAccount(sender, AccountKind.EOA, "sender");
 
     Address contractAddress = Address.contractAddress(sender, senderAccount.getNonce());
     Bytes initCode = Bytes.concatenate(creationBytecode, constructorArguments);
@@ -67,6 +95,7 @@ public final class EvmService {
         .returnData();
     MutableAccount contractAccount = ValidationUtils.requirePresent(account(contractAddress), "contract deployment did not create account: " + contractAddress);
     contractAccount.setCode(ValidationUtils.requireNonNull(runtimeBytecode, "runtimeBytecode"));
+    accountKinds.put(contractAddress, AccountKind.CONTRACT);
     senderAccount.incrementNonce();
     return contractAddress;
   }
@@ -77,7 +106,7 @@ public final class EvmService {
 
   public Bytes callContract(Address sender, Address contractAddress, Bytes callData) {
     ValidationUtils.requireNonNull(contractAddress, "contractAddress");
-    MutableAccount contractAccount = ValidationUtils.requirePresent(account(contractAddress), "unknown contract account: " + contractAddress);
+    MutableAccount contractAccount = requireAccount(contractAddress, AccountKind.CONTRACT, "contractAddress");
 
     return execute(sender, contractAddress, contractAddress, contractAccount.getCode(), ValidationUtils
         .requireNonNull(callData, "callData"), Wei.ZERO, DEFAULT_GAS_LIMIT, Wei.ZERO, MessageFrame.Type.MESSAGE_CALL).returnData();
@@ -99,9 +128,14 @@ public final class EvmService {
     ValidationUtils.requireNonNegativeLong(nonce, "nonce");
     ValidationUtils.requirePositiveLong(gasLimit, "gasLimit");
 
-    MutableAccount senderAccount = ValidationUtils.requirePresent(account(sender), "unknown sender account: " + sender);
+    MutableAccount senderAccount = requireAccount(sender, AccountKind.EOA, "sender");
     if (senderAccount.getNonce() != nonce) {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "invalid transaction nonce");
+    }
+
+    AccountKind recipientKind = accountKind(recipient);
+    if (recipientKind == AccountKind.CONTRACT) {
+      return new TransactionResult(false, 0L, Bytes.EMPTY, "native transfer target is a contract account; use CONTRACT_CALL");
     }
 
     Wei maxFee = calculateFee(gasPrice, gasLimit, gasLimit);
@@ -118,7 +152,7 @@ public final class EvmService {
     }
 
     if (account(recipient) == null) {
-      world.createAccount(recipient, 0L, Wei.ZERO);
+      createAccount(recipient, 0L, Wei.ZERO, AccountKind.EOA);
     }
 
     TransactionResult execution = execute(sender, recipient, recipient, Bytes.EMPTY, Bytes.EMPTY, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
@@ -138,14 +172,22 @@ public final class EvmService {
     ValidationUtils.requireNonNegativeLong(nonce, "nonce");
     ValidationUtils.requirePositiveLong(gasLimit, "gasLimit");
 
-    MutableAccount senderAccount = ValidationUtils.requirePresent(account(sender), "unknown sender account: " + sender);
+    MutableAccount senderAccount = requireAccount(sender, AccountKind.EOA, "sender");
     if (senderAccount.getNonce() != nonce) {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "invalid transaction nonce");
     }
 
+    AccountKind targetKind = accountKind(contractAddress);
+    if (targetKind == null) {
+      return new TransactionResult(false, 0L, Bytes.EMPTY, "unknown target account");
+    }
+    if (targetKind != AccountKind.CONTRACT) {
+      return new TransactionResult(false, 0L, Bytes.EMPTY, "target account is not a contract");
+    }
+
     MutableAccount contractAccount = account(contractAddress);
     if (contractAccount == null || contractAccount.getCode() == null || contractAccount.getCode().isEmpty()) {
-      return new TransactionResult(false, 0L, Bytes.EMPTY, "unknown contract account");
+      return new TransactionResult(false, 0L, Bytes.EMPTY, "contract account has no runtime bytecode");
     }
 
     Wei maxFee = calculateFee(gasPrice, gasLimit, gasLimit);
@@ -163,6 +205,20 @@ public final class EvmService {
       return new TransactionResult(false, execution.gasUsed(), execution.returnData(), execution.errorMessage());
     }
     return new TransactionResult(true, execution.gasUsed(), execution.returnData(), null);
+  }
+
+  private MutableAccount requireAccount(Address address, AccountKind expectedKind, String fieldName) {
+    ValidationUtils.requireAllNonNull(named(fieldName, address), named("expectedKind", expectedKind));
+
+    MutableAccount resolvedAccount = ValidationUtils.requirePresent(account(address), "unknown " + fieldName + " account: " + address);
+    AccountKind actualKind = accountKinds.get(address);
+    if (actualKind == null) {
+      throw new IllegalStateException("unknown account kind for " + fieldName + " account: " + address);
+    }
+    if (actualKind != expectedKind) {
+      throw new IllegalArgumentException(fieldName + " account must be " + expectedKind + " but was " + actualKind);
+    }
+    return resolvedAccount;
   }
 
   private static Wei calculateFee(Wei gasPrice, long gasLimit, long gasUsed) {

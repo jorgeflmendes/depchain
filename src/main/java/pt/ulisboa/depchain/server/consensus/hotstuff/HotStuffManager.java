@@ -171,32 +171,32 @@ public class HotStuffManager {
   private void onPrepare() {
     if (isLeader()) {
       long viewDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
-      List<Message> msgs = messageInbox.waitForValidNewViewsUntil(viewNumber, quorum - 1, viewDeadlineNanos, this::verifyQC);
-      QuorumCertificate selectedHighQC = highQC;
+      List<Message> msgs = messageInbox.waitForValidNewViewsUntil(viewNumber, quorum - 1, viewDeadlineNanos, this::isValidPrepareJustifyQc);
+      QuorumCertificate selectedPrepareQc = prepareQC;
       for (Message m : msgs) {
         QuorumCertificate justifyQc = justifyQCOrNull(m);
-        if (justifyQc != null && justifyQc.getViewNumber() > selectedHighQC.getViewNumber()) {
-          selectedHighQC = justifyQc;
+        if (justifyQc != null && justifyQc.getViewNumber() > selectedPrepareQc.getViewNumber()) {
+          selectedPrepareQc = justifyQc;
         }
       }
-      updateHighQC(selectedHighQC);
+      updateHighQC(selectedPrepareQc);
 
       long commandDeadlineNanos = TimeUtil.boundedMonotonicDeadlineAfterNow(viewDeadlineNanos, clientCommandWaitTimeoutMs);
       List<ClientRequest> batch = clientApi.awaitNextPendingBatch(commandDeadlineNanos, BlockStore.MAX_BLOCK_GAS_LIMIT, MAX_TRANSACTIONS_PER_BLOCK);
       if (batch.isEmpty()) {
         throw new ConsensusTimeoutException("Timed out waiting for client command batch");
       }
-      batch = fitBatchToProposalTransportBudget(selectedHighQC, batch);
+      batch = fitBatchToProposalTransportBudget(selectedPrepareQc, batch);
       if (batch.isEmpty()) {
         throw new ConsensusTimeoutException("No pending client command fits the UDP proposal transport budget");
       }
 
       NodeCommand command = nodeCommandForBatch(batch);
-      currentProposal = createLeaf(selectedHighQC.getCertifiedNode().getNodeHash(), command);
+      currentProposal = createLeaf(selectedPrepareQc.getCertifiedNode().getNodeHash(), command);
       observeNode(currentProposal);
 
       Message proposal = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE)
-          .setProposal(ProposalMessage.newBuilder().setProposedNode(currentProposal).setJustifyQc(selectedHighQC)).build();
+          .setProposal(ProposalMessage.newBuilder().setProposedNode(currentProposal).setJustifyQc(selectedPrepareQc)).build();
       replicaApi.broadcastMessage(proposal);
     } else {
       long phaseDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(viewChangeTimeoutMs);
@@ -209,7 +209,7 @@ public class HotStuffManager {
         proposedNode = prepareMsg.getProposal().getProposedNode();
       }
 
-      boolean isValidJustify = justify != null && verifyQC(justify);
+      boolean isValidJustify = justify != null && isValidPrepareJustifyQc(justify);
       boolean isValidProposedNode = proposedNode != null && isValidNode(proposedNode);
       boolean hasAvailableProposedRequest = proposedNode != null && clientApi.registerProposedCommand(proposedNode.getCommand());
       boolean extendsJustifiedNode = justify != null && proposedNode != null && HotStuffSupport.extendsNode(proposedNode, justify.getCertifiedNode());
@@ -494,6 +494,18 @@ public class HotStuffManager {
 
   private boolean verifyQC(QuorumCertificate qc) {
     return thresholdProtocol.verifyQC(qc);
+  }
+
+  private boolean isValidPrepareJustifyQc(QuorumCertificate qc) {
+    if (qc == null || !verifyQC(qc)) {
+      return false;
+    }
+
+    if (qc.getViewNumber() == -1) {
+      return qc.getMessageType() == ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE && HotStuffSupport.isSameNode(qc.getCertifiedNode(), HotStuffSupport.GENESIS_NODE);
+    }
+
+    return qc.getMessageType() == ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE;
   }
 
   private Node createLeaf(String parentHash, NodeCommand command) {

@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
+import pt.ulisboa.depchain.shared.model.AccountKind;
 import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public record GenesisParser(long height, @JsonProperty("block_hash") String blockHash, @JsonProperty("previous_block_hash") @Nullable String previousBlockHash,
@@ -31,6 +32,7 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
       .enable(SerializationFeature.INDENT_OUTPUT);
   private static final Path DEFAULT_PATH = Path.of("config", "genesis.json");
   private static final String GENESIS_FILE_NAME = "genesis.json";
+  private static final String GENESIS_LOCK_FILE_NAME = "genesis.lock.json";
   private static final Pattern ADDRESS_PATTERN = Pattern.compile("^[0-9a-f]{40}$");
   private static final Pattern HASH_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
 
@@ -55,11 +57,12 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
   }
 
   public static GenesisParser loadDefault() throws IOException {
-    return load(DEFAULT_PATH);
+    return Files.exists(DEFAULT_PATH.getParent().resolve(GENESIS_LOCK_FILE_NAME)) ? load(DEFAULT_PATH.getParent().resolve(GENESIS_LOCK_FILE_NAME)) : load(DEFAULT_PATH);
   }
 
   public static GenesisParser loadForConfig(Path configPath) throws IOException {
-    return load(genesisPathForConfig(configPath));
+    Path lockPath = genesisLockPathForConfig(configPath);
+    return Files.exists(lockPath) ? load(lockPath) : load(genesisPathForConfig(configPath));
   }
 
   public static Path genesisPathForConfig(Path configPath) {
@@ -69,6 +72,15 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
       throw new IllegalArgumentException("configPath must have a parent directory");
     }
     return configDirectory.resolve(GENESIS_FILE_NAME);
+  }
+
+  public static Path genesisLockPathForConfig(Path configPath) {
+    ValidationUtils.requireNonNull(configPath, "configPath");
+    Path configDirectory = configPath.toAbsolutePath().normalize().getParent();
+    if (configDirectory == null) {
+      throw new IllegalArgumentException("configPath must have a parent directory");
+    }
+    return configDirectory.resolve(GENESIS_LOCK_FILE_NAME);
   }
 
   public void write(Path path) throws IOException {
@@ -149,7 +161,7 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
     }
   }
 
-  public record GenesisAccount(String balance, long nonce, @Nullable String code, LinkedHashMap<String, String> storage) {
+  public record GenesisAccount(String balance, long nonce, @Nullable String code, LinkedHashMap<String, String> storage, @Nullable AccountKind kind) {
     public GenesisAccount {
       balance = ValidationUtils.requireNonBlank(balance, "account.balance");
       ValidationUtils.requireNonNegativeLong(nonce, "account.nonce");
@@ -159,6 +171,10 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
 
       if (code != null && !code.isBlank() && !code.startsWith("0x")) {
         throw new IllegalArgumentException("account.code must use 0x-prefixed hex encoding when present");
+      }
+
+      if (kind == null) {
+        kind = code != null && !code.isBlank() ? AccountKind.CONTRACT : AccountKind.EOA;
       }
 
       for (Map.Entry<String, String> entry : storage.entrySet()) {

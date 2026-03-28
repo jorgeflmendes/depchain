@@ -58,7 +58,7 @@ public final class ReplicaNode {
     this.clientStaticPKeys = clientPublicKeys;
     this.replicaStaticPKeys = PublicKeyLoader.loadReplicaPublicKeys(configParser);
     this.replicaSenderIdByConsensusEndpoint = buildReplicaSenderIdByConsensusEndpoint(configParser);
-    this.genesis = GenesisMaterializer.materialize(GenesisParser.loadForConfig(Path.of(configPath)), configParser, clientPublicKeys);
+    this.genesis = GenesisMaterializer.loadOrWriteLock(Path.of(configPath), configParser, clientPublicKeys);
     this.evmService = new EvmService();
     Address istCoinContractAddress = IstCoin.resolveContractAddress(genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());

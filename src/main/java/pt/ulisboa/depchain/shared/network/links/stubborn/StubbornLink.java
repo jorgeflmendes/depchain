@@ -17,7 +17,6 @@ public final class StubbornLink implements BlockingLink<InboundBytes> {
   public static final long DEFAULT_BASE_DELAY_MS = 80L;
   public static final long DEFAULT_MAX_DELAY_MS = 1_500L;
   public static final double DEFAULT_JITTER_RATIO = 0.20d;
-  public static final int DEFAULT_MAX_RETRY_ATTEMPTS = 8;
 
   private final StubbornContext context;
   private final StubbornSender sender;

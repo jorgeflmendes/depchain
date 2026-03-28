@@ -7,6 +7,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.eclipse.jdt.annotation.Nullable;
 
@@ -15,9 +16,11 @@ import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class FairLossLink implements BlockingLink<InboundBytes> {
   public static final int MAX_PACKET_SIZE = 8_192;
+  public static final String DROP_PROBABILITY_PROPERTY = "depchain.fairloss.dropProbability";
   private static final int RECEIVE_BUFFER_RING_SIZE = 32;
 
   private final DatagramSocket socket;
+  private final double simulatedDropProbability;
   private final byte[][] receiveBufferRing;
   private final DatagramPacket receivePacket;
   private final ThreadLocal<DatagramPacket> sendPacketByThread;
@@ -26,6 +29,7 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
 
   private FairLossLink(DatagramSocket socket) throws SocketException {
     this.socket = ValidationUtils.requireNonNull(socket, "socket");
+    this.simulatedDropProbability = configuredDropProbability();
     this.receiveBufferRing = new byte[RECEIVE_BUFFER_RING_SIZE][MAX_PACKET_SIZE];
     this.receivePacket = new DatagramPacket(receiveBufferRing[0], MAX_PACKET_SIZE);
     this.sendPacketByThread = ThreadLocal.withInitial(() -> new DatagramPacket(new byte[0], 0));
@@ -51,6 +55,10 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
     Objects.requireNonNull(remoteEndpoint, "remoteEndpoint cannot be null");
     if (payload.length > MAX_PACKET_SIZE) {
       throw new IllegalArgumentException("Serialized payload exceeds MAX_PACKET_SIZE (%d > %d)".formatted(payload.length, MAX_PACKET_SIZE));
+    }
+
+    if (shouldDropOutboundPacket()) {
+      return;
     }
 
     DatagramPacket datagram = sendPacketByThread.get();
@@ -104,5 +112,22 @@ public final class FairLossLink implements BlockingLink<InboundBytes> {
   @Override
   public void close() {
     socket.close();
+  }
+
+  private static double configuredDropProbability() {
+    String configuredValue = System.getProperty(DROP_PROBABILITY_PROPERTY);
+    if (configuredValue == null || configuredValue.isBlank()) {
+      return 0.0d;
+    }
+
+    double parsedValue = Double.parseDouble(configuredValue.trim());
+    if (parsedValue < 0.0d || parsedValue > 1.0d) {
+      throw new IllegalArgumentException(DROP_PROBABILITY_PROPERTY + " must be between 0.0 and 1.0");
+    }
+    return parsedValue;
+  }
+
+  private boolean shouldDropOutboundPacket() {
+    return simulatedDropProbability > 0.0d && ThreadLocalRandom.current().nextDouble() < simulatedDropProbability;
   }
 }

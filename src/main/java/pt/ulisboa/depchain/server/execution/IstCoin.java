@@ -14,7 +14,10 @@ import pt.ulisboa.depchain.shared.config.GenesisParser;
 public final class IstCoin {
   private static final int ABI_WORD_SIZE = 32;
   private static final Bytes BALANCE_OF_SELECTOR = Bytes.fromHexString("0x70a08231");
+  private static final Bytes ALLOWANCE_SELECTOR = Bytes.fromHexString("0xdd62ed3e");
+  private static final Bytes APPROVE_SELECTOR = Bytes.fromHexString("0x095ea7b3");
   private static final Bytes TRANSFER_SELECTOR = Bytes.fromHexString("0xa9059cbb");
+  private static final Bytes TRANSFER_FROM_SELECTOR = Bytes.fromHexString("0x23b872dd");
 
   private final EvmService evmService;
   private final Address contractAddress;
@@ -41,8 +44,29 @@ public final class IstCoin {
     }
   }
 
+  public EvmService.TransactionResult allowance(Address sender, Address owner, Address spender, long nonce, long gasLimit, Wei gasPrice) {
+    return callAndNormalize(sender, allowanceCallData(owner, spender), nonce, gasLimit, gasPrice, "invalid IST Coin allowance response", IstCoin::normalizeUnsignedResult);
+  }
+
+  public EvmService.TransactionResult getAllowance(Address owner, Address spender) {
+    try {
+      Bytes returnData = evmService.callContract(contractAddress, contractAddress, allowanceCallData(owner, spender));
+      return new EvmService.TransactionResult(true, 0L, normalizeUnsignedResult(returnData), null);
+    } catch (RuntimeException exception) {
+      return invalidResponse(0L, "invalid IST Coin allowance response");
+    }
+  }
+
+  public EvmService.TransactionResult approve(Address sender, Address spender, long amount, long nonce, long gasLimit, Wei gasPrice) {
+    return callAndNormalize(sender, approveCallData(spender, amount), nonce, gasLimit, gasPrice, "invalid IST Coin approve response", IstCoin::normalizeBooleanResult);
+  }
+
   public EvmService.TransactionResult transfer(Address sender, Address recipient, long amount, long nonce, long gasLimit, Wei gasPrice) {
     return callAndNormalize(sender, transferCallData(recipient, amount), nonce, gasLimit, gasPrice, "invalid IST Coin transfer response", IstCoin::normalizeBooleanResult);
+  }
+
+  public EvmService.TransactionResult transferFrom(Address sender, Address owner, Address recipient, long amount, long nonce, long gasLimit, Wei gasPrice) {
+    return callAndNormalize(sender, transferFromCallData(owner, recipient, amount), nonce, gasLimit, gasPrice, "invalid IST Coin transferFrom response", IstCoin::normalizeBooleanResult);
   }
 
   public static Address resolveDefaultContractAddress() throws IOException {
@@ -85,11 +109,29 @@ public final class IstCoin {
     return Bytes.concatenate(BALANCE_OF_SELECTOR, abiEncodeAddress(owner));
   }
 
+  private static Bytes allowanceCallData(Address owner, Address spender) {
+    return Bytes.concatenate(ALLOWANCE_SELECTOR, abiEncodeAddress(owner), abiEncodeAddress(spender));
+  }
+
+  private static Bytes approveCallData(Address spender, long amount) {
+    if (amount < 0L) {
+      throw new IllegalArgumentException("amount must be non-negative");
+    }
+    return Bytes.concatenate(APPROVE_SELECTOR, abiEncodeAddress(spender), abiEncodeUnsigned(BigInteger.valueOf(amount)));
+  }
+
   private static Bytes transferCallData(Address recipient, long amount) {
     if (amount < 0L) {
       throw new IllegalArgumentException("amount must be non-negative");
     }
     return Bytes.concatenate(TRANSFER_SELECTOR, abiEncodeAddress(recipient), abiEncodeUnsigned(BigInteger.valueOf(amount)));
+  }
+
+  private static Bytes transferFromCallData(Address owner, Address recipient, long amount) {
+    if (amount < 0L) {
+      throw new IllegalArgumentException("amount must be non-negative");
+    }
+    return Bytes.concatenate(TRANSFER_FROM_SELECTOR, abiEncodeAddress(owner), abiEncodeAddress(recipient), abiEncodeUnsigned(BigInteger.valueOf(amount)));
   }
 
   private static Bytes abiEncodeAddress(Address address) {

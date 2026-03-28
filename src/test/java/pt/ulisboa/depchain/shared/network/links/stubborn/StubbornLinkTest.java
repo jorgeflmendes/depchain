@@ -1,7 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.stubborn;
 
 import static org.awaitility.Awaitility.await;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.net.DatagramSocket;
@@ -11,22 +10,18 @@ import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 
-import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 
 class StubbornLinkTest {
   @Test
-  void trackedMessageEventuallyReportsTerminalFailure() throws Exception {
+  void trackedMessageDoesNotReportTerminalFailureWhileLinkRemainsOpen() throws Exception {
     InetSocketAddress unusedEndpoint = new InetSocketAddress(InetAddress.getLoopbackAddress(), freeUdpPort());
     TrackedKey trackedKey = new TrackedKey(1L, 1, 1);
 
     try (StubbornLink link = StubbornLink.unbound()) {
       link.sendTracked(trackedKey, "retry-me".getBytes(java.nio.charset.StandardCharsets.UTF_8), unusedEndpoint);
 
-      await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
-        LinkFailureException failure = link.pollTerminalFailure(trackedKey, unusedEndpoint);
-        assertNotNull(failure);
-      });
+      await().during(Duration.ofMillis(800)).atMost(Duration.ofSeconds(2)).untilAsserted(() -> assertNull(link.pollTerminalFailure(trackedKey, unusedEndpoint)));
     }
   }
 

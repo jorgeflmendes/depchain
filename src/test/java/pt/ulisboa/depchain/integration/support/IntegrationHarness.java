@@ -100,9 +100,13 @@ public abstract class IntegrationHarness {
   }
 
   protected static List<StartedServer> startServers(List<String> replicaIds, Path configPath) throws IOException {
+    return startServers(replicaIds, configPath, Map.of());
+  }
+
+  protected static List<StartedServer> startServers(List<String> replicaIds, Path configPath, Map<String, String> jvmProperties) throws IOException {
     List<StartedServer> servers = new ArrayList<>();
     for (String replicaId : replicaIds) {
-      servers.add(startHonestServer(replicaId, configPath));
+      servers.add(startHonestServer(replicaId, configPath, jvmProperties));
     }
     return servers;
   }
@@ -131,11 +135,15 @@ public abstract class IntegrationHarness {
   }
 
   protected static ManagedCluster startManagedCluster(List<String> replicaIds) throws Exception {
+    return startManagedCluster(replicaIds, Map.of());
+  }
+
+  protected static ManagedCluster startManagedCluster(List<String> replicaIds, Map<String, String> jvmProperties) throws Exception {
     Path configPath = integrationConfigPath();
     cleanPersistedBlockData(configPath);
     populateConfig(configPath);
 
-    List<StartedServer> servers = startServers(replicaIds, configPath);
+    List<StartedServer> servers = startServers(replicaIds, configPath, jvmProperties);
     try {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
       return new ManagedCluster(configPath, servers, TestClientSession.connect(configPath));
@@ -302,6 +310,10 @@ public abstract class IntegrationHarness {
       Files.writeString(isolatedConfigPath, isolatedConfig, StandardCharsets.UTF_8);
       Path baseGenesisPath = baseConfigPath.getParent().resolve("genesis.json");
       Files.copy(baseGenesisPath, isolatedConfigDirectory.resolve("genesis.json"), StandardCopyOption.REPLACE_EXISTING);
+      Path baseGenesisLockPath = baseConfigPath.getParent().resolve("genesis.lock.json");
+      if (Files.exists(baseGenesisLockPath)) {
+        Files.copy(baseGenesisLockPath, isolatedConfigDirectory.resolve("genesis.lock.json"), StandardCopyOption.REPLACE_EXISTING);
+      }
       return isolatedConfigPath;
     } catch (IOException exception) {
       throw new IllegalStateException("Could not create isolated integration config", exception);
@@ -411,12 +423,23 @@ public abstract class IntegrationHarness {
   }
 
   private static StartedServer startHonestServer(String replicaId, Path configPath) throws IOException {
-    return startProcess(replicaId, "pt.ulisboa.depchain.server.bootstrap.ServerApplication", configPath.toString());
+    return startHonestServer(replicaId, configPath, Map.of());
+  }
+
+  private static StartedServer startHonestServer(String replicaId, Path configPath, Map<String, String> jvmProperties) throws IOException {
+    return startProcess(replicaId, "pt.ulisboa.depchain.server.bootstrap.ServerApplication", jvmProperties, configPath.toString());
   }
 
   private static StartedServer startProcess(String replicaId, String mainClass, String... args) throws IOException {
+    return startProcess(replicaId, mainClass, Map.of(), args);
+  }
+
+  private static StartedServer startProcess(String replicaId, String mainClass, Map<String, String> jvmProperties, String... args) throws IOException {
     List<String> command = new ArrayList<>();
     command.add(javaExecutable());
+    for (Map.Entry<String, String> entry : jvmProperties.entrySet()) {
+      command.add("-D" + entry.getKey() + "=" + entry.getValue());
+    }
     command.add("-cp");
     command.add(System.getProperty("java.class.path"));
     command.add(mainClass);

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import pt.ulisboa.depchain.shared.config.GenesisParser;
+import pt.ulisboa.depchain.shared.model.AccountKind;
 
 class BlockStoreTest {
 
@@ -60,7 +61,7 @@ class BlockStoreTest {
     LinkedHashMap<String, String> storage = new LinkedHashMap<>();
     storage.put("0x01", "0x02");
     LinkedHashMap<String, GenesisParser.GenesisAccount> state = new LinkedHashMap<>();
-    state.put("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new GenesisParser.GenesisAccount("100", 1L, "0x6000", storage));
+    state.put("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new GenesisParser.GenesisAccount("100", 1L, "0x6000", storage, AccountKind.CONTRACT));
 
     BlockStore.BlockDocument block = new BlockStore.BlockDocument(0L, hash("hash-0"), null, 0L, List.of(), state);
     store.append(block);
