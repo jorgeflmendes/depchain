@@ -11,6 +11,9 @@
     <jackson.version>2.21.2</jackson.version>
     <junit.version>6.0.3</junit.version>
     <awaitility.version>4.3.0</awaitility.version>
+    <assertj.version>3.27.6</assertj.version>
+    <mockito.version>5.20.0</mockito.version>
+    <bytebuddy.version>1.17.7</bytebuddy.version>
     <picocli.version>4.7.7</picocli.version>
     <netty.version>4.2.9.Final</netty.version>
     <surefire.version>3.5.5</surefire.version>
@@ -59,6 +62,30 @@
       <groupId>org.awaitility</groupId>
       <artifactId>awaitility</artifactId>
       <version>${awaitility.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <version>${assertj.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-junit-jupiter</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy-agent</artifactId>
+      <version>${bytebuddy.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -259,10 +286,11 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>${surefire.version}</version>
         <configuration>
+          <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -XX:+EnableDynamicAgentLoading</argLine>
           <includes>
             <include>**/*Test.java</include>
           </includes>
-          <excludedGroups>integration</excludedGroups>
+          <excludedGroups>integration,benchmark</excludedGroups>
         </configuration>
       </plugin>
 
@@ -271,10 +299,12 @@
         <artifactId>maven-failsafe-plugin</artifactId>
         <version>${surefire.version}</version>
         <configuration>
+          <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -XX:+EnableDynamicAgentLoading</argLine>
           <includes>
             <include>**/*Test.java</include>
           </includes>
           <groups>integration</groups>
+          <excludedGroups>benchmark</excludedGroups>
         </configuration>
         <executions>
           <execution>
@@ -325,6 +355,26 @@
   </build>
 
   <profiles>
+    <profile>
+      <id>benchmarks</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <version>${surefire.version}</version>
+            <configuration>
+              <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -XX:+EnableDynamicAgentLoading</argLine>
+              <includes>
+                <include>**/*Test.java</include>
+              </includes>
+              <groups>benchmark</groups>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
     <profile>
       <id>open-local-cluster-windows</id>
       <activation>

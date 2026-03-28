@@ -88,6 +88,14 @@ public final class IstCoin {
     return transferCallData(recipient, amount);
   }
 
+  public static Bytes encodeApproveCallData(Address spender, long amount) {
+    return approveCallData(spender, amount);
+  }
+
+  public static Bytes encodeTransferFromCallData(Address owner, Address recipient, long amount) {
+    return transferFromCallData(owner, recipient, amount);
+  }
+
   private EvmService.TransactionResult callAndNormalize(Address sender, Bytes callData, long nonce, long gasLimit, Wei gasPrice, String invalidResponseMessage, Function<Bytes, Bytes> normalizer) {
     EvmService.TransactionResult execution = evmService.callContract(sender, contractAddress, callData, Wei.ZERO, nonce, gasLimit, gasPrice);
     if (!execution.success()) {

@@ -25,6 +25,7 @@ import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class BlockStore {
+  public static final String FAIL_AFTER_TEMP_WRITE_HEIGHT_PROPERTY = "depchain.blockstore.failAfterTempWriteHeight";
   private static final ObjectMapper JSON = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
   private static final String BLOCK_FILE_PREFIX = "block-";
   private static final String BLOCK_FILE_SUFFIX = ".json";
@@ -160,7 +161,23 @@ public final class BlockStore {
     try (OutputStream output = Files.newOutputStream(temporaryPath)) {
       JSON.writeValue(output, block);
     }
+    if (shouldFailAfterTempWrite(block.height())) {
+      throw new IOException("Simulated block persistence failure after temporary write");
+    }
     Files.move(temporaryPath, blockPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+  }
+
+  private static boolean shouldFailAfterTempWrite(long height) {
+    String configuredHeight = System.getProperty(FAIL_AFTER_TEMP_WRITE_HEIGHT_PROPERTY);
+    if (configuredHeight == null || configuredHeight.isBlank()) {
+      return false;
+    }
+
+    try {
+      return Long.parseLong(configuredHeight) == height;
+    } catch (NumberFormatException ignored) {
+      return false;
+    }
   }
 
   private BlockDocument readBlock(Path blockPath) throws IOException {
