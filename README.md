@@ -6,8 +6,11 @@ DepChain is a permissioned blockchain project for the Highly Dependable Systems 
 The current codebase includes:
 - authenticated client and replica communication,
 - HotStuff-based replica consensus,
+- UDP-based Fair Loss, Stubborn, Perfect, and Authenticated link abstractions,
 - native `DepCoin` transfers plus `IST Coin` contract-backed transfers,
-- persisted per-replica block history with block-hash chaining and validation.
+- persisted per-replica block history with block-hash chaining and validation,
+- EVM execution through Hyperledger Besu with explicit `EOA` vs `CONTRACT` validation,
+- a multi-layer test suite covering unit, integration, Byzantine, persistence, and smart-contract scenarios.
 
 ## Prerequisites
 - Java 21
@@ -15,7 +18,7 @@ The current codebase includes:
 
 ## Configuration
 Main runtime configuration is in `config/config.yaml`.
-The authoritative genesis file is in `config/genesis.json`, and replicas/clients load it directly at runtime.
+The runtime genesis source is `config/genesis.lock.json` when present; otherwise the base `config/genesis.json` is materialized into a persistent lock file during setup.
 The YAML config includes:
 - system parameters (`system.n`, `system.f`),
 - replica ids as YAML keys under `replicas`,
@@ -29,6 +32,9 @@ The YAML config includes:
 With the default config:
 - key material is generated under `runtime/keys`,
 - persisted blocks are stored under `runtime/storage/<replicaId>/blocks`.
+
+At runtime, clients broadcast authenticated requests to all configured replicas.
+Each replica validates and records the request locally, and the current leader proposes from its local queue.
 
 ## Runtime Validation Rules
 Every replica validates client requests before accepting them into consensus:
@@ -59,7 +65,8 @@ populate [-c <configPath>]
 populate [configPath]
 ```
 
-`Populate` does not modify `genesis.json`. It only generates key material and an `addresses.json` file with the derived wallet addresses so the genesis can be edited manually.
+`Populate` generates key material and the derived `addresses.json` file.
+If a locked genesis does not yet exist, startup materializes `genesis.json` into `genesis.lock.json`, which becomes the persistent source of truth for block zero.
 
 Maven:
 ```powershell
@@ -152,32 +159,40 @@ mvn exec:java@server "-Dexec.args=server3 config/config.yaml"
 mvn exec:java@server "-Dexec.args=server4 config/config.yaml"
 ```
 
-## Integration Tests
-The integration tests run `populate` internally for each scenario, so it does not need to be executed manually before `mvn verify`.
-They are also slow and timing-sensitive, so it may be necessary to increase some test timeouts depending on the machine.
-They are designed to succeed with the default `config/config.yaml`.
+## Testing
+The test suite is split into fast unit-style checks and slower integration scenarios.
 
-Maven:
+Default commands:
 ```powershell
-mvn verify "-Dit.test=SecTest"
+mvn test
+mvn verify
+mvn clean test
 ```
 
-Recommended full validation:
+Benchmark-only run:
 ```powershell
-mvn clean verify
+mvn -Pbenchmarks test
 ```
+
+The normal `mvn test` / `mvn verify` cycle excludes:
+- `@Tag("integration")` from Surefire,
+- `@Tag("benchmark")` from both Surefire and Failsafe.
 
 The current suite covers:
-- normal execution through the initial leader (`server1` accepts 4 valid requests: proves the happy path works repeatedly),
-- forwarding from a non-leader replica (`server2` forwards to the leader and the request still succeeds: proves gateway-to-leader forwarding),
-- replay of the same signed client request (first delivery succeeds, 10 replays are ignored: proves deduplication by signed request id),
-- forged client signatures (no reply is produced; proves invalid client signatures are rejected),
-- invalid transaction nonce (request reaches the replicas but execution fails with an explicit error response),
-- insufficient balance for `amount + gas` (request reaches the replicas but execution fails with an explicit error response),
-- persisted block hash derivation and block-chain linkage,
-- per-block gas-limit and per-sender nonce validation in block persistence,
-- one Byzantine replica sending an invalid vote (`server3` sends an invalid `PREPARE` vote and the request still succeeds: proves one invalid voter does not prevent progress),
-- two Byzantine replicas sending invalid votes (`server3` and `server4` send invalid `PREPARE` votes and the client times out: proves the system cannot form a quorum once the number of dishonest voters exceeds the tolerated threshold).
+- honest HotStuff progress, replay rejection, forged client signatures, and leader/follower crash recovery,
+- Byzantine leaders and replicas, including invalid votes, stale votes, equivocation, and partial phase broadcasts,
+- malicious clients, malformed payloads, invalid sender ids, invalid nonces, insufficient balance, and forged response attempts,
+- persisted block validation, restart recovery, split batches, deterministic ordering, and replica catch-up,
+- UDP adversarial conditions including packet loss, duplication, and reordering at cluster level,
+- direct link-layer properties:
+  - `FairLossLink`: timeout, basic delivery, explicit duplication, explicit drop,
+  - `StubbornLink`: retransmission persistence, cancellation, eventual delivery, no delivery after cancel,
+  - `PerfectLink`: in-order delivery under out-of-order arrival, duplicate suppression, buffered out-of-order deduplication,
+  - `AuthenticatedLink`: authenticated round-trip, nonce validation, invalid HMAC rejection, replayed authenticated nonce rejection,
+- EVM execution, gas accounting, explicit `EOA`/`CONTRACT` separation, and block execution determinism,
+- `IST Coin` approval frontrunning mitigation, including zero-reset approval flow and cluster-level adversarial ordering scenarios.
+
+For a file-by-file test inventory, see `TEST_COVERAGE_MATRIX.md`.
 
 ## Notes
 - On Windows, Hyperledger Besu may print a warning about the native library `gnark_eip_196.dll`. In the current setup this does not prevent `mvn clean verify` from succeeding.
