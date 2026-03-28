@@ -5,23 +5,7 @@ package depchain;
 option java_multiple_files = true;
 option java_package = "pt.ulisboa.depchain.proto";
 
-import "validate.proto";
-
-message Endpoint {
-  string host = 1 [(buf.validate.field).string = {
-    min_len: 1
-    max_len: 255
-  }];
-  uint32 port = 2 [(buf.validate.field).uint32 = {
-    gt: 0
-    lte: 65535
-  }];
-}
-
-message ConnectionKey {
-  Endpoint endpoint = 1 [(buf.validate.field).required = true];
-  optional uint64 connection_id = 2 [(buf.validate.field).required = true];
-}
+import "buf/validate/validate.proto";
 
 message ClientRequestKey {
   optional uint64 client_sender_id = 1 [(buf.validate.field).required = true];

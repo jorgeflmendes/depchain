@@ -24,6 +24,10 @@ public abstract class AsyncLinkContext<T> {
     return deliveryQueue.receive(timeoutMs);
   }
 
+  public final @Nullable T poll() {
+    return deliveryQueue.poll();
+  }
+
   public final void offer(T value) {
     deliveryQueue.offer(value);
   }

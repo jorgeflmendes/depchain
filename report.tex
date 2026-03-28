@@ -1,0 +1,251 @@
+\documentclass[runningheads]{llncs}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[portuguese]{babel}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{url}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+\title{DepChain}
+\subtitle{Grupo 35: \textit{Permissioned Blockchain} BFT com \textit{Basic HotStuff} e EVM}
+
+\titlerunning{DepChain}
+\author{Jorge Mendes \and Gustavo Rodrigues \and S\'ergio Olim}
+\institute{Instituto Superior T\'ecnico}
+\authorrunning{J. Mendes, G. Rodrigues, S. Olim}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este relat\'orio apresenta o DepChain, uma \textit{permissioned blockchain} com membros est\'aticos, comunica\c{c}\~ao sobre UDP e consenso Bizantino baseado em \textit{Basic HotStuff}. O sistema replica uma m\'aquina de estados que ordena lotes de pedidos de cliente atrav\'es de \textit{quorum certificates} autenticados por assinaturas threshold, muda de vista por \textit{timeout} e executa transa\c{c}\~oes num ambiente EVM em Java baseado no Hyperledger Besu. A arquitetura combina uma pilha de comunica\c{c}\~ao fi\'avel e autenticada sobre UDP, um bloco g\'enesis est\'atico, persist\^encia encadeada de blocos e execu\c{c}\~ao determin\'istica de transa\c{c}\~oes nativas e contratuais. A fase de execu\c{c}\~ao distingue explicitamente contas externas e contas de contrato, suporta uma moeda nativa para pagamento de taxas e integra o contrato \textit{IST Coin}, incluindo uma mitiga\c{c}\~ao expl\'icita de \textit{approval frontrunning}.
+\end{abstract}
+
+\section{Introdu\c{c}\~ao}
+Sistemas distribu\'idos tolerantes a faltas Bizantinas t\^em como objetivo manter seguran\c{c}a e consist\^encia mesmo quando uma fra\c{c}\~ao dos participantes pode comportar-se de forma arbitr\'aria. No contexto de \textit{blockchains permissionadas}, este objetivo implica combinar comunica\c{c}\~ao autenticada, consenso com qu\'oruns intersectantes, execu\c{c}\~ao determin\'istica e persist\^encia robusta do estado replicado.
+
+O DepChain foi desenvolvido com esta perspetiva. A ordena\c{c}\~ao de comandos assenta numa implementa\c{c}\~ao do protocolo \textit{Basic HotStuff}, em que o cliente difunde o pedido autenticado a todas as r\'eplicas, o l\'ider da vista atual seleciona um lote de pedidos localmente conhecidos e a execu\c{c}\~ao s\'o ocorre ap\'os a decis\~ao do consenso. A camada de comunica\c{c}\~ao \'e inteiramente constru\'ida sobre UDP, sobre o qual se acrescentam propriedades de retransmiss\~ao, elimina\c{c}\~ao de duplicados e autentica\c{c}\~ao entre pares. A fase 2 do projeto estende ainda o sistema com uma m\'aquina de estados EVM, persist\^encia de blocos, suporte a contratos e um token ERC-20 simplificado.
+
+Este documento descreve a arquitetura atual do sistema com foco na organiza\c{c}\~ao das r\'eplicas, na representa\c{c}\~ao de blocos e n\'os, na integra\c{c}\~ao de uma EVM, no contrato \textit{IST Coin}, no modelo de amea\c{c}as e nas garantias de dependabilidade proporcionadas pela arquitetura.
+
+\section{Modelo do Sistema e Arquitetura}
+O sistema assume \textit{membership} est\'atico. Antes do arranque s\~ao fixados o conjunto de r\'eplicas, o limite de faltas Bizantinas toleradas, os identificadores l\'ogicos, os endere\c{c}os de rede e o material criptogr\'afico necess\'ario \`a autentica\c{c}\~ao e \`a forma\c{c}\~ao de certificados de qu\'orum. Este modelo privilegia previsibilidade operacional e compatibilidade com a hip\'otese cl\'assica de sistemas permissionados.
+
+Cada r\'eplica agrega quatro grandes subsistemas: a pilha de comunica\c{c}\~ao sobre UDP; a rece\c{c}\~ao de pedidos de cliente; o consenso \textit{HotStuff}; e a m\'aquina de estados executada sobre a EVM. O cliente autentica os seus pedidos e difunde cada opera\c{c}\~ao a todas as r\'eplicas configuradas. A opera\c{c}\~ao s\'o \'e considerada conclu\'ida quando o cliente observa \(f+1\) respostas id\^enticas provenientes de r\'eplicas autenticadas.
+
+No arranque, o sistema utiliza um documento g\'enesis persistente como fonte de verdade para o bloco \(0\). Esse documento define o estado inicial, as transa\c{c}\~oes bootstrap e a distribui\c{c}\~ao inicial de recursos necess\'arios ao arranque da rede. Depois de materializado, passa a constituir a refer\^encia efetiva para o estado g\'enesis em todos os arranques subsequentes.
+
+\section{Representa\c{c}\~ao Interna de N\'os e Blocos}
+
+\subsection{N\'os de Consenso}
+Em mem\'oria, o consenso manipula n\'os que representam propostas ordenadas numa \textit{block tree}. Cada n\'o referencia o seu pai por \textit{hash}, identifica a vista em que foi proposto, transporta o comando associado e pode incluir a informa\c{c}\~ao de gas observada na execu\c{c}\~ao. O comando pode representar o estado g\'enesis, uma opera\c{c}\~ao vazia ou, na forma relevante para a fase 2, um lote de pedidos de cliente. Esta representa\c{c}\~ao permite validar cada proposta face ao respetivo ancestral e ao certificado de qu\'orum que a justifica.
+
+Os certificados de qu\'orum incluem a fase do protocolo, a vista correspondente, o n\'o certificado e a assinatura agregada do qu\'orum. O estado g\'enesis usa um certificado especial que serve de base segura para a primeira proposta.
+
+\subsection{Blocos Persistidos}
+Depois de um ramo ser decidido e executado, cada r\'eplica persiste o resultado num bloco encadeado. O formato persistido inclui:
+\begin{itemize}
+\item a altura do bloco;
+\item o identificador criptogr\'afico do bloco;
+\item o identificador do bloco anterior;
+\item o gas efetivamente consumido;
+\item a lista ordenada de transa\c{c}\~oes persistidas;
+\item um \textit{snapshot} completo do estado de contas ap\'os a execu\c{c}\~ao do bloco.
+\end{itemize}
+
+O identificador do bloco n\~ao corresponde a um cabe\c{c}alho Ethereum tradicional; em vez disso, resulta de uma fun\c{c}\~ao de dispers\~ao criptogr\'afica aplicada ao bloco anterior, ao gas consumido e \`a serializa\c{c}\~ao can\'onica das transa\c{c}\~oes do bloco. O armazenamento imp\~oe ainda que o bloco g\'enesis n\~ao tenha antecessor, que a soma dos limites de gas n\~ao exceda o limite global de bloco e que, para cada emissor, os nonces apare\c{c}am por ordem consecutiva dentro do bloco.
+
+\subsection{Estado Persistido}
+Ao contr\'ario de uma implementa\c{c}\~ao Ethereum completa com trie persistida em disco, o DepChain persiste em cada bloco um \textit{snapshot} do estado observado ap\'os a execu\c{c}\~ao. Cada conta persistida inclui saldo, nonce, bytecode opcional, armazenamento e a sua classifica\c{c}\~ao expl\'icita como conta externa ou conta contratual. Esta op\c{c}\~ao simplifica recupera\c{c}\~ao e reexecu\c{c}\~ao local, ao custo de aumentar o volume de dados persistidos por bloco.
+
+\section{Consenso e Ciclo de Vida de um Pedido}
+
+\subsection{Mensagens entre R\'eplicas}
+As r\'eplicas comunicam atrav\'es de mensagens estruturadas com identificador do remetente, n\'umero da vista e tipo de mensagem. O protocolo inclui mensagens para mudan\c{c}a de vista, proposta, propaga\c{c}\~ao de certificados de fase, votos, interc\^ambio do contexto threshold e sincroniza\c{c}\~ao de n\'os em falta. Esta tipologia cobre tanto o caminho nominal do consenso como a recupera\c{c}\~ao de n\'os n\~ao observados atempadamente.
+
+\subsection{Fases do \textit{Basic HotStuff}}
+O sistema implementa o protocolo \textit{Basic HotStuff} com rota\c{c}\~ao de l\'ider por \textit{round-robin}. Em cada \textit{view}, uma r\'eplica atua como l\'ider e prop\~oe um novo n\'o contendo um lote de pedidos de cliente conhecidos localmente. O protocolo progride pelas seguintes fases:
+\vspace{-0.4em}
+\begin{itemize}
+\item \textbf{\textit{New-View}}: ao entrar numa nova vista, cada r\'eplica envia ao pr\'oximo l\'ider o seu mais recente certificado v\'alido da fase preparat\'oria;
+\item \textbf{\textit{Prepare}}: o l\'ider recolhe estas mensagens, seleciona a melhor justifica\c{c}\~ao v\'alida dispon\'ivel e prop\~oe um novo n\'o;
+\item \textbf{\textit{Pre-Commit}}: ap\'os receber votos de prepara\c{c}\~ao, o l\'ider constr\'oi o respetivo certificado e difunde-o \`as restantes r\'eplicas;
+\item \textbf{\textit{Commit}}: ap\'os receber esse certificado, cada r\'eplica atualiza o seu certificado de bloqueio e emite o voto de compromisso;
+\item \textbf{\textit{Decide}}: ap\'os receber votos de compromisso, o l\'ider constr\'oi o certificado final e difunde a decis\~ao, desencadeando a execu\c{c}\~ao do ramo comprometido.
+\end{itemize}
+Se uma fase n\~ao progride dentro do tempo configurado, a r\'eplica abandona a vista corrente, incrementa a vista e inicia um novo ciclo. O mecanismo de progresso \'e simples e assente em \textit{timeouts}; o sistema n\~ao implementa certificados de \textit{timeout} nem mecanismos adaptativos.
+
+\vspace{-1em}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+node distance=2.4cm,
+box/.style={draw, rectangle, rounded corners, minimum width=2cm, minimum height=0.8cm, align=center, font=\small},
+num/.style={fill=white, circle, inner sep=1pt, font=\scriptsize}
+]
+\node[box] (newview) {\textit{New-View}};
+\node[box, right of=newview] (prepare) {\textit{Prepare}};
+\node[box, right of=prepare] (precommit) {\textit{Pre-Commit}};
+\node[box, right of=precommit] (commit) {\textit{Commit}};
+\node[box, right of=commit] (decide) {\textit{Decide}};
+
+\draw[->] (newview) to node[num] {1} (prepare);
+\draw[->] (prepare) to node[num] {2} (precommit);
+\draw[->] (precommit) to node[num] {3} (commit);
+\draw[->] (commit) to node[num] {4} (decide);
+\end{tikzpicture}
+\caption{Fases do protocolo \textit{Basic HotStuff}.}
+\label{fig:hotstuff-phases}
+\end{figure}
+\vspace{-1em}
+
+Cada r\'eplica mant\'em a vista corrente, o mais recente certificado v\'alido da fase preparat\'oria e um certificado de bloqueio que s\'o \'e atualizado na fase de compromisso. As r\'eplicas mant\^em ainda uma fila de mensagens de consenso, uma cole\c{c}\~ao local de pedidos de cliente conhecidos e uma \textit{block tree} indexada pelo \textit{hash} de cada n\'o.
+
+\subsection{Submiss\~ao e Resposta ao Cliente}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+node distance=3.2cm,
+box/.style={draw, rectangle, rounded corners, minimum width=2.8cm, minimum height=0.8cm, align=center},
+num/.style={fill=white, circle, inner sep=1pt, font=\scriptsize}
+]
+\node[box] (cliente) {Cliente};
+\node[box, right of=cliente] (replicas) {R\'eplicas\\(rece\c{c}\~ao local)};
+\node[box, right of=replicas] (lider) {L\'ider da \textit{view}};
+\node[box, right of=lider] (exec) {Consenso e\\execu\c{c}\~ao};
+
+\draw[->] (cliente) to node[num] {1} (replicas);
+\draw[->] (replicas) to node[num] {2} (lider);
+\draw[->] (lider) to node[num] {3} (exec);
+\draw[->, bend left=20] (exec) to node[num] {4} (cliente);
+\end{tikzpicture}
+\caption{Fluxo cronol\'ogico de um pedido do cliente.}
+\label{fig:client-flow}
+\end{figure}
+
+Para submeter um comando \`a \textit{blockchain}, o cliente envia um pedido assinado e logicamente identificado para todas as r\'eplicas configuradas \textbf{(1)}. Cada r\'eplica valida o pedido, regista-o localmente e preserva o contexto necess\'ario para uma resposta futura. Se a r\'eplica for o l\'ider da vista atual, o pedido \'e imediatamente eleg\'ivel para proposta; caso contr\'ario, fica apenas conhecido localmente at\'e poder ser inclu\'ido numa vista futura \textbf{(2)}. O l\'ider coordena ent\~ao o protocolo \textit{HotStuff} e prop\~oe um lote de pedidos \`as restantes r\'eplicas \textbf{(3)}. Ap\'os a decis\~ao, as r\'eplicas executam o ramo comprometido e enviam respostas diretamente ao cliente; a opera\c{c}\~ao s\'o \'e aceite quando o cliente obt\'em um qu\'orum de respostas id\^enticas \textbf{(4)}.
+
+\subsection{\textit{Threshold Signatures}}
+Para autenticar os \textit{quorum certificates} produzidos em cada fase do consenso, o sistema utiliza \textit{threshold signatures}. O limiar usado \'e \(n-f\), coincidindo com o qu\'orum exigido pelo \textit{HotStuff}. Quando o l\'ider recolhe contribui\c{c}\~oes suficientes, combina-as numa assinatura agregada que pode ser verificada pelas restantes r\'eplicas.
+
+A constru\c{c}\~ao destes certificados inclui um subprotocolo pr\'oprio: cada r\'eplica envia primeiro um \textit{partial commitment}; o l\'ider agrega um qu\'orum destes compromissos, difunde o contexto threshold acompanhado da lista de participantes e, por fim, recolhe as \textit{signature shares} necess\'arias para a combina\c{c}\~ao final. Este desenho reduz o tamanho dos certificados disseminados na rede e impede que um l\'ider honesto avance de fase sem um qu\'orum efetivo de contribui\c{c}\~oes.
+
+\section{Integra\c{c}\~ao EVM e Modelo de Execu\c{c}\~ao}
+
+\subsection{Motor de Execu\c{c}\~ao}
+A m\'aquina de estados replicada \'e executada por um servi\c{c}o EVM em Java baseado no Hyperledger Besu. Este servi\c{c}o mant\'em o estado de contas, bytecode, armazenamento e saldo na moeda nativa, e suporta cria\c{c}\~ao de contas, consulta de saldos, transfer\^encias nativas, instala\c{c}\~ao de contratos e invoca\c{c}\~ao de contratos.
+
+\subsection{Tipos de Conta e Valida\c{c}\~ao Expl\'icita}
+O sistema distingue explicitamente dois tipos de conta: \textit{Externally Owned Accounts} e \textit{Contract Accounts}. Esta distin\c{c}\~ao n\~ao \'e inferida apenas pela presen\c{c}a de bytecode: o tipo da conta \'e mantido como parte do estado persistente.
+
+Esta op\c{c}\~ao permite validar de forma inequ\'ivoca o tipo de opera\c{c}\~ao a executar. Uma transfer\^encia nativa s\'o pode ter como destino uma conta externa; se o destinat\'ario for uma conta de contrato, a opera\c{c}\~ao \'e rejeitada e deve ser modelada como chamada contratual. Simetricamente, uma chamada de contrato falha se o alvo for desconhecido, se n\~ao estiver classificado como conta de contrato ou se n\~ao dispuser de bytecode execut\'avel.
+
+\subsection{Ordena\c{c}\~ao Determin\'istica da Mempool}
+Cada r\'eplica mant\'em uma fila priorit\'aria local de pedidos pendentes. Quando uma r\'eplica se torna l\'ider, seleciona os pedidos a propor por ordem can\'onica: primeiro por \textit{gas price} decrescente e, em caso de empate, por identificador do cliente, identificador l\'ogico do pedido e nonce da transa\c{c}\~ao. Esta ordem elimina a depend\^encia da ordem de chegada local para transa\c{c}\~oes com a mesma prioridade econ\'omica e evita diverg\^encias de execu\c{c}\~ao entre r\'eplicas honestas.
+
+Ap\'os a fase \textit{Decide}, todas as r\'eplicas honestas executam exatamente o lote ordenado decidido pelo consenso. Assim, o determinismo resulta da combina\c{c}\~ao entre acordo sobre o lote e crit\'erio can\'onico de composi\c{c}\~ao do bloco pelo l\'ider.
+
+\subsection{Modelo de Transa\c{c}\~oes, Gas e Taxas}
+O sistema suporta tr\^es categorias de transa\c{c}\~ao no caminho normal de execu\c{c}\~ao: transfer\^encias nativas, chamadas contratuais e transfer\^encias do token \textit{IST Coin}. O bloco g\'enesis suporta adicionalmente a instala\c{c}\~ao do contrato inicial.
+
+As taxas s\~ao cobradas na moeda nativa DepCoin. O valor efetivamente debitado segue a regra
+\[
+\textit{fee} = gasPrice \times \min(gasLimit, gasUsed).
+\]
+Antes da execu\c{c}\~ao, o sistema verifica se o emissor disp\~oe de saldo suficiente para suportar o montante da transa\c{c}\~ao e o pior caso de custo em gas. Se a transa\c{c}\~ao falhar por falta de gas, nonce inv\'alido, alvo incompat\'ivel ou erro de execu\c{c}\~ao, o servi\c{c}o preserva a sem\^antica do custo de gas e devolve o erro ao chamador. Esta l\'ogica impede que o saldo em DepCoin de uma conta honesta fique negativo.
+
+\section{Contrato \textit{IST Coin}}
+
+\subsection{Caracteriza\c{c}\~ao do Contrato}
+O contrato \textit{IST Coin} \'e um token ERC-20 simplificado compilado em Solidity. O contrato define:
+\begin{itemize}
+\item nome \texttt{IST Coin};
+\item s\'imbolo \texttt{IST};
+\item \(2\) casas decimais;
+\item \textit{total supply} de \(100{,}000{,}000 \times 10^2\) unidades.
+\end{itemize}
+
+No g\'enesis, o contrato \'e instalado e recebe uma inicializa\c{c}\~ao compat\'ivel com o cen\'ario experimental. Em paralelo, o mesmo g\'enesis distribui saldos iniciais na moeda nativa, garantindo que os clientes disp\~oem tanto de recursos para pagar gas como do token de aplica\c{c}\~ao necess\'ario aos testes funcionais.
+
+\subsection{Mitiga\c{c}\~ao de \textit{Approval Frontrunning}}
+O contrato implementa a mitiga\c{c}\~ao de \textit{approval frontrunning} atrav\'es da regra de passagem por zero. Uma altera\c{c}\~ao direta de uma autoriza\c{c}\~ao n\~ao nula para outro valor n\~ao nulo \'e rejeitada; a redu\c{c}\~ao ou altera\c{c}\~ao do montante autorizado exige primeiro uma transi\c{c}\~ao interm\'edia para zero. O contrato n\~ao recorre a extens\~oes auxiliares do padr\~ao; a mitiga\c{c}\~ao implementada \'e exclusivamente esta disciplina de reautoriza\c{c}\~ao.
+
+Esta propriedade \'e validada por testes de integra\c{c}\~ao que reproduzem o cen\'ario cl\'assico de corrida entre redu\c{c}\~ao de permiss\~ao e utiliza\c{c}\~ao oportunista da autoriza\c{c}\~ao anterior. Os testes demonstram que a altera\c{c}\~ao direta do montante autorizado falha, que a sequ\^encia de anula\c{c}\~ao seguida de reautoriza\c{c}\~ao \'e aceite e que um levantamento adicional falha na aus\^encia de nova permiss\~ao expl\'icita.
+
+\section{Camada de Comunica\c{c}\~ao}
+\label{sec:camada-comunicacao}
+
+A comunica\c{c}\~ao \'e constru\'ida sobre UDP atrav\'es de m\'ultiplas camadas, cada uma respons\'avel por acrescentar propriedades adicionais ao servi\c{c}o subjacente.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+node distance=1.8cm,
+box/.style={draw, rectangle, rounded corners, minimum height=1.2cm, align=center, font=\scriptsize, text width=1.5cm}
+]
+\node[box] (app) {Aplica\c{c}\~ao};
+\node[box, right of=app] (apl) {\textit{Authenticated}\\\textit{Link}};
+\node[box, right of=apl] (pl) {\textit{Perfect}\\\textit{Link}};
+\node[box, right of=pl] (sl) {\textit{Stubborn}\\\textit{Link}};
+\node[box, right of=sl] (fll) {\textit{Fair Loss}\\\textit{Link}};
+\node[box, right of=fll] (udp) {UDP};
+
+\draw[<->, >=stealth] (app) -- (apl);
+\draw[<->, >=stealth] (apl) -- (pl);
+\draw[<->, >=stealth] (pl) -- (sl);
+\draw[<->, >=stealth] (sl) -- (fll);
+\draw[<->, >=stealth] (fll) -- (udp);
+\end{tikzpicture}
+\caption{Pilha de comunica\c{c}\~ao implementada sobre UDP.}
+\label{fig:communication-stack}
+\end{figure}
+
+Na base, o \textit{Fair Loss Link} admite perda, duplica\c{c}\~ao e reordena\c{c}\~ao de mensagens. Sobre esta base, o \textit{Stubborn Link} retransmite pacotes rastreados enquanto a liga\c{c}\~ao permanecer ativa e o respetivo reconhecimento n\~ao for observado. Em seguida, o \textit{Perfect Link} assegura entrega fi\'avel sem duplica\c{c}\~ao por liga\c{c}\~ao l\'ogica, recorrendo a identifica\c{c}\~ao de sess\~ao e numera\c{c}\~ao sequencial das mensagens.
+
+No topo, o \textit{Authenticated Link} executa um estabelecimento de sess\~ao autenticado com assinaturas assim\'etricas, deriva uma chave de sess\~ao sim\'etrica e protege as mensagens de dados subsequentes com autentica\c{c}\~ao por c\'odigo de integridade e um \textit{nonce} monot\'onico. Desta forma, a aplica\c{c}\~ao recebe apenas mensagens j\'a sujeitas \`a elimina\c{c}\~ao de duplicados, \`a valida\c{c}\~ao de integridade e \`a verifica\c{c}\~ao de autenticidade de sess\~ao.
+
+\section{Amea\c{c}as e An\'alise de Seguran\c{c}a}
+O sistema opera num ambiente adversarial em que clientes, l\'ideres e r\'eplicas podem comportar-se de forma maliciosa. Esta sec\c{c}\~ao descreve as amea\c{c}as explicitamente consideradas e a resposta efetivamente implementada.
+
+\subsection{R\'eplicas Bizantinas e L\'ideres Maliciosos}
+Uma r\'eplica Bizantina pode tentar propor blocos inv\'alidos, disseminar certificados incorretos, omitir votos ou atrasar a progress\~ao da vista. A mitiga\c{c}\~ao principal assenta no \textit{Basic HotStuff}: cada avan\c{c}o de fase exige um certificado de qu\'orum criptograficamente verific\'avel, constru\'ido a partir de um qu\'orum threshold de \(n-f\) contribui\c{c}\~oes distintas. Al\'em disso, a valida\c{c}\~ao de n\'os seguros, o uso disciplinado do certificado preparat\'orio em mudan\c{c}a de vista e a atualiza\c{c}\~ao do certificado de bloqueio apenas na fase de compromisso mant\^em o alinhamento com a prova de \textit{safety} do protocolo.
+
+\subsection{Falsifica\c{c}\~ao e Modifica\c{c}\~ao de Mensagens}
+A rede subjacente n\~ao \'e confi\'avel e pode ser observada ou perturbada por um atacante. Para impedir modifica\c{c}\~oes silenciosas de mensagens entre pares, a autentica\c{c}\~ao inicial usa assinaturas ECDSA associadas \`a PKI configurada, e o canal subsequente usa HMAC com \textit{nonce} monot\'onico. Este desenho protege a origem e a integridade das mensagens depois do estabelecimento da sess\~ao.
+
+\subsection{Pedidos de Cliente e \textit{Replay}}
+Cada pedido de cliente inclui uma assinatura assim\'etrica e um identificador l\'ogico composto pelo emissor e pelo identificador do pedido. Como o cliente difunde o pedido para todas as r\'eplicas, cada servidor valida localmente a autenticidade da opera\c{c}\~ao antes de a aceitar para a fila de pedidos pendentes. O mesmo identificador l\'ogico \'e usado para rejeitar repeti\c{c}\~oes e para correlacionar respostas devolvidas ao cliente.
+
+\subsection{Falhas Benignas de Comunica\c{c}\~ao}
+A utiliza\c{c}\~ao de UDP implica perda, duplica\c{c}\~ao e reordena\c{c}\~ao de mensagens. No sistema implementado, estas anomalias s\~ao tratadas pela combina\c{c}\~ao entre retransmiss\~ao, deduplica\c{c}\~ao por ordem sequencial e autentica\c{c}\~ao de sess\~ao. A bateria de testes inclui cen\'arios de perda induzida de pacotes para verificar que o consenso continua a atingir decis\~ao na presen\c{c}a de perdas moderadas.
+
+\subsection{Intera\c{c}\~oes com Contratos e \textit{Frontrunning}}
+No plano funcional, a integra\c{c}\~ao EVM introduz riscos de sem\^antica incorreta na distin\c{c}\~ao entre contas externas e contratos, bem como riscos usuais de contratos ERC-20. O servi\c{c}o de execu\c{c}\~ao mitiga o primeiro problema atrav\'es de uma classifica\c{c}\~ao expl\'icita do tipo de conta. Quanto ao contrato \textit{IST Coin}, a amea\c{c}a de \textit{approval frontrunning} \'e mitigada apenas pela regra de \textit{zero reset}; o relat\'orio n\~ao assume a exist\^encia de outras defesas que n\~ao estejam codificadas.
+
+\section{Garantias de Dependabilidade e Limita\c{c}\~oes}
+O sistema foi concebido para oferecer as seguintes propriedades:
+\begin{itemize}
+\item \textbf{\textit{Safety}}: duas r\'eplicas honestas n\~ao devem decidir blocos incompat\'iveis;
+\item \textbf{Consist\^encia}: r\'eplicas honestas executam os comandos decididos pela mesma ordem. Na implementa\c{c}\~ao atual, a sele\c{c}\~ao local de pedidos antes da proposta \'e ordenada por \textit{gas price} decrescente e, em caso de empate, por identificador do cliente, identificador do pedido e nonce, tornando can\'onica a composi\c{c}\~ao do lote proposto;
+\item \textbf{Autenticidade}: pedidos de cliente e mensagens de sess\~ao entre pares s\~ao autenticados criptograficamente antes de produzirem efeitos no servi\c{c}o;
+\item \textbf{Toler\^ancia Bizantina}: o protocolo segue o modelo cl\'assico em que o sistema suporta at\'e \(f\) r\'eplicas maliciosas, assumindo \(n \ge 3f + 1\).
+\end{itemize}
+
+Em particular, o qu\'orum usado na constru\c{c}\~ao de \textit{quorum certificates} \'e \(n-f\), coincidindo com o limiar usado no mecanismo de \textit{threshold signatures}. Esta condi\c{c}\~ao garante que dois qu\'oruns v\'alidos intersectam em pelo menos uma r\'eplica honesta, propriedade essencial para a seguran\c{c}a do protocolo.
+
+As garantias de progresso devem, contudo, ser qualificadas. O sistema implementa mudan\c{c}a de \textit{view} por \textit{timeout} simples, sem \textit{timeout certificates} nem calibra\c{c}\~ao adaptativa. Assim, a \textit{liveness} depende de pressupostos usuais: exist\^encia de um l\'ider eventualmente responsivo, comunica\c{c}\~ao suficientemente est\'avel e parametriza\c{c}\~ao adequada dos \textit{timeouts}. De forma semelhante, o armazenamento de um \textit{snapshot} completo por bloco privilegia simplicidade e recupera\c{c}\~ao local face \`a efici\^encia de armazenamento.
+
+\section{Conclus\~ao}
+O DepChain evoluiu de uma implementa\c{c}\~ao centrada apenas no consenso para uma \textit{permissioned blockchain} mais completa, que combina consenso BFT, persist\^encia de blocos, execu\c{c}\~ao EVM e suporte a contratos. O sistema atual ordena pedidos de cliente por \textit{Basic HotStuff}, persiste blocos encadeados por \textit{hash}, executa transa\c{c}\~oes sobre um motor EVM baseado em Besu, distingue explicitamente contas externas e contas de contrato e integra o token \textit{IST Coin} com mitiga\c{c}\~ao concreta de \textit{approval frontrunning}.
+
+Do ponto de vista de sistemas distribu\'idos e elevada confiabilidade, o projeto evidencia uma arquitetura coesa: \textit{membership} est\'atico, comunica\c{c}\~ao autenticada sobre UDP, consenso por qu\'oruns threshold, execu\c{c}\~ao determin\'istica do estado e persist\^encia recuper\'avel. Ao mesmo tempo, a implementa\c{c}\~ao preserva limites importantes que importa reconhecer de forma honesta, nomeadamente a simplicidade do \textit{pacemaker} e o uso de \textit{snapshots} completos de estado. Ainda assim, a base atual \'e suficientemente s\'olida para suportar extens\~oes futuras no plano do desempenho, da expressividade contratual e da instrumenta\c{c}\~ao experimental.
+
+\end{document}

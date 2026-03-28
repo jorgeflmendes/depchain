@@ -5,30 +5,14 @@ package depchain;
 option java_multiple_files = true;
 option java_package = "pt.ulisboa.depchain.proto";
 
-import "validate.proto";
+import "buf/validate/validate.proto";
 import "common.proto";
-
-message AppendRequest {
-  ClientRequestKey request_key = 1 [(buf.validate.field).required = true];
-  optional string value = 2 [(buf.validate.field).required = true];
-  optional bytes signature = 3 [
-    (buf.validate.field).required = true,
-    (buf.validate.field).bytes.min_len = 1
-  ];
-}
-
-message AppendResponse {
-  optional bool success = 1 [(buf.validate.field).required = true];
-  optional string message = 2 [
-    (buf.validate.field).required = true,
-    (buf.validate.field).string.min_len = 1
-  ];
-}
 
 enum TransactionType {
   TRANSACTION_TYPE_UNSPECIFIED = 0;
   TRANSACTION_TYPE_TRANSFER = 1;
-  TRANSACTION_TYPE_CONTRACT_CALL = 2;
+  TRANSACTION_TYPE_IST_COIN_TRANSFER = 4;
+  TRANSACTION_TYPE_CONTRACT_CALL = 5;
 }
 
 message TransactionRequest {
@@ -50,17 +34,22 @@ message TransactionRequest {
   option (buf.validate.message).cel = {
     id: "transaction.transfer.disallows-data"
     message: "transfer transactions must not include input data"
-    expression: "this.type == 1 ? !has(this.data) || size(this.data) == 0 : true"
+    expression: "this.type == 1 ? (!has(this.input) || size(this.input) == 0) : true"
   };
   option (buf.validate.message).cel = {
-    id: "transaction.contract-call.requires-data"
+    id: "transaction.contract-call.requires-input"
     message: "contract call transactions must include input data"
-    expression: "this.type == 2 ? size(this.data) > 0 : true"
+    expression: "this.type == 5 ? (has(this.input) && size(this.input) > 0) : true"
   };
   option (buf.validate.message).cel = {
-    id: "transaction.contract-call.allows-zero-amount"
-    message: "contract call transactions must not use a negative amount"
-    expression: "this.type == 2 ? this.amount >= 0u : true"
+    id: "transaction.ist-transfer.requires-positive-amount"
+    message: "IST Coin transfers must use a positive amount"
+    expression: "this.type == 4 ? this.amount > 0u : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.ist-transfer.disallows-data"
+    message: "IST Coin transfers must not include input data"
+    expression: "this.type == 4 ? (!has(this.input) || size(this.input) == 0) : true"
   };
 
   ClientRequestKey request_key = 1 [(buf.validate.field).required = true];
@@ -88,7 +77,7 @@ message TransactionRequest {
     (buf.validate.field).uint64.gt = 0
   ];
 
-  optional bytes data = 8;
+  optional bytes input = 8;
 
   optional bytes signature = 9 [
     (buf.validate.field).required = true,
@@ -137,32 +126,78 @@ message TransactionReceipt {
 }
 
 message TransactionResponse {
+  optional string message = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional TransactionReceipt receipt = 2;
+}
+
+enum QueryType {
+  QUERY_TYPE_UNSPECIFIED = 0;
+  QUERY_TYPE_DEPCOIN_BALANCE = 1;
+  QUERY_TYPE_IST_COIN_BALANCE = 2;
+}
+
+message QueryRequest {
   option (buf.validate.message).cel = {
-    id: "transaction.response.accepted-receipt-consistency"
-    message: "accepted responses must include a receipt and rejected responses must not"
-    expression: "this.accepted ? has(this.receipt) : !has(this.receipt)"
+    id: "query.type.specified"
+    message: "query type must be specified"
+    expression: "this.type != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "query.owner.shape"
+    message: "owner must be a lowercase 40-hex-character address"
+    expression: "this.owner.matches('^[0-9a-f]{40}$')"
   };
 
-  optional bool accepted = 1 [(buf.validate.field).required = true];
+  ClientRequestKey request_key = 1 [(buf.validate.field).required = true];
+  optional QueryType type = 2 [(buf.validate.field).required = true];
+  optional string owner = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional bytes signature = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.min_len = 1
+  ];
+}
+
+message QueryResponse {
+  option (buf.validate.message).cel = {
+    id: "query.response.error-message-on-failure"
+    message: "failed query responses should include an error message"
+    expression: "this.success ? true : has(this.error_message)"
+  };
+  option (buf.validate.message).cel = {
+    id: "query.response.error-message-only-on-failure"
+    message: "successful query responses must not include an error message"
+    expression: "this.success ? !has(this.error_message) : true"
+  };
+
+  optional bool success = 1 [(buf.validate.field).required = true];
   optional string message = 2 [
     (buf.validate.field).required = true,
     (buf.validate.field).string.min_len = 1
   ];
-  optional TransactionReceipt receipt = 3;
+  optional bytes return_data = 3 [(buf.validate.field).bytes.min_len = 1];
+  optional string error_message = 4 [(buf.validate.field).string.min_len = 1];
 }
 
 message ClientRequest {
+  reserved 1;
   oneof body {
     option (buf.validate.oneof).required = true;
-    AppendRequest append = 1;
     TransactionRequest transaction = 2;
+    QueryRequest query = 3;
   }
 }
 
 message ClientResponse {
+  reserved 1;
   oneof body {
     option (buf.validate.oneof).required = true;
-    AppendResponse append = 1;
     TransactionResponse transaction = 2;
+    QueryResponse query = 3;
   }
 }

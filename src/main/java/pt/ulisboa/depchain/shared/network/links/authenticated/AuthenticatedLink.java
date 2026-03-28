@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -20,18 +20,19 @@ import pt.ulisboa.depchain.proto.AuthOpcode;
 import pt.ulisboa.depchain.proto.AuthenticatedDataEnvelope;
 import pt.ulisboa.depchain.proto.AuthenticatedHandshakeEnvelope;
 import pt.ulisboa.depchain.proto.DpchPacketType;
-import pt.ulisboa.depchain.shared.keys.PublicKeyLoader;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.key.PublicKeyLoader;
 import pt.ulisboa.depchain.shared.network.links.BlockingLink;
 import pt.ulisboa.depchain.shared.network.links.LinkClosedException;
 import pt.ulisboa.depchain.shared.network.links.LinkThreadUtil;
 import pt.ulisboa.depchain.shared.network.links.perfect.PerfectLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   private static final Logger logger = LoggerFactory.getLogger(AuthenticatedLink.class);
+  private static final long RECEIVE_MODE_RECHECK_MS = 50L;
   private final AuthenticatedContext context;
   private final AuthenticatedSender sender;
   private final Thread workerThread;
@@ -39,7 +40,7 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   private AuthenticatedLink(PerfectLink perfectLink, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) {
     this.context = new AuthenticatedContext(perfectLink, localSenderId, localStaticSKey, staticPKeys);
     this.sender = new AuthenticatedSender(context);
-    this.workerThread = Thread.ofVirtual().name("authenticated-link").start(this::runInboundLoop);
+    this.workerThread = Thread.ofPlatform().daemon(true).name("authenticated-link").start(this::runInboundLoop);
   }
 
   public static AuthenticatedLink bind(InetSocketAddress bindEndpoint, long localSenderId, PrivateKey localStaticSKey, Map<Long, PublicKey> staticPKeys) throws IOException {
@@ -62,12 +63,71 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
   @Override
   public InboundPacket receive() throws InterruptedException {
-    return context.receive();
+    while (context.isRunning()) {
+      InboundPacket delivered = pollDelivered();
+      if (delivered != null) {
+        return delivered;
+      }
+      if (context.tryEnterDirectReceive()) {
+        try {
+          delivered = receiveDirectLoop(Long.MAX_VALUE);
+          if (delivered != null) {
+            return delivered;
+          }
+        } finally {
+          context.exitDirectReceive();
+        }
+        continue;
+      }
+
+      delivered = context.receive(RECEIVE_MODE_RECHECK_MS);
+      if (delivered != null) {
+        return delivered;
+      }
+    }
+
+    InboundPacket delivered = pollDelivered();
+    if (delivered != null) {
+      return delivered;
+    }
+    throw new LinkClosedException("AuthenticatedLink is closed");
   }
 
   @Override
   public @Nullable InboundPacket receive(long timeoutMs) throws InterruptedException {
-    return context.receive(timeoutMs);
+    long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+    while (context.isRunning()) {
+      InboundPacket delivered = pollDelivered();
+      if (delivered != null) {
+        return delivered;
+      }
+      if (context.tryEnterDirectReceive()) {
+        try {
+          return receiveDirectLoop(deadlineNanos);
+        } finally {
+          context.exitDirectReceive();
+        }
+      }
+
+      long remainingNanos = deadlineNanos - System.nanoTime();
+      if (remainingNanos <= 0L) {
+        return pollDelivered();
+      }
+
+      long waitMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+      if (waitMs > RECEIVE_MODE_RECHECK_MS) {
+        waitMs = RECEIVE_MODE_RECHECK_MS;
+      } else if (waitMs <= 0L) {
+        waitMs = 1L;
+      }
+
+      delivered = context.receive(waitMs);
+      if (delivered != null) {
+        return delivered;
+      }
+    }
+
+    return pollDelivered();
   }
 
   public void closeConnection(long connectionId, InetSocketAddress remoteEndpoint) {
@@ -77,7 +137,13 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
   private void runInboundLoop() {
     while (context.isRunning()) {
       try {
-        InboundPacket inbound = context.perfectLink.receive();
+        if (!context.awaitHandshakeWork()) {
+          continue;
+        }
+        InboundPacket inbound = context.perfectLink.receive(50L);
+        if (inbound == null) {
+          continue;
+        }
         InboundPacket packet = receivePacket(inbound);
         if (packet != null) {
           context.offer(packet);
@@ -104,6 +170,72 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
     }
   }
 
+  private @Nullable InboundPacket receiveDirect() throws InterruptedException {
+    try {
+      return receivePacket(context.perfectLink.receive());
+    } catch (LinkClosedException closed) {
+      throw closed;
+    } catch (InterruptedException interrupted) {
+      throw interrupted;
+    } catch (Exception exception) {
+      if (!context.isRunning()) {
+        return null;
+      }
+      logger.debug("AuthenticatedLink direct receive error", exception);
+      return null;
+    }
+  }
+
+  private @Nullable InboundPacket receiveDirect(long timeoutMs) throws InterruptedException {
+    try {
+      InboundPacket inbound = context.perfectLink.receive(timeoutMs);
+      if (inbound == null) {
+        return null;
+      }
+      return receivePacket(inbound);
+    } catch (LinkClosedException closed) {
+      throw closed;
+    } catch (InterruptedException interrupted) {
+      throw interrupted;
+    } catch (Exception exception) {
+      if (!context.isRunning()) {
+        return null;
+      }
+      logger.debug("AuthenticatedLink direct receive error", exception);
+      return null;
+    }
+  }
+
+  private @Nullable InboundPacket receiveDirectLoop(long deadlineNanos) throws InterruptedException {
+    while (context.isRunning()) {
+      InboundPacket directPacket;
+      if (deadlineNanos == Long.MAX_VALUE) {
+        directPacket = receiveDirect();
+      } else {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0L) {
+          return pollDelivered();
+        }
+
+        long remainingMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+        if (remainingMs <= 0L) {
+          remainingMs = 1L;
+        }
+        directPacket = receiveDirect(remainingMs);
+      }
+
+      if (directPacket != null) {
+        return directPacket;
+      }
+
+      InboundPacket delivered = pollDelivered();
+      if (delivered != null) {
+        return delivered;
+      }
+    }
+    return pollDelivered();
+  }
+
   private InboundPacket receivePacket(InboundPacket inbound) {
     if (inbound == null || inbound.packet().getPacketType() != DpchPacketType.DPCH_PACKET_TYPE_DATA) {
       return null;
@@ -112,22 +244,23 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
     ConnectionKey connectionKey = new ConnectionKey(inbound.sender(), inbound.packet().getConnectionId());
     AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
     AuthenticatedConnectionState.ReceiveMode receiveMode = connectionState == null ? AuthenticatedConnectionState.ReceiveMode.INIT : connectionState.receiveMode();
-    if (receiveMode == AuthenticatedConnectionState.ReceiveMode.DATA) {
-      return handleData(connectionState, inbound);
-    }
-
-    AuthenticatedHandshakeEnvelope decodedPayload;
-    try {
-      decodedPayload = AuthenticatedPayloadUtil.decodeEcdsa(inbound.payload());
-    } catch (IllegalArgumentException ignored) {
-      return null;
-    }
-    if (receiveMode == AuthenticatedConnectionState.ReceiveMode.HANDSHAKE) {
-      handleHandshake(connectionKey, connectionState, inbound, decodedPayload);
-      return null;
-    }
-    handleInit(connectionKey, inbound, decodedPayload);
-    return null;
+    return switch (receiveMode) {
+      case DATA -> handleData(connectionState, inbound);
+      case HANDSHAKE -> {
+        AuthenticatedHandshakeEnvelope handshakeEnvelope = decodeHandshakeEnvelope(inbound);
+        if (handshakeEnvelope != null) {
+          handleHandshake(connectionKey, connectionState, inbound, handshakeEnvelope);
+        }
+        yield null;
+      }
+      case INIT -> {
+        AuthenticatedHandshakeEnvelope handshakeEnvelope = decodeHandshakeEnvelope(inbound);
+        if (handshakeEnvelope != null) {
+          handleInit(connectionKey, inbound, handshakeEnvelope);
+        }
+        yield null;
+      }
+    };
   }
 
   private void handleHandshake(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {
@@ -165,7 +298,7 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
     KeyPair localEphemeralKeys;
     try {
-      localEphemeralKeys = CryptoUtil.newECKeyPair();
+      localEphemeralKeys = CryptoUtil.createEcKeyPair();
     } catch (Exception exception) {
       throw new IllegalStateException("Failed to create ephemeral EC key pair", exception);
     }
@@ -224,6 +357,9 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
     } catch (Exception exception) {
       throw new IllegalStateException("Failed to derive shared secret", exception);
     }
+    if (connectionState.isAwaitingReply()) {
+      context.signalAsyncHandshakeCompleted();
+    }
     List<byte[]> queuedPayloads = connectionState.finishHandshake(sharedSecret, decodedPayload.getSenderId());
     sender.sendQueuedPayloads(connectionKey, connectionState, queuedPayloads, inbound.sender());
   }
@@ -251,6 +387,18 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
     }
 
     return new InboundPacket(inbound.sender(), inbound.packet(), decodedPayload.getApplicationPayload(), connectionState.authenticatedRemoteSenderId());
+  }
+
+  private @Nullable InboundPacket pollDelivered() {
+    return context.poll();
+  }
+
+  private @Nullable AuthenticatedHandshakeEnvelope decodeHandshakeEnvelope(InboundPacket inbound) {
+    try {
+      return AuthenticatedPayloadUtil.decodeEcdsa(inbound.payload());
+    } catch (IllegalArgumentException ignored) {
+      return null;
+    }
   }
 
   @Override

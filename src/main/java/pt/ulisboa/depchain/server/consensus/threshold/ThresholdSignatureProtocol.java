@@ -19,12 +19,12 @@ import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffCryptoPayloads;
 import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
+import pt.ulisboa.depchain.shared.crypto.ThresholdCryptoUtil;
+import pt.ulisboa.depchain.shared.crypto.ThresholdCryptoUtil.ThresholdNonceShare;
+import pt.ulisboa.depchain.shared.crypto.ThresholdCryptoUtil.ThresholdPartialSignContext;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdNonceShare;
-import pt.ulisboa.depchain.shared.utils.ThresholdCryptoUtil.ThresholdPartialSignContext;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.time.TimeUtil;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class ThresholdSignatureProtocol {
   private static final int GENESIS_VIEW_NUMBER = -1;
@@ -169,7 +169,7 @@ public final class ThresholdSignatureProtocol {
 
   private void buildCommitmentBatchCombinations(byte[] localCommitment, List<ThresholdSignatureExchange.RemoteCommitment> remoteCommitments, int nextIndex, List<ThresholdSignatureExchange.RemoteCommitment> selectedRemoteCommitments, List<CommitmentBatch> candidateBatches) {
     if (selectedRemoteCommitments.size() == threshold - 1) {
-      candidateBatches.add(newCommitmentBatch(localCommitment, selectedRemoteCommitments));
+      candidateBatches.add(createCommitmentBatch(localCommitment, selectedRemoteCommitments));
       return;
     }
 
@@ -181,7 +181,7 @@ public final class ThresholdSignatureProtocol {
     }
   }
 
-  private CommitmentBatch newCommitmentBatch(byte[] localCommitment, List<ThresholdSignatureExchange.RemoteCommitment> selectedRemoteCommitments) {
+  private CommitmentBatch createCommitmentBatch(byte[] localCommitment, List<ThresholdSignatureExchange.RemoteCommitment> selectedRemoteCommitments) {
     int[] participantIndexes = new int[threshold];
     List<byte[]> commitments = new ArrayList<>(threshold);
     Set<Integer> participantIndexesSet = new LinkedHashSet<>();

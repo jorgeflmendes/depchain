@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.Nullable;
 
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class DeliveryQueue<T> {
   private final Deque<T> queue = new ArrayDeque<>();
@@ -18,7 +18,7 @@ public final class DeliveryQueue<T> {
       return;
     }
     queue.addLast(value);
-    notifyAll();
+    notify();
   }
 
   public synchronized T receive() throws InterruptedException {
@@ -43,6 +43,16 @@ public final class DeliveryQueue<T> {
       remainingMs = TimeUnit.NANOSECONDS.toMillis(Math.max(0L, deadlineNanos - System.nanoTime()));
     }
 
+    if (queue.isEmpty()) {
+      if (closed) {
+        throw new LinkClosedException("Delivery queue is closed");
+      }
+      return null;
+    }
+    return queue.removeFirst();
+  }
+
+  public synchronized @Nullable T poll() {
     if (queue.isEmpty()) {
       if (closed) {
         throw new LinkClosedException("Delivery queue is closed");

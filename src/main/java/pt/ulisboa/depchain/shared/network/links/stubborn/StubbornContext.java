@@ -13,7 +13,7 @@ import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 import io.netty.util.HashedWheelTimer;
 import io.netty.util.Timeout;
@@ -62,11 +62,6 @@ final class StubbornContext {
 
   long retryDelayNanos(int attempt) {
     return TimeUnit.MILLISECONDS.toNanos(retryDelayMs(attempt));
-  }
-
-  boolean reachedRetryLimit(TrackedMessage tracked) {
-    ValidationUtils.requireNonNull(tracked, "tracked");
-    return tracked.retryAttempt() >= StubbornLink.DEFAULT_MAX_RETRY_ATTEMPTS;
   }
 
   void scheduleNextRetrySweep(StubbornSender sender) {

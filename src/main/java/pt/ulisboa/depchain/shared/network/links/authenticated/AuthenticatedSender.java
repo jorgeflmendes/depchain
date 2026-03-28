@@ -1,15 +1,15 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 import java.security.KeyPair;
 import java.util.List;
 
 import pt.ulisboa.depchain.proto.AuthOpcode;
+import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
-import pt.ulisboa.depchain.shared.utils.CryptoUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class AuthenticatedSender {
   private final AuthenticatedContext context;
@@ -37,6 +37,9 @@ final class AuthenticatedSender {
     ConnectionKey connectionKey = new ConnectionKey(remoteEndpoint, connectionId);
     AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
     if (connectionState != null) {
+      if (connectionState.isAwaitingReply()) {
+        context.signalAsyncHandshakeCompleted();
+      }
       connectionState.beginClose();
     }
     try {
@@ -54,7 +57,7 @@ final class AuthenticatedSender {
 
     KeyPair localEKeys;
     try {
-      localEKeys = CryptoUtil.newECKeyPair();
+      localEKeys = CryptoUtil.createEcKeyPair();
     } catch (Exception exception) {
       throw new IllegalStateException("Failed to allocate authenticated handshake key pair", exception);
     }
@@ -62,11 +65,13 @@ final class AuthenticatedSender {
     if (!connectionState.tryMarkHandshakeInitiated(localEKeys.getPrivate())) {
       return;
     }
+    context.signalAsyncHandshakeStarted();
 
     try {
       byte[] initPayload = AuthenticatedPayloadUtil.encodeEcdsa(AuthOpcode.AUTH_OPCODE_INIT, context.localSenderId, localEKeys.getPublic(), context.localStaticSKey);
       context.perfectLink.send(connectionKey.connectionId(), initPayload, remoteEndpoint);
     } catch (Exception exception) {
+      context.signalAsyncHandshakeCompleted();
       connectionState.rollbackHandshake(localEKeys.getPrivate());
       connectionState.close();
       throw new IllegalStateException("Failed to send authenticated init", exception);

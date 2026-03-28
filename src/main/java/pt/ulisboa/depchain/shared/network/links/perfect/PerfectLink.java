@@ -2,8 +2,6 @@ package pt.ulisboa.depchain.shared.network.links.perfect;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.ArrayList;
-import java.util.List;
 
 import org.eclipse.jdt.annotation.Nullable;
 import org.slf4j.Logger;
@@ -19,7 +17,7 @@ import pt.ulisboa.depchain.shared.network.links.stubborn.StubbornLink;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.network.model.InboundPacket;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
+import pt.ulisboa.depchain.shared.time.TimeUtil;
 
 public final class PerfectLink implements BlockingLink<InboundPacket> {
   private static final Logger logger = LoggerFactory.getLogger(PerfectLink.class);
@@ -48,30 +46,30 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
 
   @Override
   public InboundPacket receive() throws Exception {
-    InboundPacket ready = context.pollReady();
-    if (ready != null) {
-      return ready;
+    InboundPacket delivered = context.pollDelivered();
+    if (delivered != null) {
+      return delivered;
     }
 
     while (context.isRunning()) {
-      InboundPacket delivered = processDatagram(context.stubbornLink.receive());
-      if (delivered != null) {
-        return delivered;
+      InboundPacket inbound = processDatagram(context.stubbornLink.receive());
+      if (inbound != null) {
+        return inbound;
       }
     }
 
-    ready = context.pollReady();
-    if (ready != null) {
-      return ready;
+    delivered = context.pollDelivered();
+    if (delivered != null) {
+      return delivered;
     }
     throw new LinkClosedException("PerfectLink is closed");
   }
 
   @Override
   public @Nullable InboundPacket receive(long timeoutMs) throws Exception {
-    InboundPacket ready = context.pollReady();
-    if (ready != null) {
-      return ready;
+    InboundPacket delivered = context.pollDelivered();
+    if (delivered != null) {
+      return delivered;
     }
 
     long deadlineMs = TimeUtil.deadlineAfter(TimeUtil.nowMs(), timeoutMs);
@@ -81,17 +79,13 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
         return null;
       }
 
-      InboundPacket delivered = processDatagram(context.stubbornLink.receive(remainingMs));
-      if (delivered != null) {
-        return delivered;
+      InboundPacket inbound = processDatagram(context.stubbornLink.receive(remainingMs));
+      if (inbound != null) {
+        return inbound;
       }
     }
 
-    return context.pollReady();
-  }
-
-  public boolean awaitNoPendingData(long connectionId, InetSocketAddress remoteEndpoint, long timeoutMs) throws InterruptedException {
-    return sender.awaitNoPendingData(connectionId, remoteEndpoint, timeoutMs);
+    return context.pollDelivered();
   }
 
   public void cancelPendingData(long connectionId, InetSocketAddress remoteEndpoint) {
@@ -124,7 +118,7 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
     }
 
     try {
-      InboundPacket inbound = PerfectContext.decodeInboundPacket(datagram);
+      InboundPacket inbound = PerfectContext.parseInboundPacket(datagram);
       if (inbound == null) {
         return null;
       }
@@ -171,9 +165,8 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
   }
 
   private @Nullable InboundPacket handleData(InboundPacket inbound, DpchPacket packet, ConnectionKey connectionKey) {
-    InboundPacket firstReady = null;
-    List<InboundPacket> overflowReady = null;
-    PerfectConnectionState connectionState = context.connectionStates.computeIfAbsent(connectionKey, ignored -> new PerfectConnectionState());
+    InboundPacket delivered = null;
+    PerfectConnectionState connectionState = context.getOrCreateState(connectionKey);
     ReceiverState receiverState = connectionState.receiverState();
 
     synchronized (receiverState) {
@@ -182,25 +175,23 @@ public final class PerfectLink implements BlockingLink<InboundPacket> {
         return null;
       }
 
-      if (!receiverState.isAlreadyDelivered(sequenceNumber) && receiverState.bufferIfNew(sequenceNumber, inbound)) {
-        while (receiverState.hasNextInOrderReady()) {
-          InboundPacket readyPacket = receiverState.pollNextInOrder();
-          if (firstReady == null) {
-            firstReady = readyPacket;
-          } else {
-            if (overflowReady == null) {
-              overflowReady = new ArrayList<>(1);
-            }
-            overflowReady.add(readyPacket);
+      if (!receiverState.isAlreadyDelivered(sequenceNumber)) {
+        if (receiverState.isNextExpected(sequenceNumber)) {
+          receiverState.markNextDelivered();
+          delivered = inbound;
+
+          InboundPacket bufferedPacket = receiverState.pollBufferedNextInOrder();
+          while (bufferedPacket != null) {
+            context.offerDelivered(bufferedPacket);
+            bufferedPacket = receiverState.pollBufferedNextInOrder();
           }
+        } else {
+          receiverState.bufferIfNew(sequenceNumber, inbound);
         }
       }
     }
 
-    if (overflowReady != null) {
-      overflowReady.forEach(context::offerReady);
-    }
     sender.sendAck(packet.getConnectionId(), packet.getSequenceNumber(), inbound.sender());
-    return firstReady;
+    return delivered;
   }
 }

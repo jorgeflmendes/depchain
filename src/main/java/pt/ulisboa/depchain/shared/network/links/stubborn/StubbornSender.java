@@ -9,13 +9,10 @@ import java.util.Objects;
 import pt.ulisboa.depchain.shared.network.links.LinkFailureException;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedKey;
 import pt.ulisboa.depchain.shared.network.links.stubborn.tracking.TrackedMessage;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class StubbornSender {
   private record RetryCandidate(InetSocketAddress remoteEndpoint, TrackedMessage trackedMessage) {
-  }
-
-  private record TerminalFailureCandidate(InetSocketAddress remoteEndpoint, TrackedKey trackedKey) {
   }
 
   private final StubbornContext context;
@@ -68,8 +65,6 @@ final class StubbornSender {
 
   void runRetrySweep() {
     List<RetryCandidate> dueRetries = new ArrayList<>();
-    List<TerminalFailureCandidate> dueTerminalFailures = new ArrayList<>();
-    List<TrackedMessage> terminalTrackedMessages = new ArrayList<>();
     long nowNanos = System.nanoTime();
 
     synchronized (context.retryLock) {
@@ -88,33 +83,13 @@ final class StubbornSender {
             continue;
           }
 
-          if (context.reachedRetryLimit(trackedMessage)) {
-            dueTerminalFailures.add(new TerminalFailureCandidate(remoteEndpoint, trackedKey));
-            continue;
-          }
-
           trackedMessage.advanceRetryAttempt();
           trackedMessage.scheduleRetryAfterNanos(context.retryDelayNanos(trackedMessage.retryAttempt()));
           dueRetries.add(new RetryCandidate(remoteEndpoint, trackedMessage));
         }
       }
 
-      for (TerminalFailureCandidate dueTerminalFailure : dueTerminalFailures) {
-        TrackedMessage terminalTracked = context.removeTrackedMessage(dueTerminalFailure.remoteEndpoint(), dueTerminalFailure.trackedKey());
-        if (terminalTracked == null) {
-          continue;
-        }
-
-        terminalTrackedMessages.add(terminalTracked);
-        context.recordTerminalFailure(dueTerminalFailure.remoteEndpoint(), dueTerminalFailure
-            .trackedKey(), new LinkFailureException("Tracked message failed after max retries: " + dueTerminalFailure.remoteEndpoint() + " / " + dueTerminalFailure.trackedKey()));
-      }
-
       context.scheduleNextRetrySweep(this);
-    }
-
-    for (TrackedMessage terminalTrackedMessage : terminalTrackedMessages) {
-      terminalTrackedMessage.notifyTerminalState();
     }
 
     for (RetryCandidate retryCandidate : dueRetries) {

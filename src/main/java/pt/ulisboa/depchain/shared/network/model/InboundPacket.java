@@ -1,23 +1,25 @@
 package pt.ulisboa.depchain.shared.network.model;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
-
 import java.net.InetSocketAddress;
+import java.util.Objects;
 
 import com.google.protobuf.ByteString;
 
 import pt.ulisboa.depchain.proto.DpchPacket;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
 
 // Common inbound packet shape shared by link layers.
 public record InboundPacket(InetSocketAddress sender, DpchPacket packet, ByteString payload, Long authenticatedSenderId) {
   public InboundPacket {
-    ValidationUtils.requireAllNonNull(named("sender", sender), named("packet", packet));
-    ValidationUtils.requireValidPort(sender.getPort(), "sender.port");
+    Objects.requireNonNull(sender, "sender");
+    Objects.requireNonNull(packet, "packet");
+    int port = sender.getPort();
+    if (port < 0 || port > 65535) {
+      throw new IllegalArgumentException("sender.port must be a valid port");
+    }
     payload = payload == null ? packet.getPayload() : payload;
-    ValidationUtils.requireNonNull(payload, "payload");
-    if (authenticatedSenderId != null) {
-      ValidationUtils.requireNonNegativeLong(authenticatedSenderId, "authenticatedSenderId");
+    Objects.requireNonNull(payload, "payload");
+    if (authenticatedSenderId != null && authenticatedSenderId < 0L) {
+      throw new IllegalArgumentException("authenticatedSenderId must be non-negative");
     }
   }
 

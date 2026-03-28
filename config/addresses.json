@@ -1,0 +1,13 @@
+{
+  "clients" : {
+    "client" : "d5d92af892ba6c4fec1e599a06085f0907edf7ae",
+    "client2" : "44f289f03d96580efef0563446d197e46e64309f",
+    "client3" : "9f4ca039a81399817f91df3e4c2184b9b5e9a9ca"
+  },
+  "replicas" : {
+    "server1" : "4990ad215068f5002e95f172b0b0e0baddec2be1",
+    "server2" : "511955e03cd2b0683830612b83fdadd540f1ff49",
+    "server3" : "156ae4147578da9d47e3058ffb113ea810df19be",
+    "server4" : "b592a069c37d13a86f3d4200a28dd7da744ceb18"
+  }
+}

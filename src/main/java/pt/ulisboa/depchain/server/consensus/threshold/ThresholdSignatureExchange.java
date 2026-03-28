@@ -1,6 +1,6 @@
 package pt.ulisboa.depchain.server.consensus.threshold;
 
-import static pt.ulisboa.depchain.shared.utils.ValidationUtils.named;
+import static pt.ulisboa.depchain.shared.validation.ValidationUtils.named;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayDeque;
@@ -31,10 +31,10 @@ import pt.ulisboa.depchain.server.consensus.network.ReplicaTransportIds;
 import pt.ulisboa.depchain.server.consensus.network.SerializedPeerSender;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
-import pt.ulisboa.depchain.shared.utils.ProtoValidationUtil;
-import pt.ulisboa.depchain.shared.utils.QuorumAccumulator;
-import pt.ulisboa.depchain.shared.utils.TimeUtil;
-import pt.ulisboa.depchain.shared.utils.ValidationUtils;
+import pt.ulisboa.depchain.shared.quorum.QuorumAccumulator;
+import pt.ulisboa.depchain.shared.time.TimeUtil;
+import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
+import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class ThresholdSignatureExchange {
   private static final Logger logger = LoggerFactory.getLogger(ThresholdSignatureExchange.class);
@@ -180,14 +180,6 @@ final class ThresholdSignatureExchange {
     }
 
     return signatures;
-  }
-
-  private void sendMessage(int senderId, Message msg) throws Exception {
-    ValidationUtils.requireNonNegativeInt(senderId, "senderId");
-    ValidationUtils.requireAllNonNull(named("msg", msg), named("nodeTransport", nodeTransport));
-
-    byte[] payload = ProtoValidationUtil.requireValid(msg, "ReplicaMessage").toByteArray();
-    nodeTransport.send(thresholdConnectionId(senderId, msg.getViewNumber()), payload, requireConsensusEndpoint(senderId));
   }
 
   private void trySendMessage(int senderId, Message msg) {
