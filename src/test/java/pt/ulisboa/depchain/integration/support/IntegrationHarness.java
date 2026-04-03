@@ -368,10 +368,6 @@ public abstract class IntegrationHarness {
       Files.writeString(isolatedConfigPath, isolatedConfig, StandardCharsets.UTF_8);
       Path baseGenesisPath = baseConfigPath.getParent().resolve("genesis.json");
       Files.copy(baseGenesisPath, isolatedConfigDirectory.resolve("genesis.json"), StandardCopyOption.REPLACE_EXISTING);
-      Path baseGenesisLockPath = baseConfigPath.getParent().resolve("genesis.lock.json");
-      if (Files.exists(baseGenesisLockPath)) {
-        Files.copy(baseGenesisLockPath, isolatedConfigDirectory.resolve("genesis.lock.json"), StandardCopyOption.REPLACE_EXISTING);
-      }
       return isolatedConfigPath;
     } catch (IOException exception) {
       throw new IllegalStateException("Could not create isolated integration config", exception);
