@@ -3,6 +3,7 @@ package pt.ulisboa.depchain.server.node;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.security.PublicKey;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,6 +33,9 @@ final class ReplicaBlockPersistence {
   private final EvmService evmService;
   private final Map<Long, Address> clientAccountAddresses;
   private final Address istCoinContractAddress;
+  // The professor asked for a normal in-memory block chain during runtime.
+  // Disk persistence is kept only for restart and crash recovery.
+  private final ArrayList<BlockStore.BlockDocument> inMemoryBlockChain = new ArrayList<>();
 
   private BlockStore.BlockDocument latestBlock;
 
@@ -50,9 +54,15 @@ final class ReplicaBlockPersistence {
     BlockStore.BlockDocument genesisBlock = blockStore.ensureGenesisPersisted(buildGenesisBlock(genesis));
     BlockStore.BlockDocument recoveredBlock = blockStore.loadLatest().orElse(genesisBlock);
     List<BlockStore.BlockDocument> persistedBlocks = blockStore.loadAll();
+    inMemoryBlockChain.clear();
+    if (persistedBlocks.isEmpty()) {
+      inMemoryBlockChain.add(genesisBlock);
+    } else {
+      inMemoryBlockChain.addAll(persistedBlocks);
+    }
     restoreState(evmService, recoveredBlock);
     latestBlock = recoveredBlock;
-    return new RecoveryState(genesisBlock, recoveredBlock, persistedBlocks.isEmpty() ? List.of(genesisBlock) : persistedBlocks);
+    return new RecoveryState(genesisBlock, recoveredBlock, List.copyOf(inMemoryBlockChain));
   }
 
   BlockStore.BlockDocument persistExecutedNode(Node node) throws IOException {
@@ -66,8 +76,13 @@ final class ReplicaBlockPersistence {
         captureWorldState(evmService), node.getNodeHash(), node.getParentNodeHash(), node.getViewNumber());
 
     blockStore.append(nextBlock);
+    inMemoryBlockChain.add(nextBlock);
     latestBlock = nextBlock;
     return nextBlock;
+  }
+
+  List<BlockStore.BlockDocument> inMemoryBlocks() {
+    return List.copyOf(inMemoryBlockChain);
   }
 
   static BlockStore.BlockDocument buildGenesisBlock(GenesisParser genesis) {

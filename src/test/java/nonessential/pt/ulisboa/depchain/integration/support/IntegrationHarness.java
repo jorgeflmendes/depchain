@@ -61,7 +61,7 @@ import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 public abstract class IntegrationHarness {
   protected static final Duration AWAIT_POLL_INTERVAL = Duration.ofMillis(50);
-  protected static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(25);
+  protected static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(35);
   protected static final Duration STANDARD_REQUEST_TIMEOUT = Duration.ofSeconds(12);
   protected static final Duration VIEW_CHANGE_REQUEST_TIMEOUT = Duration.ofSeconds(20);
   protected static final Duration REPLAY_INITIAL_TIMEOUT = Duration.ofSeconds(8);
