@@ -243,24 +243,22 @@ public final class AuthenticatedLink implements BlockingLink<InboundPacket> {
 
     ConnectionKey connectionKey = new ConnectionKey(inbound.sender(), inbound.packet().getConnectionId());
     AuthenticatedConnectionState connectionState = context.getConnectionStateOrNull(connectionKey);
-    AuthenticatedConnectionState.ReceiveMode receiveMode = connectionState == null ? AuthenticatedConnectionState.ReceiveMode.INIT : connectionState.receiveMode();
-    return switch (receiveMode) {
-      case DATA -> handleData(connectionState, inbound);
-      case HANDSHAKE -> {
-        AuthenticatedHandshakeEnvelope handshakeEnvelope = decodeHandshakeEnvelope(inbound);
-        if (handshakeEnvelope != null) {
-          handleHandshake(connectionKey, connectionState, inbound, handshakeEnvelope);
-        }
-        yield null;
+    AuthenticatedHandshakeEnvelope handshakeEnvelope = decodeHandshakeEnvelope(inbound);
+    if (handshakeEnvelope != null) {
+      if (connectionState == null) {
+        handleInit(connectionKey, inbound, handshakeEnvelope);
+      } else {
+        handleHandshake(connectionKey, connectionState, inbound, handshakeEnvelope);
       }
-      case INIT -> {
-        AuthenticatedHandshakeEnvelope handshakeEnvelope = decodeHandshakeEnvelope(inbound);
-        if (handshakeEnvelope != null) {
-          handleInit(connectionKey, inbound, handshakeEnvelope);
-        }
-        yield null;
-      }
-    };
+      return null;
+    }
+
+    if (connectionState == null) {
+      sender.ensureHandshake(connectionKey, inbound.sender());
+      return null;
+    }
+
+    return handleData(connectionState, inbound);
   }
 
   private void handleHandshake(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InboundPacket inbound, AuthenticatedHandshakeEnvelope decodedPayload) {

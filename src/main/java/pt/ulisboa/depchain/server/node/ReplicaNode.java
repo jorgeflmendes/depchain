@@ -62,12 +62,13 @@ public final class ReplicaNode {
     this.evmService = new EvmService();
     Address istCoinContractAddress = IstCoin.resolveContractAddress(genesis);
     ThresholdKeyLoader.ReplicaThresholdKeyMaterial thresholdKeys = ThresholdKeyLoader.loadReplicaThresholdKeyMaterial(configParser, replicaConfig.senderId());
-    this.blockPersistence = new ReplicaBlockPersistence(BlockStore.forReplica(configParser, replicaConfig), evmService, clientPublicKeys);
+    this.blockPersistence = new ReplicaBlockPersistence(BlockStore.forReplica(configParser, replicaConfig), evmService, clientPublicKeys, istCoinContractAddress);
     ReplicaBlockPersistence.RecoveryState recoveryState = blockPersistence.initialize(genesis);
     this.persistedGenesisBlock = recoveryState.genesisBlock();
     this.recoveredBlock = recoveryState.latestBlock();
     this.hotStuffManager = new HotStuffManager(Math.toIntExact(replicaConfig.senderId()), configParser, thresholdKeys.privateShare(), thresholdKeys.publicKey(), clientPublicKeys,
         evmService, istCoinContractAddress, this::onExecutedNode);
+    this.hotStuffManager.recoverPersistedBranch(recoveryState.persistedBlocks());
   }
 
   public void run() throws Exception {
@@ -88,13 +89,22 @@ public final class ReplicaNode {
 
       // Set up the replica with the transports and start the hotstuff loop
       this.hotStuffManager.initNetwork(nodeTransport, clientTransport);
-      workers.submit(() -> this.hotStuffManager.run());
+      workers.submit(() -> runWorkerLoop("hotstuff", this.hotStuffManager::run));
 
       // Dedicated loop for inter-replica traffic.
-      workers.submit(() -> runNodeLoop(nodeTransport));
+      workers.submit(() -> runWorkerLoop("node-loop", () -> runNodeLoop(nodeTransport)));
 
       // This thread handles client traffic inline to avoid per-packet task churn.
       runClientLoop(clientTransport);
+    }
+  }
+
+  private void runWorkerLoop(String workerName, Runnable worker) {
+    try {
+      worker.run();
+    } catch (RuntimeException exception) {
+      logger.error("Replica {} worker {} terminated unexpectedly", replicaConfig.id(), workerName, exception);
+      throw exception;
     }
   }
 

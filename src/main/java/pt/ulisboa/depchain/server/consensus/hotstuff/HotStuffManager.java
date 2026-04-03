@@ -70,7 +70,7 @@ public class HotStuffManager {
   private long clientCommandWaitTimeoutMs;
   private long fetchNodeTimeoutMs;
 
-  private int viewNumber;
+  private volatile int viewNumber;
   private QuorumCertificate highQC;
   private QuorumCertificate lockedQC;
   private QuorumCertificate prepareQC;
@@ -126,6 +126,33 @@ public class HotStuffManager {
     this.thresholdProtocol.initTransport(nodeTransport);
   }
 
+  public void recoverPersistedBranch(List<BlockStore.BlockDocument> persistedBlocks) {
+    pt.ulisboa.depchain.shared.validation.ValidationUtils.requireNonNull(persistedBlocks, "persistedBlocks");
+
+    blockTree.clear();
+    executedNodeHashes.clear();
+    blockTree.put(HotStuffSupport.GENESIS_NODE.getNodeHash(), HotStuffSupport.GENESIS_NODE);
+    executedNodeHashes.add(HotStuffSupport.GENESIS_NODE.getNodeHash());
+    currentProposal = HotStuffSupport.GENESIS_NODE;
+
+    int recoveredView = 0;
+    for (BlockStore.BlockDocument persistedBlock : persistedBlocks) {
+      if (persistedBlock == null || persistedBlock.height() == 0L || persistedBlock.consensusNodeHash() == null || persistedBlock.consensusParentNodeHash() == null
+          || persistedBlock.consensusViewNumber() == null) {
+        continue;
+      }
+
+      Node recoveredNode = Node.newBuilder().setParentNodeHash(persistedBlock.consensusParentNodeHash()).setNodeHash(persistedBlock.consensusNodeHash())
+          .setViewNumber(persistedBlock.consensusViewNumber()).setCommand(HotStuffSupport.NO_OP_COMMAND).build();
+      blockTree.put(recoveredNode.getNodeHash(), recoveredNode);
+      executedNodeHashes.add(recoveredNode.getNodeHash());
+      currentProposal = recoveredNode;
+      recoveredView = Math.max(recoveredView, recoveredNode.getViewNumber() + 1);
+    }
+
+    viewNumber = Math.max(viewNumber, recoveredView);
+  }
+
   public void run() {
     logger.info("Starting at view {}", viewNumber);
     sendToLeader(createPhaseCertificateMessage(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_NEW_VIEW, prepareQC));
@@ -149,6 +176,8 @@ public class HotStuffManager {
       return;
     }
 
+    opportunisticallyExecuteDecide(msg);
+    fastForwardViewIfFutureLeaderMessage(msg);
     observeMessage(msg);
     messageInbox.offer(msg);
   }
@@ -523,6 +552,54 @@ public class HotStuffManager {
 
   private int getLeader(int view) {
     return view % n;
+  }
+
+  private void fastForwardViewIfFutureLeaderMessage(Message message) {
+    if (message == null || thresholdProtocol.isAuxiliaryMessage(message)) {
+      return;
+    }
+
+    int messageView = message.getViewNumber();
+    if (messageView <= viewNumber) {
+      return;
+    }
+
+    ConsensusMessageType type = message.getMessageType();
+    if (type != ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PREPARE && type != ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_PRE_COMMIT
+        && type != ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_COMMIT && type != ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE) {
+      return;
+    }
+
+    int expectedLeader = getLeader(messageView);
+    if (message.getReplicaSenderId() != expectedLeader) {
+      return;
+    }
+
+    int newView = messageView - 1;
+    if (newView > viewNumber) {
+      logger.debug("Fast-forwarding local view from {} to {} after observing {} from leader {} for future view {}", viewNumber, newView, type, expectedLeader, messageView);
+      viewNumber = newView;
+    }
+  }
+
+  private void opportunisticallyExecuteDecide(Message message) {
+    if (message == null || message.getMessageType() != ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE || !message.hasPhaseCertificate()) {
+      return;
+    }
+
+    QuorumCertificate decideQc = message.getPhaseCertificate().getJustifyQc();
+    if (decideQc == null || !verifyQC(decideQc)) {
+      return;
+    }
+
+    try {
+      updateHighQC(decideQc);
+      long fetchDeadlineNanos = TimeUtil.monotonicDeadlineAfterNow(fetchNodeTimeoutMs);
+      ensureDeliveredBranch(decideQc.getCertifiedNode(), message.getReplicaSenderId(), fetchDeadlineNanos);
+      executeCommittedBranch(decideQc.getCertifiedNode());
+    } catch (ConsensusTimeoutException exception) {
+      logger.debug("Ignoring opportunistic DECIDE catch-up failure for view {}", message.getViewNumber(), exception);
+    }
   }
 
   private boolean isLeader() {

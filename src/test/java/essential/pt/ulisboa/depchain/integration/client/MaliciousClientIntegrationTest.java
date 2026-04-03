@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,25 @@ import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
 @Tag("integration")
 @DisplayName("Malicious client handling")
 class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
+  private Path manualScenarioConfigPath;
+
+  @BeforeAll
+  void prepareManualScenarioConfig() throws Exception {
+    manualScenarioConfigPath = integrationConfigPath();
+    cleanPersistedBlockData(manualScenarioConfigPath);
+    populateConfig(manualScenarioConfigPath);
+  }
+
+  @AfterAll
+  void cleanupManualScenarioConfig() throws Exception {
+    if (manualScenarioConfigPath != null) {
+      try {
+        cleanPersistedBlockData(manualScenarioConfigPath);
+      } finally {
+        cleanupIsolatedConfigDirectory(manualScenarioConfigPath);
+      }
+    }
+  }
 
   @Test
   @Timeout(30)
@@ -105,9 +126,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   @Test
   @Timeout(40)
   void colludingByzantineReplicaCannotForgeClientSuccessWithoutHonestReplyQuorum() throws Exception {
-    Path configPath = integrationConfigPath();
+    Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
-    populateConfig(configPath);
 
     List<StartedServer> servers = new ArrayList<>(startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath));
     StartedServer byzantineReplica = startByzantineServer(BYZANTINE_REPLICA_ID, configPath, ByzantineAttackMode.FORGED_CLIENT_SUCCESS_RESPONSE);
@@ -126,11 +146,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       try {
         stopProcesses(servers);
       } finally {
-        try {
-          cleanPersistedBlockData(configPath);
-        } finally {
-          cleanupIsolatedConfigDirectory(configPath);
-        }
+        cleanPersistedBlockData(configPath);
       }
     }
   }
@@ -138,9 +154,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   @Test
   @Timeout(40)
   void colludingByzantineLeaderCannotForgeClientSuccessWithoutHonestReplyQuorum() throws Exception {
-    Path configPath = integrationConfigPath();
+    Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
-    populateConfig(configPath);
 
     List<StartedServer> servers = new ArrayList<>(startServers(HONEST_WITH_BYZANTINE_LEADER_REPLICA_IDS, configPath));
     StartedServer byzantineLeader = startByzantineServer(LEADER_REPLICA_ID, configPath, ByzantineAttackMode.FORGED_CLIENT_SUCCESS_RESPONSE);
@@ -159,11 +174,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       try {
         stopProcesses(servers);
       } finally {
-        try {
-          cleanPersistedBlockData(configPath);
-        } finally {
-          cleanupIsolatedConfigDirectory(configPath);
-        }
+        cleanPersistedBlockData(configPath);
       }
     }
   }
@@ -171,9 +182,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   @Test
   @Timeout(40)
   void colludingByzantineReplicaCannotForceClientFailureWithoutHonestFailureQuorum() throws Exception {
-    Path configPath = integrationConfigPath();
+    Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
-    populateConfig(configPath);
 
     List<StartedServer> servers = new ArrayList<>(startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath));
     StartedServer byzantineReplica = startByzantineServer(BYZANTINE_REPLICA_ID, configPath, ByzantineAttackMode.FORGED_CLIENT_FAILURE_RESPONSE);
@@ -189,17 +199,14 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       assertThat(response.hasTransaction()).isTrue();
       assertThat(response.getTransaction().hasReceipt()).isTrue();
       assertThat(response.getTransaction().getReceipt().getSuccess()).isTrue();
+      rememberConsumedNonce(configPath, 0L);
       assertByzantineAttackObserved(byzantineReplica, ByzantineAttackMode.FORGED_CLIENT_FAILURE_RESPONSE, "Byzantine client-failure forgery was never exercised");
       assertRequestSucceeds(configPath, "post-colluding-byzantine-failure", STANDARD_REQUEST_TIMEOUT, servers, "Cluster should remain responsive after a Byzantine replica forges a client failure response");
     } finally {
       try {
         stopProcesses(servers);
       } finally {
-        try {
-          cleanPersistedBlockData(configPath);
-        } finally {
-          cleanupIsolatedConfigDirectory(configPath);
-        }
+        cleanPersistedBlockData(configPath);
       }
     }
   }
@@ -207,9 +214,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   @Test
   @Timeout(40)
   void colludingByzantineLeaderCannotForceClientFailureWithoutHonestFailureQuorum() throws Exception {
-    Path configPath = integrationConfigPath();
+    Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
-    populateConfig(configPath);
 
     List<StartedServer> servers = new ArrayList<>(startServers(HONEST_WITH_BYZANTINE_LEADER_REPLICA_IDS, configPath));
     StartedServer byzantineLeader = startByzantineServer(LEADER_REPLICA_ID, configPath, ByzantineAttackMode.FORGED_CLIENT_FAILURE_RESPONSE);
@@ -225,17 +231,14 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       assertThat(response.hasTransaction()).isTrue();
       assertThat(response.getTransaction().hasReceipt()).isTrue();
       assertThat(response.getTransaction().getReceipt().getSuccess()).isTrue();
+      rememberConsumedNonce(configPath, 0L);
       assertByzantineAttackObserved(byzantineLeader, ByzantineAttackMode.FORGED_CLIENT_FAILURE_RESPONSE, "Byzantine leader client-failure forgery was never exercised");
       assertRequestSucceeds(configPath, "post-colluding-byzantine-leader-failure", STANDARD_REQUEST_TIMEOUT, servers, "Cluster should remain responsive after a Byzantine leader forges a client failure response");
     } finally {
       try {
         stopProcesses(servers);
       } finally {
-        try {
-          cleanPersistedBlockData(configPath);
-        } finally {
-          cleanupIsolatedConfigDirectory(configPath);
-        }
+        cleanPersistedBlockData(configPath);
       }
     }
   }

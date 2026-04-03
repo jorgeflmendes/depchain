@@ -79,7 +79,7 @@ public final class IstCoin {
 
   public static Address resolveContractAddress(GenesisParser genesis) {
     pt.ulisboa.depchain.shared.validation.ValidationUtils.requireNonNull(genesis, "genesis");
-    GenesisParser.GenesisTransaction deploy = genesis.transactions().stream().filter(transaction -> "CONTRACT_DEPLOY".equals(transaction.type())).findFirst()
+    GenesisParser.GenesisTransaction deploy = genesis.transactions().stream().filter(GenesisParser.GenesisTransaction::isContractDeploy).findFirst()
         .orElseThrow(() -> new IllegalStateException("Genesis does not define an IST Coin contract deployment"));
     return Address.contractAddress(Address.fromHexString("0x" + deploy.from()), deploy.nonce());
   }

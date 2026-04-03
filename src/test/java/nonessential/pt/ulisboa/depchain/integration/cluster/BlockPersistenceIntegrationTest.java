@@ -258,7 +258,6 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
       assertEquals(genesis.blockHash(), latest.previousBlockHash(), "Transfer block should link to the persisted genesis block");
       assertTrue(!latest.transactions().isEmpty(), "Persisted block should contain the transfer transaction for " + replicaId);
       assertEquals("TRANSFER", latest.transactions().getFirst().type(), "Persisted block should store a transfer for " + replicaId);
-      assertEquals("DepCoin", latest.transactions().getFirst().currency(), "Persisted transfer should keep the DepCoin currency marker for " + replicaId);
       assertEquals(RECIPIENT, latest.transactions().getFirst().to(), "Persisted transfer should target the expected recipient for " + replicaId);
       assertEquals(Long.toString(expectedAmount), latest.transactions().getFirst().amount(), "Persisted transfer should keep the expected amount for " + replicaId);
       assertEquals(expectedNonce, latest.transactions().getFirst().nonce(), "Persisted transfer should keep the expected nonce for " + replicaId);
