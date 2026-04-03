@@ -14,7 +14,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.junit.jupiter.api.Tag;
@@ -24,16 +26,20 @@ import org.junit.jupiter.api.Timeout;
 import com.google.protobuf.ByteString;
 
 import pt.ulisboa.depchain.client.api.ClientReplicaApi;
+import pt.ulisboa.depchain.client.request.SignedClientRequestFactory;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness.ManagedCluster;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness.StartedServer;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
+import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.QueryResponse;
+import pt.ulisboa.depchain.proto.QueryType;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionResponse;
 import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.server.execution.IstCoin;
+import pt.ulisboa.depchain.server.node.BlockStore;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
 import pt.ulisboa.depchain.shared.crypto.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
@@ -47,6 +53,8 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   private static final String CLIENT_ID = "client";
   private static final String SPENDER_CLIENT_ID = "client2";
   private static final String RECIPIENT_ADDRESS = "cccccccccccccccccccccccccccccccccccccccc";
+  private static final long INITIAL_ALLOWANCE = 60L;
+  private static final long REAPPROVED_ALLOWANCE = 40L;
 
   @Test
   @Timeout(60)
@@ -113,13 +121,17 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(90)
+  @Timeout(60)
   void queriesRemainAvailableWhileWritesAreBeingCommitted() throws Exception {
-    try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
+    try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
+      SignedClientRequestFactory requestFactory = new SignedClientRequestFactory(cluster.clientSenderId(), cluster.clientPrivateKey());
+      String walletAddress = clientWalletAddress(cluster.configPath(), cluster.clientSenderId());
+      CountDownLatch writesStarted = new CountDownLatch(1);
       CompletableFuture<Void> writer = CompletableFuture.runAsync(() -> {
         try {
           for (int i = 0; i < 4; i++) {
-            TransactionResponse response = client.transferDepCoin(RECIPIENT_ADDRESS, i + 1L, i, TEST_GAS_LIMIT, TEST_GAS_PRICE);
+            writesStarted.countDown();
+            TransactionResponse response = submitTransfer(cluster, requestFactory, i + 1L, i);
             assertTrue(response.getReceipt().getSuccess(), "Concurrent write should succeed");
           }
         } catch (Exception exception) {
@@ -127,18 +139,21 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
         }
       });
 
+      assertTrue(writesStarted.await(5L, TimeUnit.SECONDS), "Writer should start issuing requests before query assertions run");
       for (int i = 0; i < 4; i++) {
-        QueryResponse depBalance = client.getDepCoinBalance(client.getWalletAddress());
-        QueryResponse istBalance = client.getIstCoinBalance(client.getWalletAddress());
+        QueryResponse depBalance = queryReplica(cluster, FOLLOWER_REPLICA_ID, requestFactory, QueryType.QUERY_TYPE_DEPCOIN_BALANCE, walletAddress);
+        QueryResponse istBalance = queryReplica(cluster, FOLLOWER_REPLICA_ID, requestFactory, QueryType.QUERY_TYPE_IST_COIN_BALANCE, walletAddress);
         assertTrue(depBalance.getSuccess(), "DepCoin query should succeed while writes are in flight");
         assertTrue(istBalance.getSuccess(), "IST query should succeed while writes are in flight");
       }
 
-      writer.get();
-      QueryResponse recipientBalance = client.getDepCoinBalance(RECIPIENT_ADDRESS);
-      assertTrue(recipientBalance.getSuccess(), "Recipient query should succeed after concurrent writes");
-      assertTrue(new BigInteger(1, recipientBalance.getReturnData().toByteArray())
-          .compareTo(BigInteger.valueOf(10L)) >= 0, "Recipient should observe the cumulative transferred balance");
+      writer.get(30L, TimeUnit.SECONDS);
+      org.awaitility.Awaitility.await().atMost(STANDARD_REQUEST_TIMEOUT).untilAsserted(() -> {
+        QueryResponse recipientBalance = queryReplica(cluster, LEADER_REPLICA_ID, requestFactory, QueryType.QUERY_TYPE_DEPCOIN_BALANCE, RECIPIENT_ADDRESS);
+        assertTrue(recipientBalance.getSuccess(), "Recipient query should succeed after concurrent writes");
+        assertTrue(new BigInteger(1, recipientBalance.getReturnData().toByteArray())
+            .compareTo(BigInteger.valueOf(10L)) >= 0, "Recipient should observe the cumulative transferred balance");
+      });
     }
   }
 
@@ -154,44 +169,78 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(90)
+  @Timeout(60)
   void approvalFrontRunningScenarioHoldsAtClusterLevel() throws Exception {
-    try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS);
-        ClientReplicaApi owner = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID);
-        ClientReplicaApi spender = ClientReplicaApi.connect(cluster.configPath().toString(), SPENDER_CLIENT_ID)) {
+    try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       ConfigParser config = ConfigParser.load(cluster.configPath());
       Address contractAddress = IstCoin.resolveContractAddress(cluster.configPath());
-      Address ownerAddress = Address.fromHexString("0x" + owner.getWalletAddress());
-      Address spenderAddress = Address.fromHexString("0x" + spender.getWalletAddress());
+      long ownerSenderId = config.requireClientById(CLIENT_ID).senderId();
+      long spenderSenderId = config.requireClientById(SPENDER_CLIENT_ID).senderId();
+      PrivateKey ownerPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config, ownerSenderId);
+      PrivateKey spenderPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config, spenderSenderId);
+      String ownerWalletAddress = clientWalletAddress(cluster.configPath(), ownerSenderId);
+      String spenderWalletAddress = clientWalletAddress(cluster.configPath(), spenderSenderId);
+      Address ownerAddress = Address.fromHexString("0x" + ownerWalletAddress);
+      Address spenderAddress = Address.fromHexString("0x" + spenderWalletAddress);
 
-      TransactionResponse initialApproval = owner
-          .callContract(contractAddress.toHexString().substring(2), 0L, 0L, 300_000L, TEST_GAS_PRICE, IstCoin.encodeApproveCallData(spenderAddress, 100L).toArrayUnsafe());
+      TransactionResponse initialApproval = submitContractCall(config, ownerSenderId, ownerPrivateKey, 1L, 0L, 300_000L, TEST_GAS_PRICE, contractAddress, IstCoin
+          .encodeApproveCallData(spenderAddress, INITIAL_ALLOWANCE).toArrayUnsafe());
+      assertNotNull(initialApproval.getReceipt(), "Initial approval should return a receipt");
       assertTrue(initialApproval.getReceipt().getSuccess(), "Initial approval should succeed");
 
-      submitClientPayloadDirectToLeader(config, config.requireClientById(CLIENT_ID).senderId(), PrivateKeyLoader.loadClientPrivateKey(config), ProtoValidationUtil
-          .requireValid(contractCallRequest(config.requireClientById(CLIENT_ID).senderId(), 1L, 1L, 300_000L, 1L, contractAddress, IstCoin.encodeApproveCallData(spenderAddress, 0L)
-              .toArrayUnsafe(), PrivateKeyLoader.loadClientPrivateKey(config)), "ClientRequest")
-          .toByteArray());
-      submitClientPayloadDirectToLeader(config, config.requireClientById(SPENDER_CLIENT_ID).senderId(), PrivateKeyLoader
-          .loadClientPrivateKey(config, config.requireClientById(SPENDER_CLIENT_ID).senderId()), ProtoValidationUtil
-              .requireValid(contractCallRequest(config.requireClientById(SPENDER_CLIENT_ID).senderId(), 2L, 0L, 400_000L, 10L, contractAddress, IstCoin
-                  .encodeTransferFromCallData(ownerAddress, spenderAddress, 100L)
-                  .toArrayUnsafe(), PrivateKeyLoader.loadClientPrivateKey(config, config.requireClientById(SPENDER_CLIENT_ID).senderId())), "ClientRequest")
-              .toByteArray());
+      CountDownLatch contendersReady = new CountDownLatch(2);
+      CountDownLatch startRace = new CountDownLatch(1);
+      CompletableFuture<TransactionResponse> ownerReset = CompletableFuture.supplyAsync(() -> unchecked(() -> {
+        contendersReady.countDown();
+        assertTrue(startRace.await(5L, TimeUnit.SECONDS), "Reset branch should wait for the synchronized race start");
+        return submitContractCall(config, ownerSenderId, ownerPrivateKey, 2L, 1L, 300_000L, TEST_GAS_PRICE, contractAddress, IstCoin.encodeApproveCallData(spenderAddress, 0L)
+            .toArrayUnsafe());
+      }));
+      CompletableFuture<TransactionResponse> competingSpend = CompletableFuture.supplyAsync(() -> unchecked(() -> {
+        contendersReady.countDown();
+        assertTrue(startRace.await(5L, TimeUnit.SECONDS), "Spend branch should wait for the synchronized race start");
+        return submitContractCall(config, spenderSenderId, spenderPrivateKey, 1L, 0L, 400_000L, 10L, contractAddress, IstCoin
+            .encodeTransferFromCallData(ownerAddress, spenderAddress, INITIAL_ALLOWANCE).toArrayUnsafe());
+      }));
 
-      awaitClientObservedIstBalance(owner, spender.getWalletAddress(), BigInteger.valueOf(100L));
+      assertTrue(contendersReady.await(5L, TimeUnit.SECONDS), "Both frontrunning contenders should be ready before the race starts");
+      startRace.countDown();
 
-      TransactionResponse explicitReapproval = owner
-          .callContract(contractAddress.toHexString().substring(2), 0L, 2L, 300_000L, TEST_GAS_PRICE, IstCoin.encodeApproveCallData(spenderAddress, 50L).toArrayUnsafe());
-      TransactionResponse approvedSpend = spender
-          .callContract(contractAddress.toHexString().substring(2), 0L, 1L, 400_000L, 10L, IstCoin.encodeTransferFromCallData(ownerAddress, spenderAddress, 50L).toArrayUnsafe());
-      TransactionResponse excessSpend = spender
-          .callContract(contractAddress.toHexString().substring(2), 0L, 2L, 400_000L, 10L, IstCoin.encodeTransferFromCallData(ownerAddress, spenderAddress, 1L).toArrayUnsafe());
+      TransactionResponse resetResponse = ownerReset.get(30L, TimeUnit.SECONDS);
+      TransactionResponse competingSpendResponse = competingSpend.get(30L, TimeUnit.SECONDS);
+      assertNotNull(resetResponse.getReceipt(), "Reset request should return a receipt");
+      assertNotNull(competingSpendResponse.getReceipt(), "Competing spend should return a receipt");
+      assertTrue(resetResponse.getReceipt().getSuccess(), () -> "Zero-reset approval should succeed but failed with: " + resetResponse.getReceipt().getErrorMessage());
+      assertTrue(competingSpendResponse.getReceipt()
+          .getSuccess(), () -> "Front-running spend should succeed exactly once but failed with: " + competingSpendResponse.getReceipt().getErrorMessage());
 
-      assertTrue(explicitReapproval.getReceipt().getSuccess(), "Reapproval after zero reset should succeed");
-      assertTrue(approvedSpend.getReceipt().getSuccess(), "Approved post-reset spend should succeed");
+      awaitIstBalanceAtReplica(config, LEADER_REPLICA_ID, ownerSenderId, ownerPrivateKey, spenderWalletAddress, BigInteger.valueOf(INITIAL_ALLOWANCE));
+
+      TransactionResponse extraSpendAfterReset = submitContractCall(config, spenderSenderId, spenderPrivateKey, 2L, 1L, 400_000L, 10L, contractAddress, IstCoin
+          .encodeTransferFromCallData(ownerAddress, spenderAddress, REAPPROVED_ALLOWANCE).toArrayUnsafe());
+      TransactionResponse explicitReapproval = submitContractCall(config, ownerSenderId, ownerPrivateKey, 3L, 2L, 300_000L, TEST_GAS_PRICE, contractAddress, IstCoin
+          .encodeApproveCallData(spenderAddress, REAPPROVED_ALLOWANCE).toArrayUnsafe());
+      TransactionResponse approvedSpend = submitContractCall(config, spenderSenderId, spenderPrivateKey, 3L, 2L, 400_000L, 10L, contractAddress, IstCoin
+          .encodeTransferFromCallData(ownerAddress, spenderAddress, REAPPROVED_ALLOWANCE).toArrayUnsafe());
+      TransactionResponse excessSpend = submitContractCall(config, spenderSenderId, spenderPrivateKey, 4L, 3L, 400_000L, 10L, contractAddress, IstCoin
+          .encodeTransferFromCallData(ownerAddress, spenderAddress, 1L).toArrayUnsafe());
+
+      assertNotNull(extraSpendAfterReset.getReceipt(), "Spend after reset should return a receipt");
+      assertNotNull(explicitReapproval.getReceipt(), "Explicit reapproval should return a receipt");
+      assertNotNull(approvedSpend.getReceipt(), "Approved spend should return a receipt");
+      assertNotNull(excessSpend.getReceipt(), "Excess spend should return a receipt");
+      assertFalse(extraSpendAfterReset.getReceipt().getSuccess(), "Spend after zero reset should fail until the owner explicitly reapproves");
+      assertTrue(explicitReapproval.getReceipt()
+          .getSuccess(), () -> "Reapproval after zero reset should succeed but failed with: " + explicitReapproval.getReceipt().getErrorMessage());
+      assertTrue(approvedSpend.getReceipt().getSuccess(), () -> "Approved post-reset spend should succeed but failed with: " + approvedSpend.getReceipt().getErrorMessage());
       assertFalse(excessSpend.getReceipt().getSuccess(), "Additional spend without allowance should fail");
-      assertEquals(BigInteger.valueOf(150L), decodeUnsigned(spender.getIstCoinBalance(spender.getWalletAddress()).getReturnData()
+
+      awaitIstBalanceAtReplica(config, LEADER_REPLICA_ID, ownerSenderId, ownerPrivateKey, spenderWalletAddress, BigInteger.valueOf(INITIAL_ALLOWANCE + REAPPROVED_ALLOWANCE));
+
+      SignedClientRequestFactory ownerQueryFactory = new SignedClientRequestFactory(ownerSenderId, ownerPrivateKey);
+      QueryResponse spenderBalance = queryReplica(config, LEADER_REPLICA_ID, ownerQueryFactory, ownerSenderId, ownerPrivateKey, QueryType.QUERY_TYPE_IST_COIN_BALANCE, spenderWalletAddress);
+      assertTrue(spenderBalance.getSuccess(), "Final spender balance query should succeed");
+      assertEquals(BigInteger.valueOf(INITIAL_ALLOWANCE + REAPPROVED_ALLOWANCE), decodeUnsigned(spenderBalance.getReturnData()
           .toByteArray()), "Cluster-level frontrunning scenario should leave the spender with exactly the authorised amount");
     }
   }
@@ -255,19 +304,38 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(90)
+  @Timeout(60)
   void istCoinStateRemainsAvailableAfterClusterRestart() throws Exception {
     Path configPath = integrationConfigPath();
     cleanPersistedBlockData(configPath);
     populateConfig(configPath);
+    ConfigParser config = ConfigParser.load(configPath);
+    long clientSenderId = config.client().senderId();
+    PrivateKey clientPrivateKey = PrivateKeyLoader.loadClientPrivateKey(config, clientSenderId);
+    SignedClientRequestFactory requestFactory = new SignedClientRequestFactory(clientSenderId, clientPrivateKey);
 
     List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
-      try (ClientReplicaApi client = ClientReplicaApi.connect(configPath.toString(), CLIENT_ID)) {
-        TransactionResponse transfer = client.transferIstCoin(RECIPIENT_ADDRESS, 30L, 0L, 250_000L, TEST_GAS_PRICE);
-        assertTrue(transfer.getReceipt().getSuccess(), "IST Coin transfer before restart should succeed");
-      }
+      String istContractAddress = IstCoin.resolveContractAddress(configPath).toHexString().substring(2);
+      String expectedTransferCall = IstCoin.encodeTransferCallData(Address.fromHexString("0x" + RECIPIENT_ADDRESS), 30L).toHexString();
+      TransactionResponse transfer = submitTransaction(config, clientSenderId, clientPrivateKey, requestFactory, TransactionType.TRANSACTION_TYPE_IST_COIN_TRANSFER, RECIPIENT_ADDRESS, 30L, 0L, 250_000L, TEST_GAS_PRICE, new byte[0]);
+      assertNotNull(transfer.getReceipt(), "IST Coin transfer before restart should return a receipt");
+      assertTrue(transfer.getReceipt().getSuccess(), "IST Coin transfer before restart should succeed");
+      org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+        for (String replicaId : HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS) {
+          BlockStore.BlockDocument latest = BlockStore.forReplica(config, replicaId).loadLatest()
+              .orElseThrow(() -> new AssertionError("Latest block was not persisted for " + replicaId));
+          assertTrue(latest.height() >= 1L, "Transferred IST state should be persisted before shutdown for " + replicaId);
+          assertTrue(!latest.transactions().isEmpty(), "Persisted block should contain the IST transfer before shutdown for " + replicaId);
+          assertEquals("CONTRACT_CALL", latest.transactions().getFirst().type(), "Persisted block should store the IST transfer as a contract call before shutdown for "
+              + replicaId);
+          assertEquals(istContractAddress, latest.transactions().getFirst().to(), "Persisted IST transfer should target the IST contract before shutdown for " + replicaId);
+          assertEquals("0", latest.transactions().getFirst().amount(), "Persisted IST transfer should use a zero native amount before shutdown for " + replicaId);
+          assertEquals(expectedTransferCall, latest.transactions().getFirst().input(), "Persisted IST transfer should retain the encoded contract call before shutdown for "
+              + replicaId);
+        }
+      });
     } finally {
       stopProcesses(servers);
     }
@@ -275,12 +343,12 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
     List<StartedServer> restartedServers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
       waitForServersStartup(restartedServers, Duration.ofSeconds(35));
-      try (ClientReplicaApi client = ClientReplicaApi.connect(configPath.toString(), CLIENT_ID)) {
-        QueryResponse istBalance = client.getIstCoinBalance(RECIPIENT_ADDRESS);
+      org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+        QueryResponse istBalance = queryReplica(config, LEADER_REPLICA_ID, requestFactory, clientSenderId, clientPrivateKey, QueryType.QUERY_TYPE_IST_COIN_BALANCE, RECIPIENT_ADDRESS);
         assertTrue(istBalance.getSuccess(), "IST Coin balance query after restart should succeed");
         assertTrue(new BigInteger(1, istBalance.getReturnData().toByteArray())
             .compareTo(BigInteger.valueOf(30L)) >= 0, "Persisted IST Coin balance should survive cluster restart");
-      }
+      });
     } finally {
       try {
         stopProcesses(restartedServers);
@@ -290,9 +358,67 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
     }
   }
 
-  private static void awaitClientObservedIstBalance(ClientReplicaApi ownerClient, String ownerAddress, BigInteger minimumBalance) throws Exception {
+  private static void awaitIstBalanceAtReplica(ConfigParser config, String replicaId, long clientSenderId, PrivateKey clientPrivateKey, String ownerAddress, BigInteger minimumBalance)
+      throws Exception {
+    SignedClientRequestFactory requestFactory = new SignedClientRequestFactory(clientSenderId, clientPrivateKey);
     org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(15))
-        .untilAsserted(() -> assertTrue(decodeUnsigned(ownerClient.getIstCoinBalance(ownerAddress).getReturnData().toByteArray()).compareTo(minimumBalance) >= 0));
+        .untilAsserted(() -> assertTrue(decodeUnsigned(queryReplica(config, replicaId, requestFactory, clientSenderId, clientPrivateKey, QueryType.QUERY_TYPE_IST_COIN_BALANCE, ownerAddress)
+            .getReturnData().toByteArray()).compareTo(minimumBalance) >= 0));
+  }
+
+  private static TransactionResponse submitTransfer(ManagedCluster cluster, SignedClientRequestFactory requestFactory, long amount, long nonce) throws Exception {
+    ClientRequest request = requestFactory
+        .createTransactionRequest(TransactionType.TRANSACTION_TYPE_TRANSFER, RECIPIENT_ADDRESS, amount, nonce, TEST_GAS_LIMIT, TEST_GAS_PRICE, new byte[0]);
+    byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
+    var responsePacket = broadcastClientRequestPayload(cluster.configPath(), payload, STANDARD_REQUEST_TIMEOUT);
+    assertResponseNotNull(responsePacket, "Transfer should receive a response", cluster.servers());
+    var response = decodeClientResponse(responsePacket);
+    assertTrue(response.hasTransaction(), "Broadcast should return a transaction response");
+    return response.getTransaction();
+  }
+
+  private static TransactionResponse submitTransaction(ConfigParser config, long clientSenderId, PrivateKey clientPrivateKey, SignedClientRequestFactory requestFactory, TransactionType type, String recipientAddress, long amount, long nonce, long gasLimit, long gasPrice, byte[] input)
+      throws Exception {
+    ClientRequest request = requestFactory.createTransactionRequest(type, recipientAddress, amount, nonce, gasLimit, gasPrice, input);
+    ClientResponse response = submitClientPayloadDirectToLeaderAndAwaitResponse(config, clientSenderId, clientPrivateKey, ProtoValidationUtil.requireValid(request, "ClientRequest")
+        .toByteArray());
+    assertTrue(response.hasTransaction(), "Transaction submission should return a transaction response");
+    return response.getTransaction();
+  }
+
+  private static TransactionResponse submitContractCall(ConfigParser config, long clientSenderId, PrivateKey clientPrivateKey, long requestId, long nonce, long gasLimit, long gasPrice, Address contractAddress, byte[] input)
+      throws Exception {
+    ClientResponse response = submitClientPayloadDirectToLeaderAndAwaitResponse(config, clientSenderId, clientPrivateKey, ProtoValidationUtil
+        .requireValid(contractCallRequest(clientSenderId, requestId, nonce, gasLimit, gasPrice, contractAddress, input, clientPrivateKey), "ClientRequest").toByteArray());
+    assertTrue(response.hasTransaction(), "Contract call should return a transaction response");
+    return response.getTransaction();
+  }
+
+  private static QueryResponse queryReplica(ManagedCluster cluster, String replicaId, SignedClientRequestFactory requestFactory, QueryType queryType, String ownerAddress)
+      throws Exception {
+    return queryReplica(cluster.configPath(), replicaId, requestFactory, cluster.clientSenderId(), cluster.clientPrivateKey(), queryType, ownerAddress);
+  }
+
+  private static QueryResponse queryReplica(Path configPath, String replicaId, SignedClientRequestFactory requestFactory, long clientSenderId, PrivateKey clientPrivateKey, QueryType queryType, String ownerAddress)
+      throws Exception {
+    ConfigParser config = ConfigParser.load(configPath);
+    return queryReplica(config, replicaId, requestFactory, clientSenderId, clientPrivateKey, queryType, ownerAddress);
+  }
+
+  private static QueryResponse queryReplica(ConfigParser config, String replicaId, SignedClientRequestFactory requestFactory, long clientSenderId, PrivateKey clientPrivateKey, QueryType queryType, String ownerAddress)
+      throws Exception {
+    ClientRequest queryRequest = requestFactory.createQueryRequest(queryType, ownerAddress);
+    byte[] payload = ProtoValidationUtil.requireValid(queryRequest, "ClientRequest").toByteArray();
+    var responsePacket = sendClientPayloadToReplicaAndAwaitResponse(config, replicaId, clientSenderId, clientPrivateKey, payload);
+    assertNotNull(responsePacket, "Query should receive a response from " + replicaId);
+    var response = decodeClientResponse(responsePacket);
+    assertTrue(response.hasQuery(), "Replica should return a query response");
+    return response.getQuery();
+  }
+
+  private static String clientWalletAddress(Path configPath, long clientSenderId) throws Exception {
+    ConfigParser config = ConfigParser.load(configPath);
+    return CryptoUtil.deriveAddressHex(PublicKeyLoader.loadClientPublicKey(config, clientSenderId));
   }
 
   private static ClientRequest contractCallRequest(long clientSenderId, long requestId, long nonce, long gasLimit, long gasPrice, Address contractAddress, byte[] input, PrivateKey clientPrivateKey)
@@ -308,13 +434,47 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
         .build();
   }
 
-  private static void submitClientPayloadDirectToLeader(ConfigParser config, long senderId, PrivateKey clientPrivateKey, byte[] payload) throws Exception {
+  private static ClientResponse submitClientPayloadDirectToLeaderAndAwaitResponse(ConfigParser config, long senderId, PrivateKey clientPrivateKey, byte[] payload)
+      throws Exception {
+    var responsePacket = sendClientPayloadToReplicaAndAwaitResponse(config, LEADER_REPLICA_ID, senderId, clientPrivateKey, payload);
+    assertNotNull(responsePacket, "Direct leader submission should receive a response");
+    return decodeClientResponse(responsePacket);
+  }
+
+  private static pt.ulisboa.depchain.shared.network.model.InboundPacket sendClientPayloadToReplicaAndAwaitResponse(ConfigParser config, String replicaId, long senderId, PrivateKey clientPrivateKey, byte[] payload)
+      throws Exception {
     Map<Long, PublicKey> staticPublicKeys = PublicKeyLoader.loadStaticPublicKeys(config);
-    ConfigParser.ReplicaSection leader = config.requireReplicaById(LEADER_REPLICA_ID);
-    InetSocketAddress leaderEndpoint = new InetSocketAddress(leader.host(), leader.clientPort());
+    ConfigParser.ReplicaSection replica = config.requireReplicaById(replicaId);
+    InetSocketAddress endpoint = new InetSocketAddress(replica.host(), replica.clientPort());
+    long connectionId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
     try (AuthenticatedLink transport = AuthenticatedLink.unbound(senderId, clientPrivateKey, staticPublicKeys)) {
-      transport.send(ThreadLocalRandom.current().nextLong(Long.MAX_VALUE), payload, leaderEndpoint);
+      transport.send(connectionId, payload, endpoint);
+      var responseRef = new java.util.concurrent.atomic.AtomicReference<pt.ulisboa.depchain.shared.network.model.InboundPacket>();
+      org.awaitility.Awaitility.await().atMost(STANDARD_REQUEST_TIMEOUT).until(() -> {
+        var inbound = transport.receive(Math.max(1L, STANDARD_REQUEST_TIMEOUT.toMillis()));
+        if (inbound != null && inbound.packet().getConnectionId() == connectionId) {
+          responseRef.set(inbound);
+          return true;
+        }
+        return false;
+      });
+      return responseRef.get();
     }
+  }
+
+  private static <T> T unchecked(ThrowingSupplier<T> supplier) {
+    try {
+      return supplier.get();
+    } catch (RuntimeException exception) {
+      throw exception;
+    } catch (Exception exception) {
+      throw new RuntimeException(exception);
+    }
+  }
+
+  @FunctionalInterface
+  private interface ThrowingSupplier<T> {
+    T get() throws Exception;
   }
 
   private static BigInteger decodeUnsigned(byte[] encoded) {

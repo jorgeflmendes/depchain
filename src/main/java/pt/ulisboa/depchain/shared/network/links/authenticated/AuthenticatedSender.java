@@ -52,6 +52,15 @@ final class AuthenticatedSender {
     }
   }
 
+  void ensureHandshake(ConnectionKey connectionKey, InetSocketAddress remoteEndpoint) {
+    ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("remoteEndpoint", remoteEndpoint));
+    AuthenticatedConnectionState connectionState = context.getOrCreateConnectionState(connectionKey);
+    if (connectionState.isEstablished() || connectionState.isAwaitingReply()) {
+      return;
+    }
+    sendInit(connectionKey, connectionState, remoteEndpoint);
+  }
+
   private void sendInit(ConnectionKey connectionKey, AuthenticatedConnectionState connectionState, InetSocketAddress remoteEndpoint) {
     ValidationUtils.requireAllNonNull(named("connectionKey", connectionKey), named("connectionState", connectionState), named("remoteEndpoint", remoteEndpoint));
 

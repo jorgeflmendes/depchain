@@ -88,11 +88,11 @@ final class GenesisMaterializer {
   }
 
   private static boolean isDepCoinBootstrapTransfer(GenesisParser.GenesisTransaction transaction) {
-    return "TRANSFER".equals(transaction.type()) && "DepCoin".equals(transaction.currency());
+    return transaction.isNativeTransfer();
   }
 
   private static boolean isIstBootstrapTransfer(GenesisParser.GenesisTransaction transaction) {
-    if (!"CONTRACT_CALL".equals(transaction.type()) || !"IST".equals(transaction.currency())) {
+    if (!transaction.isContractCall()) {
       return false;
     }
     String input = transaction.input();
@@ -116,7 +116,6 @@ final class GenesisMaterializer {
   }
 
   private static GenesisParser.GenesisTransaction copyTransaction(GenesisParser.GenesisTransaction original, String to, String input) {
-    return new GenesisParser.GenesisTransaction(original.type(), original.currency(), original.from(), to, original.amount(), original.nonce(), original.gasLimit(),
-        original.gasPrice(), input, original.signature());
+    return new GenesisParser.GenesisTransaction(original.from(), to, original.amount(), original.nonce(), original.gasLimit(), original.gasPrice(), input, original.signature());
   }
 }

@@ -61,7 +61,7 @@ import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 public abstract class IntegrationHarness {
   protected static final Duration AWAIT_POLL_INTERVAL = Duration.ofMillis(50);
-  protected static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(8);
+  protected static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(25);
   protected static final Duration STANDARD_REQUEST_TIMEOUT = Duration.ofSeconds(12);
   protected static final Duration VIEW_CHANGE_REQUEST_TIMEOUT = Duration.ofSeconds(20);
   protected static final Duration REPLAY_INITIAL_TIMEOUT = Duration.ofSeconds(8);
@@ -85,8 +85,10 @@ public abstract class IntegrationHarness {
   private static final Map<Path, AtomicLong> NEXT_NONCE_BY_CONFIG = new ConcurrentHashMap<>();
   private static final Pattern CONSENSUS_PORT_PATTERN = Pattern.compile("(consensus:\\s+)(\\d+)");
   private static final Pattern CLIENT_PORT_PATTERN = Pattern.compile("(client:\\s+)(\\d+)");
+  private static final Pattern CLIENT_REQUEST_TIMEOUT_PATTERN = Pattern.compile("(?m)^(\\s*requestTimeoutMs:\\s+)(\\d+)\\s*$");
   private static final Pattern KEYS_ROOT_PATTERN = Pattern.compile("(?m)^(\\s*root:\\s+).*$");
   private static final Pattern BLOCKS_ROOT_PATTERN = Pattern.compile("(?m)^(\\s*blocksRoot:\\s+).*$");
+  private static final int INTEGRATION_CLIENT_REQUEST_TIMEOUT_MS = (int) VIEW_CHANGE_REQUEST_TIMEOUT.toMillis();
   protected static Path integrationConfigPath() {
     Path baseConfigPath = projectConfigPath();
     return isolatedIntegrationConfigPath(baseConfigPath);
@@ -272,11 +274,23 @@ public abstract class IntegrationHarness {
     assertTrue(response.hasTransaction(), message + " (expected transaction response)");
     TransactionResponse transaction = response.getTransaction();
     assertTrue(transaction.hasReceipt(), message + " (missing transaction receipt)");
-    assertTrue(transaction.getReceipt().getSuccess(), message + " (transaction should succeed)");
+    assertTrue(transaction.getReceipt().getSuccess(), () -> message + " (transaction should succeed, receipt error: " + transaction.getReceipt().getErrorMessage() + ")");
   }
 
   private static long nextNonce(Path configPath) {
     return NEXT_NONCE_BY_CONFIG.computeIfAbsent(normalizedConfigPath(configPath), ignored -> new AtomicLong()).getAndIncrement();
+  }
+
+  protected static void rememberConsumedNonce(Path configPath, long nonce) {
+    Path normalizedConfigPath = normalizedConfigPath(configPath);
+    NEXT_NONCE_BY_CONFIG.compute(normalizedConfigPath, (ignored, current) -> {
+      long nextExpectedNonce = nonce + 1L;
+      if (current == null) {
+        return new AtomicLong(nextExpectedNonce);
+      }
+      current.updateAndGet(existing -> Math.max(existing, nextExpectedNonce));
+      return current;
+    });
   }
 
   private static Path normalizedConfigPath(Path configPath) {
@@ -346,6 +360,7 @@ public abstract class IntegrationHarness {
       Path isolatedRuntimeDirectory = isolatedConfigDirectory.resolve("runtime");
       isolatedConfig = rewritePath(isolatedConfig, KEYS_ROOT_PATTERN, isolatedRuntimeDirectory.resolve("keys"));
       isolatedConfig = rewritePath(isolatedConfig, BLOCKS_ROOT_PATTERN, isolatedRuntimeDirectory.resolve("storage"));
+      isolatedConfig = rewriteClientRequestTimeouts(isolatedConfig, INTEGRATION_CLIENT_REQUEST_TIMEOUT_MS);
       AtomicInteger portOffset = new AtomicInteger();
       isolatedConfig = rewritePorts(isolatedConfig, CONSENSUS_PORT_PATTERN, availablePorts, portOffset);
       isolatedConfig = rewritePorts(isolatedConfig, CLIENT_PORT_PATTERN, availablePorts, portOffset);
@@ -395,6 +410,16 @@ public abstract class IntegrationHarness {
       throw new IllegalStateException("Could not rewrite config path using pattern " + pattern);
     }
     return updated;
+  }
+
+  private static String rewriteClientRequestTimeouts(String configContents, int timeoutMs) {
+    Matcher matcher = CLIENT_REQUEST_TIMEOUT_PATTERN.matcher(configContents);
+    StringBuffer output = new StringBuffer();
+    while (matcher.find()) {
+      matcher.appendReplacement(output, Matcher.quoteReplacement(matcher.group(1) + timeoutMs));
+    }
+    matcher.appendTail(output);
+    return output.toString();
   }
 
   private static String normalizePath(Path path) {

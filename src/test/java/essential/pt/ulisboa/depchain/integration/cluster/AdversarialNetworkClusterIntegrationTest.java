@@ -23,6 +23,8 @@ import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 class AdversarialNetworkClusterIntegrationTest extends ClusterIntegrationTestBase {
   private static final String DUPLICATE_PROBABILITY = "0.35";
   private static final String ASYNC_MAX_DELAY_MS = "25";
+  private static final String EXACTLY_ONCE_CLIENT_ID = "client2";
+  private static final String EXACTLY_ONCE_RECIPIENT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
   @Override
   protected Map<String, String> clusterJvmProperties() {
@@ -48,11 +50,11 @@ class AdversarialNetworkClusterIntegrationTest extends ClusterIntegrationTestBas
     @Timeout(90)
     @DisplayName("duplicated transport traffic does not cause double execution")
     void duplicatedTransportTrafficDoesNotCauseDoubleExecution() throws Exception {
-      try (ClientReplicaApi client = ClientReplicaApi.connect(cluster().configPath().toString(), "client")) {
-        assertThat(client.transferDepCoin(TEST_RECIPIENT_ADDRESS, 1L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE).getReceipt().getSuccess()).isTrue();
+      try (ClientReplicaApi client = ClientReplicaApi.connect(cluster().configPath().toString(), EXACTLY_ONCE_CLIENT_ID)) {
+        assertThat(client.transferDepCoin(EXACTLY_ONCE_RECIPIENT, 1L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE).getReceipt().getSuccess()).isTrue();
 
         await().atMost(STANDARD_REQUEST_TIMEOUT).untilAsserted(() -> {
-          BigInteger recipientBalance = new BigInteger(1, client.getDepCoinBalance(TEST_RECIPIENT_ADDRESS).getReturnData().toByteArray());
+          BigInteger recipientBalance = new BigInteger(1, client.getDepCoinBalance(EXACTLY_ONCE_RECIPIENT).getReturnData().toByteArray());
           assertThat(recipientBalance).as("duplicated transport traffic must not execute the same logical request twice").isEqualTo(BigInteger.ONE);
         });
       }

@@ -147,10 +147,9 @@ public final class BlockStore {
     payload.append("|gas_used=").append(gasUsed);
     for (GenesisParser.GenesisTransaction transaction : transactions) {
       ValidationUtils.requireNonNull(transaction, "transaction");
-      payload.append("|tx{type=").append(transaction.type()).append(",currency=").append(transaction.currency()).append(",from=").append(transaction.from()).append(",to=")
-          .append(transaction.to() == null ? "" : transaction.to()).append(",amount=").append(transaction.amount()).append(",nonce=").append(transaction.nonce())
-          .append(",gas_limit=").append(transaction.gasLimit()).append(",gas_price=").append(transaction.gasPrice()).append(",input=").append(transaction.input())
-          .append(",signature=").append(transaction.signature() == null ? "" : transaction.signature()).append('}');
+      payload.append("|tx{from=").append(transaction.from()).append(",to=").append(transaction.to() == null ? "" : transaction.to()).append(",amount=").append(transaction.amount())
+          .append(",nonce=").append(transaction.nonce()).append(",gas_limit=").append(transaction.gasLimit()).append(",gas_price=").append(transaction.gasPrice()).append(",input=")
+          .append(transaction.input()).append(",signature=").append(transaction.signature() == null ? "" : transaction.signature()).append('}');
     }
     return CryptoUtil.sha256Hex(payload.toString().getBytes(StandardCharsets.UTF_8));
   }
@@ -203,7 +202,14 @@ public final class BlockStore {
   }
 
   public record BlockDocument(long height, @JsonProperty("block_hash") String blockHash, @JsonProperty("previous_block_hash") @Nullable String previousBlockHash,
-      @JsonProperty("gas_used") long gasUsed, List<GenesisParser.GenesisTransaction> transactions, LinkedHashMap<String, GenesisParser.GenesisAccount> state) {
+      @JsonProperty("gas_used") long gasUsed, List<GenesisParser.GenesisTransaction> transactions, LinkedHashMap<String, GenesisParser.GenesisAccount> state,
+      @JsonProperty("consensus_node_hash") @Nullable String consensusNodeHash, @JsonProperty("consensus_parent_node_hash") @Nullable String consensusParentNodeHash,
+      @JsonProperty("consensus_view_number") @Nullable Integer consensusViewNumber) {
+
+    public BlockDocument(long height, String blockHash, @Nullable String previousBlockHash, long gasUsed, List<GenesisParser.GenesisTransaction> transactions,
+        LinkedHashMap<String, GenesisParser.GenesisAccount> state) {
+      this(height, blockHash, previousBlockHash, gasUsed, transactions, state, null, null, null);
+    }
 
     public BlockDocument {
       ValidationUtils.requireNonNegativeLong(height, "height");
@@ -212,6 +218,7 @@ public final class BlockStore {
       ValidationUtils.requireNonNegativeLong(gasUsed, "gas_used");
       transactions = List.copyOf(transactions);
       validateTransactionLayout(height, previousBlockHash, gasUsed, transactions, blockHash);
+      validateConsensusMetadata(height, consensusNodeHash, consensusParentNodeHash, consensusViewNumber);
       state = new LinkedHashMap<>(state);
     }
 
@@ -250,6 +257,29 @@ public final class BlockStore {
       }
       if (transactions.isEmpty() && gasUsed != 0L) {
         throw new IllegalArgumentException("blocks without transactions must use gas_used = 0");
+      }
+    }
+
+    private static void validateConsensusMetadata(long height, @Nullable String consensusNodeHash, @Nullable String consensusParentNodeHash, @Nullable Integer consensusViewNumber) {
+      boolean hasAnyConsensusField = consensusNodeHash != null || consensusParentNodeHash != null || consensusViewNumber != null;
+      if (!hasAnyConsensusField) {
+        return;
+      }
+
+      ValidationUtils.requireNonNull(consensusViewNumber, "consensus_view_number");
+      ValidationUtils.requireNonNegativeInt(consensusViewNumber, "consensus_view_number");
+
+      if (height == 0L) {
+        if (!"0".equals(consensusNodeHash) || !"0".equals(consensusParentNodeHash) || consensusViewNumber != 0) {
+          throw new IllegalArgumentException("genesis consensus metadata must match the HotStuff genesis node");
+        }
+        return;
+      }
+
+      requireSha256Hash(consensusNodeHash, "consensus_node_hash");
+      ValidationUtils.requireNonBlank(consensusParentNodeHash, "consensus_parent_node_hash");
+      if (!"0".equals(consensusParentNodeHash)) {
+        requireSha256Hash(consensusParentNodeHash, "consensus_parent_node_hash");
       }
     }
   }

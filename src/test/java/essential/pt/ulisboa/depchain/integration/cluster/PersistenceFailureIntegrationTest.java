@@ -2,6 +2,7 @@ package pt.ulisboa.depchain.integration.cluster;
 
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -47,14 +48,25 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
       waitForServersStartup(List.of(restartedFollower), Duration.ofSeconds(35));
 
       cluster.assertRequestSucceeds("second-transfer-after-follower-restart", STANDARD_REQUEST_TIMEOUT, "Cluster should keep making progress after restarting the follower");
+      awaitPersistedHeight(config, LEADER_REPLICA_ID, 2L);
+      cluster
+          .assertRequestSucceeds("third-transfer-after-follower-restart", VIEW_CHANGE_REQUEST_TIMEOUT, "Cluster should keep making progress while the restarted follower aligns its view");
+      awaitPersistedHeight(config, LEADER_REPLICA_ID, 3L);
+      cluster
+          .assertRequestSucceeds("fourth-transfer-after-follower-restart", VIEW_CHANGE_REQUEST_TIMEOUT, "Cluster should keep making progress while the restarted follower catches up");
+      awaitPersistedHeight(config, LEADER_REPLICA_ID, 4L);
 
-      await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
-        long expectedHeight = BlockStore.forReplica(config, LEADER_REPLICA_ID).loadLatest().orElseThrow().height();
-        for (String replicaId : REPLICA_IDS) {
-          assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
-              + " should converge after the restarted follower catches up");
-        }
-      });
+      try {
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+          long expectedHeight = BlockStore.forReplica(config, LEADER_REPLICA_ID).loadLatest().orElseThrow().height();
+          for (String replicaId : REPLICA_IDS) {
+            assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
+                + " should converge after the restarted follower catches up");
+          }
+        });
+      } catch (Throwable failure) {
+        fail(clusterDiagnostics("Follower persistence recovery did not converge", liveServers), failure);
+      }
     }
   }
 
@@ -87,14 +99,38 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
 
       cluster
           .assertRequestSucceeds("post-leader-restart-after-persist-failure", STANDARD_REQUEST_TIMEOUT, "Cluster should continue after restarting the leader that missed local persistence");
+      awaitPersistedHeight(config, FOLLOWER_REPLICA_ID, 2L);
+      cluster
+          .assertRequestSucceeds("second-post-leader-restart-after-persist-failure", VIEW_CHANGE_REQUEST_TIMEOUT, "Cluster should keep making progress while the restarted leader aligns its view");
+      awaitPersistedHeight(config, FOLLOWER_REPLICA_ID, 3L);
+      cluster
+          .assertRequestSucceeds("third-post-leader-restart-after-persist-failure", VIEW_CHANGE_REQUEST_TIMEOUT, "Cluster should keep making progress while the restarted leader catches up");
+      awaitPersistedHeight(config, FOLLOWER_REPLICA_ID, 4L);
 
-      await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
-        long expectedHeight = BlockStore.forReplica(config, FOLLOWER_REPLICA_ID).loadLatest().orElseThrow().height();
-        for (String replicaId : REPLICA_IDS) {
-          assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
-              + " should converge after the restarted leader catches up");
-        }
-      });
+      try {
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+          long expectedHeight = BlockStore.forReplica(config, FOLLOWER_REPLICA_ID).loadLatest().orElseThrow().height();
+          for (String replicaId : REPLICA_IDS) {
+            assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
+                + " should converge after the restarted leader catches up");
+          }
+        });
+      } catch (Throwable failure) {
+        fail(clusterDiagnostics("Leader persistence recovery did not converge", liveServers), failure);
+      }
     }
+  }
+
+  private static String clusterDiagnostics(String header, List<StartedServer> servers) {
+    StringBuilder diagnostics = new StringBuilder(header).append(System.lineSeparator());
+    for (StartedServer server : servers) {
+      diagnostics.append(server.describeState()).append(System.lineSeparator());
+    }
+    return diagnostics.toString();
+  }
+
+  private static void awaitPersistedHeight(ConfigParser config, String replicaId, long expectedHeight) {
+    await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica "
+        + replicaId + " should persist the next block before the next recovery step"));
   }
 }

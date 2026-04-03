@@ -16,6 +16,8 @@ import java.util.regex.Pattern;
 
 import org.eclipse.jdt.annotation.Nullable;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -97,12 +99,11 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
     }
   }
 
-  public record GenesisTransaction(String type, String currency, String from, @Nullable String to, String amount, long nonce, @JsonProperty("gas_limit") long gasLimit,
-      @JsonProperty("gas_price") long gasPrice, String input, @Nullable String signature) {
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  public record GenesisTransaction(String from, @Nullable String to, String amount, long nonce, @JsonProperty("gas_limit") long gasLimit, @JsonProperty("gas_price") long gasPrice,
+      String input, @Nullable String signature) {
 
     public GenesisTransaction {
-      type = ValidationUtils.requireNonBlank(type, "transaction.type");
-      currency = ValidationUtils.requireNonBlank(currency, "transaction.currency");
       from = ValidationUtils.requireNonBlank(from, "transaction.from");
       amount = ValidationUtils.requireNonBlank(amount, "transaction.amount");
       input = ValidationUtils.requireNonBlank(input, "transaction.input");
@@ -124,40 +125,45 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
         throw new IllegalArgumentException("transaction.input must use 0x-prefixed hex encoding");
       }
 
-      String normalizedType = type.toUpperCase();
-      if (!normalizedType.equals("TRANSFER") && !normalizedType.equals("CONTRACT_CALL") && !normalizedType.equals("CONTRACT_DEPLOY")
-          && !normalizedType.equals("IST_COIN_TRANSFER")) {
-        throw new IllegalArgumentException("transaction.type must be TRANSFER, CONTRACT_CALL, CONTRACT_DEPLOY, or IST_COIN_TRANSFER");
+      boolean hasRecipient = to != null && !to.isBlank();
+      boolean hasInputData = !"0x".equals(input);
+
+      if (!hasRecipient && !hasInputData) {
+        throw new IllegalArgumentException("transactions without transaction.to must include input data");
       }
 
-      if ((normalizedType.equals("TRANSFER") || normalizedType.equals("CONTRACT_CALL") || normalizedType.equals("IST_COIN_TRANSFER")) && (to == null || to.isBlank())) {
-        throw new IllegalArgumentException(normalizedType + " transactions must set transaction.to");
+      if (!hasRecipient && new BigInteger(amount).signum() != 0) {
+        throw new IllegalArgumentException("contract deployment transactions must use amount 0");
       }
-
-      if (normalizedType.equals("CONTRACT_DEPLOY") && to != null && !to.isBlank()) {
-        throw new IllegalArgumentException("CONTRACT_DEPLOY transactions must not set transaction.to");
-      }
-
-      if (normalizedType.equals("IST_COIN_TRANSFER") && new BigInteger(amount).signum() <= 0) {
-        throw new IllegalArgumentException("IST_COIN_TRANSFER transactions must use a positive amount");
-      }
-
-      if (normalizedType.equals("IST_COIN_TRANSFER") && !input.equals("0x")) {
-        throw new IllegalArgumentException(normalizedType + " transactions must not include input data");
-      }
-
-      if (normalizedType.equals("TRANSFER") && !"DepCoin".equals(currency)) {
-        throw new IllegalArgumentException("TRANSFER transactions must use currency DepCoin");
-      }
-
-      if (normalizedType.equals("IST_COIN_TRANSFER") && !"IST".equals(currency)) {
-        throw new IllegalArgumentException("IST_COIN_TRANSFER transactions must use currency IST");
-      }
-
-      type = normalizedType;
       if (signature != null) {
         signature = signature.trim();
       }
+    }
+
+    @JsonIgnore
+    public String type() {
+      if (isContractDeploy()) {
+        return "CONTRACT_DEPLOY";
+      }
+      if (isContractCall()) {
+        return "CONTRACT_CALL";
+      }
+      return "TRANSFER";
+    }
+
+    @JsonIgnore
+    public boolean isContractDeploy() {
+      return to == null || to.isBlank();
+    }
+
+    @JsonIgnore
+    public boolean isContractCall() {
+      return !isContractDeploy() && !"0x".equals(input);
+    }
+
+    @JsonIgnore
+    public boolean isNativeTransfer() {
+      return !isContractDeploy() && "0x".equals(input);
     }
   }
 

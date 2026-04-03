@@ -141,6 +141,17 @@ final class AuthenticatedConnectionState {
     ValidationUtils.requireNonNull(opcode, "opcode");
     ValidationUtils.requireNonNegativeLong(remoteSenderId, "remoteSenderId");
     ValidationUtils.requireNonNegativeLong(localSenderId, "localSenderId");
+    if (phase == Phase.ESTABLISHED || phase == Phase.CLOSING) {
+      if (opcode != AuthOpcode.AUTH_OPCODE_INIT) {
+        return HandshakeAction.IGNORE;
+      }
+      if (authenticatedRemoteSenderId != null && authenticatedRemoteSenderId != remoteSenderId) {
+        return HandshakeAction.IGNORE;
+      }
+      restartSessionForHandshake();
+      return HandshakeAction.RESTART;
+    }
+
     if (phase != Phase.INITIATED || ephemeralPrivateKey == null) {
       return HandshakeAction.IGNORE;
     }
@@ -218,5 +229,18 @@ final class AuthenticatedConnectionState {
       authenticatedRemoteSenderId = null;
       phase = Phase.NEW;
     }
+  }
+
+  private void restartSessionForHandshake() {
+    if (phase == Phase.CLOSED) {
+      return;
+    }
+
+    phase = Phase.NEW;
+    ephemeralPrivateKey = null;
+    sharedSecret = null;
+    authenticatedRemoteSenderId = null;
+    sentNonce = 0L;
+    receivedNonce = 0L;
   }
 }

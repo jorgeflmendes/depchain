@@ -16,25 +16,29 @@ import org.hyperledger.besu.datatypes.Wei;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.server.execution.EvmService;
+import pt.ulisboa.depchain.server.execution.IstCoin;
 import pt.ulisboa.depchain.shared.config.GenesisParser;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.model.AccountKind;
 import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 final class ReplicaBlockPersistence {
-  record RecoveryState(BlockStore.BlockDocument genesisBlock, BlockStore.BlockDocument latestBlock) {
+  record RecoveryState(BlockStore.BlockDocument genesisBlock, BlockStore.BlockDocument latestBlock, List<BlockStore.BlockDocument> persistedBlocks) {
   }
 
   private final BlockStore blockStore;
   private final EvmService evmService;
   private final Map<Long, Address> clientAccountAddresses;
+  private final Address istCoinContractAddress;
 
   private BlockStore.BlockDocument latestBlock;
 
-  ReplicaBlockPersistence(BlockStore blockStore, EvmService evmService, Map<Long, PublicKey> clientPublicKeys) {
+  ReplicaBlockPersistence(BlockStore blockStore, EvmService evmService, Map<Long, PublicKey> clientPublicKeys, Address istCoinContractAddress) {
     this.blockStore = ValidationUtils.requireNonNull(blockStore, "blockStore");
     this.evmService = ValidationUtils.requireNonNull(evmService, "evmService");
+    this.istCoinContractAddress = ValidationUtils.requireNonNull(istCoinContractAddress, "istCoinContractAddress");
     ValidationUtils.requireNonNull(clientPublicKeys, "clientPublicKeys");
     if (clientPublicKeys.isEmpty()) {
       throw new IllegalArgumentException("clientPublicKeys must not be empty");
@@ -45,9 +49,10 @@ final class ReplicaBlockPersistence {
   RecoveryState initialize(GenesisParser genesis) throws IOException {
     BlockStore.BlockDocument genesisBlock = blockStore.ensureGenesisPersisted(buildGenesisBlock(genesis));
     BlockStore.BlockDocument recoveredBlock = blockStore.loadLatest().orElse(genesisBlock);
+    List<BlockStore.BlockDocument> persistedBlocks = blockStore.loadAll();
     restoreState(evmService, recoveredBlock);
     latestBlock = recoveredBlock;
-    return new RecoveryState(genesisBlock, recoveredBlock);
+    return new RecoveryState(genesisBlock, recoveredBlock, persistedBlocks.isEmpty() ? List.of(genesisBlock) : persistedBlocks);
   }
 
   BlockStore.BlockDocument persistExecutedNode(Node node) throws IOException {
@@ -58,7 +63,7 @@ final class ReplicaBlockPersistence {
     List<GenesisParser.GenesisTransaction> persistedTransactions = persistedTransactions(node);
     String blockHash = BlockStore.computeBlockHash(parentBlock.blockHash(), observedGasUsed, persistedTransactions);
     BlockStore.BlockDocument nextBlock = new BlockStore.BlockDocument(parentBlock.height() + 1L, blockHash, parentBlock.blockHash(), observedGasUsed, persistedTransactions,
-        captureWorldState(evmService));
+        captureWorldState(evmService), node.getNodeHash(), node.getParentNodeHash(), node.getViewNumber());
 
     blockStore.append(nextBlock);
     latestBlock = nextBlock;
@@ -71,7 +76,7 @@ final class ReplicaBlockPersistence {
     EvmService genesisEvm = new EvmService();
     applyGenesis(genesisEvm, genesis);
     return new BlockStore.BlockDocument(genesis.height(), genesis.blockHash(), genesis.previousBlockHash(), genesis.gasUsed(), genesis.transactions(),
-        captureWorldState(genesisEvm));
+        captureWorldState(genesisEvm), HotStuffSupport.GENESIS_NODE.getNodeHash(), HotStuffSupport.GENESIS_NODE.getParentNodeHash(), HotStuffSupport.GENESIS_NODE.getViewNumber());
   }
 
   static void restoreState(EvmService evmService, BlockStore.BlockDocument block) {
@@ -127,32 +132,17 @@ final class ReplicaBlockPersistence {
     Wei amount = Wei.of(new BigInteger(transaction.amount()));
     Wei gasPrice = Wei.of(transaction.gasPrice());
 
-    switch (transaction.type()) {
-      case "TRANSFER" -> {
-        EvmService.TransactionResult result = evmService
-            .transferNative(from, parseAddress(transaction.to(), "transaction.to"), amount, transaction.nonce(), transaction.gasLimit(), gasPrice);
-        if (!result.success()) {
-          throw new IllegalArgumentException(result.errorMessage());
-        }
-      }
-      case "CONTRACT_CALL" -> {
-        EvmService.TransactionResult result = evmService
-            .callContract(from, parseAddress(transaction.to(), "transaction.to"), parseHexBytes(transaction.input(), "transaction.input"), amount, transaction.nonce(), transaction
-                .gasLimit(), gasPrice);
-        if (!result.success()) {
-          throw new IllegalArgumentException(result.errorMessage());
-        }
-      }
-      case "IST_COIN_TRANSFER" -> {
-        EvmService.TransactionResult result = evmService
-            .callContract(from, parseAddress(transaction.to(), "transaction.to"), parseHexBytes(transaction.input(), "transaction.input"), amount, transaction.nonce(), transaction
-                .gasLimit(), gasPrice);
-        if (!result.success()) {
-          throw new IllegalArgumentException(result.errorMessage());
-        }
-      }
-      case "CONTRACT_DEPLOY" -> evmService.deployContract(from, parseHexBytes(transaction.input(), "transaction.input"));
-      default -> throw new IllegalArgumentException("unsupported transaction type: " + transaction.type());
+    if (transaction.isContractDeploy()) {
+      evmService.deployContract(from, parseHexBytes(transaction.input(), "transaction.input"));
+      return;
+    }
+
+    EvmService.TransactionResult result = transaction.isContractCall()
+        ? evmService.callContract(from, parseAddress(transaction.to(), "transaction.to"), parseHexBytes(transaction.input(), "transaction.input"), amount, transaction
+            .nonce(), transaction.gasLimit(), gasPrice)
+        : evmService.transferNative(from, parseAddress(transaction.to(), "transaction.to"), amount, transaction.nonce(), transaction.gasLimit(), gasPrice);
+    if (!result.success()) {
+      throw new IllegalArgumentException(result.errorMessage());
     }
   }
 
@@ -201,21 +191,29 @@ final class ReplicaBlockPersistence {
   }
 
   private GenesisParser.GenesisTransaction toPersistedTransaction(TransactionRequest transaction) {
-    String type = switch (transaction.getType()) {
-      case TRANSACTION_TYPE_TRANSFER -> "TRANSFER";
-      case TRANSACTION_TYPE_CONTRACT_CALL -> "CONTRACT_CALL";
-      case TRANSACTION_TYPE_IST_COIN_TRANSFER -> "IST_COIN_TRANSFER";
+    String from = clientAddressFor(transaction.getRequestKey().getClientSenderId()).toHexString().substring(2);
+    String to;
+    String amount;
+    String input;
+
+    switch (transaction.getType()) {
+      case TRANSACTION_TYPE_TRANSFER -> {
+        to = transaction.hasTo() && !transaction.getTo().isBlank() ? transaction.getTo() : null;
+        amount = Long.toString(transaction.getAmount());
+        input = "0x";
+      }
+      case TRANSACTION_TYPE_CONTRACT_CALL -> {
+        to = transaction.hasTo() && !transaction.getTo().isBlank() ? transaction.getTo() : null;
+        amount = Long.toString(transaction.getAmount());
+        input = transaction.hasInput() && !transaction.getInput().isEmpty() ? Bytes.wrap(transaction.getInput().toByteArray()).toHexString() : "0x";
+      }
+      case TRANSACTION_TYPE_IST_COIN_TRANSFER -> {
+        Address recipient = parseAddress(transaction.getTo(), "transaction.to");
+        to = istCoinContractAddress.toHexString().substring(2);
+        amount = "0";
+        input = IstCoin.encodeTransferCallData(recipient, transaction.getAmount()).toHexString();
+      }
       default -> throw new IllegalArgumentException("unsupported transaction type for persistence: " + transaction.getType());
-    };
-
-    String to = null;
-    if (transaction.hasTo() && !transaction.getTo().isBlank()) {
-      to = transaction.getTo();
-    }
-
-    String input = "0x";
-    if (transaction.hasInput() && !transaction.getInput().isEmpty()) {
-      input = Bytes.wrap(transaction.getInput().toByteArray()).toHexString();
     }
 
     String signature = null;
@@ -223,15 +221,7 @@ final class ReplicaBlockPersistence {
       signature = Bytes.wrap(transaction.getSignature().toByteArray()).toHexString();
     }
 
-    String currency = switch (transaction.getType()) {
-      case TRANSACTION_TYPE_TRANSFER -> "DepCoin";
-      case TRANSACTION_TYPE_IST_COIN_TRANSFER -> "IST";
-      case TRANSACTION_TYPE_CONTRACT_CALL -> "N/A";
-      default -> throw new IllegalArgumentException("unsupported transaction type for persistence: " + transaction.getType());
-    };
-
-    return new GenesisParser.GenesisTransaction(type, currency, clientAddressFor(transaction.getRequestKey().getClientSenderId()).toHexString().substring(2), to,
-        Long.toString(transaction.getAmount()), transaction.getNonce(), transaction.getGasLimit(), transaction.getGasPrice(), input, signature);
+    return new GenesisParser.GenesisTransaction(from, to, amount, transaction.getNonce(), transaction.getGasLimit(), transaction.getGasPrice(), input, signature);
   }
 
   private BlockStore.BlockDocument requireInitialized() {
