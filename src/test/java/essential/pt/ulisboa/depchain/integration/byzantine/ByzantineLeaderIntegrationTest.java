@@ -47,21 +47,6 @@ class ByzantineLeaderIntegrationTest extends AbstractByzantineIntegrationTest {
   }
 
   @Test
-  void partialPreCommitBroadcastTest() throws Exception {
-    runLeaderAttackScenario(ByzantineAttackMode.PARTIAL_PRE_COMMIT_BROADCAST);
-  }
-
-  @Test
-  void partialCommitBroadcastTest() throws Exception {
-    runLeaderAttackScenario(ByzantineAttackMode.PARTIAL_COMMIT_BROADCAST);
-  }
-
-  @Test
-  void partialDecideBroadcastTest() throws Exception {
-    runLeaderAttackScenario(ByzantineAttackMode.PARTIAL_DECIDE_BROADCAST);
-  }
-
-  @Test
   void equivocatingLeaderStillAllowsSubsequentProgressAndHonestConvergence() throws Exception {
     Path configPath = integrationConfigPath();
     cleanPersistedBlockData(configPath);

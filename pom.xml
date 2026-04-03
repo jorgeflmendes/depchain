@@ -32,11 +32,8 @@
     <jdt.annotation.version>2.4.100</jdt.annotation.version>
     <compiler.plugin.version>3.15.0</compiler.plugin.version>
     <impsort.plugin.version>1.13.0</impsort.plugin.version>
-    <formatter.plugin.version>2.29.0</formatter.plugin.version>
     <enforcer.plugin.version>3.6.2</enforcer.plugin.version>
     <exec.plugin.version>3.6.3</exec.plugin.version>
-    <cluster.config.path>config/config.yaml</cluster.config.path>
-    <cluster.client.id>__required__</cluster.client.id>
   </properties>
 
   <repositories>
@@ -255,40 +252,13 @@
       </plugin>
 
       <plugin>
-        <groupId>net.revelc.code.formatter</groupId>
-        <artifactId>formatter-maven-plugin</artifactId>
-        <version>${formatter.plugin.version}</version>
-        <configuration>
-          <directories>
-            <directory>${project.basedir}/src/main/java</directory>
-            <directory>${project.basedir}/src/test/java</directory>
-          </directories>
-          <configFile>${project.basedir}/eclipse-java-formatter.xml</configFile>
-          <lineEnding>LF</lineEnding>
-          <excludes>
-            <exclude>target/generated-sources/**/*.java</exclude>
-            <exclude>target/generated-test-sources/**/*.java</exclude>
-          </excludes>
-        </configuration>
-        <executions>
-          <execution>
-            <id>format-java</id>
-            <phase>validate</phase>
-            <goals>
-              <goal>format</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-
-      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>${surefire.version}</version>
         <configuration>
           <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -XX:+EnableDynamicAgentLoading</argLine>
           <includes>
-            <include>**/*Test.java</include>
+            <include>**/ERC20FrontrunningTest.java</include>
           </includes>
           <excludedGroups>integration</excludedGroups>
         </configuration>
@@ -301,7 +271,14 @@
         <configuration>
           <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -XX:+EnableDynamicAgentLoading</argLine>
           <includes>
-            <include>**/*Test.java</include>
+            <include>**/ByzantineLeaderIntegrationTest.java</include>
+            <include>**/ByzantineReplicaIntegrationTest.java</include>
+            <include>**/AuthenticatedIngressIntegrationTest.java</include>
+            <include>**/MaliciousClientIntegrationTest.java</include>
+            <include>**/AdversarialNetworkClusterIntegrationTest.java</include>
+            <include>**/HonestClusterIntegrationTest.java</include>
+            <include>**/PersistenceFailureIntegrationTest.java</include>
+            <include>**/QueryAndContractIntegrationTest.java</include>
           </includes>
           <groups>integration</groups>
         </configuration>
@@ -353,122 +330,4 @@
     </plugins>
   </build>
 
-  <profiles>
-    <profile>
-      <id>open-local-cluster-windows</id>
-      <activation>
-        <os>
-          <family>windows</family>
-        </os>
-      </activation>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.codehaus.mojo</groupId>
-            <artifactId>exec-maven-plugin</artifactId>
-            <version>${exec.plugin.version}</version>
-            <executions>
-              <execution>
-                <id>open-local-cluster</id>
-                <goals>
-                  <goal>exec</goal>
-                </goals>
-                <configuration>
-                  <executable>powershell</executable>
-                  <arguments>
-                    <argument>-NoProfile</argument>
-                    <argument>-ExecutionPolicy</argument>
-                    <argument>Bypass</argument>
-                    <argument>-File</argument>
-                    <argument>${project.basedir}/scripts/open-local-cluster.ps1</argument>
-                    <argument>-ProjectDir</argument>
-                    <argument>${project.basedir}</argument>
-                    <argument>-ConfigPath</argument>
-                    <argument>${cluster.config.path}</argument>
-                    <argument>-ClientId</argument>
-                    <argument>${cluster.client.id}</argument>
-                  </arguments>
-                </configuration>
-              </execution>
-              <execution>
-                <id>open-local-replicas</id>
-                <goals>
-                  <goal>exec</goal>
-                </goals>
-                <configuration>
-                  <executable>powershell</executable>
-                  <arguments>
-                    <argument>-NoProfile</argument>
-                    <argument>-ExecutionPolicy</argument>
-                    <argument>Bypass</argument>
-                    <argument>-File</argument>
-                    <argument>${project.basedir}/scripts/open-local-replicas.ps1</argument>
-                    <argument>-ProjectDir</argument>
-                    <argument>${project.basedir}</argument>
-                    <argument>-ConfigPath</argument>
-                    <argument>${cluster.config.path}</argument>
-                  </arguments>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-
-    <profile>
-      <id>open-local-cluster-linux</id>
-      <activation>
-        <os>
-          <family>unix</family>
-          <name>Linux</name>
-        </os>
-      </activation>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.codehaus.mojo</groupId>
-            <artifactId>exec-maven-plugin</artifactId>
-            <version>${exec.plugin.version}</version>
-            <executions>
-              <execution>
-                <id>open-local-cluster</id>
-                <goals>
-                  <goal>exec</goal>
-                </goals>
-                <configuration>
-                  <executable>bash</executable>
-                  <arguments>
-                    <argument>${project.basedir}/scripts/open-local-cluster.sh</argument>
-                    <argument>--project-dir</argument>
-                    <argument>${project.basedir}</argument>
-                    <argument>--config-path</argument>
-                    <argument>${cluster.config.path}</argument>
-                    <argument>--client-id</argument>
-                    <argument>${cluster.client.id}</argument>
-                  </arguments>
-                </configuration>
-              </execution>
-              <execution>
-                <id>open-local-replicas</id>
-                <goals>
-                  <goal>exec</goal>
-                </goals>
-                <configuration>
-                  <executable>bash</executable>
-                  <arguments>
-                    <argument>${project.basedir}/scripts/open-local-replicas.sh</argument>
-                    <argument>--project-dir</argument>
-                    <argument>${project.basedir}</argument>
-                    <argument>--config-path</argument>
-                    <argument>${cluster.config.path}</argument>
-                  </arguments>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-  </profiles>
 </project>

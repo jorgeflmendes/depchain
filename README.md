@@ -1,37 +1,10 @@
 # DepChain
 
 DepChain is a permissioned blockchain project for the Highly Dependable Systems course.
-
-## Overview
-
-The project implements:
-
-- authenticated client-to-replica and replica-to-replica communication over UDP,
-- HotStuff-style replicated consensus with threshold signatures,
-- Fair Loss, Stubborn, Perfect, and Authenticated link abstractions,
-- native `DepCoin` transfers,
-- ERC-20-style `IST Coin` support backed by the embedded EVM runtime,
-- persisted per-replica block history with structural validation and recovery,
-- genesis materialization based on the configured client keys,
-- a split test suite with unit, integration, Byzantine, persistence, networking, and EVM coverage.
-
 ## Prerequisites
 
 - Java 21 or newer
 - Maven 3.6.3 or newer
-
-The project enforces both versions through the Maven Enforcer plugin.
-
-## Main Components
-
-- `src/main/java/pt/ulisboa/depchain/client`: interactive client shell, request signing, and coherent-reply collection.
-- `src/main/java/pt/ulisboa/depchain/server`: replica bootstrap, HotStuff logic, networking APIs, persistence, and execution.
-- `src/main/java/pt/ulisboa/depchain/shared`: config parsing, crypto helpers, validation, quorum handling, and link abstractions.
-- `src/main/contracts/ISTCoin.sol`: `IST Coin` contract source.
-- `config/config.yaml`: runtime topology and paths.
-- `config/genesis.json`: genesis template.
-- `scripts/`: helper launch scripts for Windows and Linux.
-
 ## Configuration
 
 Runtime configuration lives in `config/config.yaml`.
@@ -92,13 +65,13 @@ During materialization:
 
 ## Build
 
-From a clean checkout, compile the project before using the runtime helpers:
+From a clean checkout, compile the project before running replicas or clients:
 
 ```powershell
 mvn compile
 ```
 
-The helper scripts and `exec:java` Maven entrypoints use the compiled classes in `target/classes`.
+The `exec:java` Maven entrypoints use the compiled classes in `target/classes`.
 
 ## Run Locally
 
@@ -152,42 +125,6 @@ client --config <configPath> --client-id <clientId>
 client <configPath> --client-id <clientId>
 ```
 
-### 4. Use the helper scripts
-
-Windows, full local cluster in separate PowerShell windows:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\open-local-cluster.ps1 -ProjectDir . -ClientId client
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\open-local-cluster.ps1 -ProjectDir . -ClientId client2
-```
-
-Linux, full local cluster in separate terminal windows:
-
-```bash
-./scripts/open-local-cluster.sh --project-dir . --client-id client
-./scripts/open-local-cluster.sh --project-dir . --client-id client2
-```
-
-Only the replicas:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\open-local-replicas.ps1 -ProjectDir .
-```
-
-```bash
-./scripts/open-local-replicas.sh --project-dir .
-```
-
-Maven wrappers around those scripts:
-
-```powershell
-mvn exec:exec@open-local-cluster "-Dcluster.client.id=client"
-mvn exec:exec@open-local-cluster "-Dcluster.client.id=client2"
-mvn exec:exec@open-local-replicas
-```
-
-The launch scripts invoke the Maven runtime entrypoints directly. Compile the project first and, if a newly installed `mvn` command is not yet visible, restart the terminal so the updated `PATH` is applied.
-
 ## Client Shell Commands
 
 The interactive client exposes:
@@ -203,7 +140,7 @@ exit
 help
 ```
 
-Realistic local examples:
+Examples:
 
 - The commands below are intended to be run from the `client` shell on the default local cluster.
 - In the default genesis, `client` starts with both `DepCoin` and `IST Coin`; `client2` starts with `DepCoin` only.
@@ -229,62 +166,13 @@ Defaults in the shell:
 - `depcoin-transfer` defaults to `gasLimit = 21000` and `gasPrice = 1`,
 - `ist-transfer` and `contract-call` default to `gasLimit = 250000` and `gasPrice = 1`.
 
-## Runtime Behavior
-
-### Client-side behavior
-
-- clients broadcast signed requests to every replica listed in `knownReplicas`,
-- transaction and query requests are both authenticated,
-- the client accepts the first coherent quorum of identical replies,
-- the coherent-reply threshold is `f + 1`,
-- if replicas reply but no identical quorum can still be formed, the client raises an incoherent-response error.
-
-### Replica-side behavior
-
-- replicas authenticate both client traffic and inter-replica traffic,
-- client queries are answered locally without entering consensus,
-- client write requests are registered locally and only enqueued by the leader for the current view,
-- the leader builds batches up to `32` requests and at most `30_000_000` total gas limit,
-- pending requests are ordered by gas price first, then sender id, request id, and nonce,
-- oversized requests that cannot fit inside the UDP proposal transport budget are dropped from the pending queue.
-
-### Execution rules
-
-The execution layer enforces:
-
-- request signatures must match the declared client sender id,
-- native transfers can target EOAs but not contract accounts,
-- contract calls must target deployed contract accounts,
-- transaction nonces must match the sender account nonce,
-- gas and balance checks are enforced during execution,
-- `IST Coin` transfers are translated into contract calls to the configured contract address.
-
-## Persistence
-
-Each replica persists blocks as JSON files under its configured block directory.
-
-The block store validates:
-
-- height monotonicity,
-- `previous_block_hash` chaining,
-- SHA-256 block hashes,
-- per-block gas limit totals,
-- `gas_used` coherence,
-- consecutive nonces for transactions from the same sender within a block,
-- optional HotStuff consensus metadata when present.
-
-The hardcoded maximum block gas limit is:
-
-```text
-30_000_000
-```
 
 ## Testing
 
 The Maven test setup behaves as follows:
 
-- `mvn test` runs Surefire tests and excludes `@Tag("integration")`,
-- `mvn verify` runs the same Surefire phase plus Failsafe integration tests tagged `integration`.
+- `mvn test` runs the curated non-integration subset,
+- `mvn verify` runs that same Surefire phase plus the curated integration subset tagged `integration`.
 
 Test commands:
 
@@ -296,21 +184,39 @@ mvn clean test
 
 The test suite covers:
 
-- honest-cluster progress and replay rejection,
-- forged client signatures and malformed client ingress,
-- invalid sender ids, invalid nonces, and insufficient-balance failures,
-- Byzantine leaders and Byzantine replicas,
-- leader equivocation and forged client responses,
-- replica recovery and persistence failure scenarios,
-- packet-loss and adversarial network scenarios,
-- HotStuff invariants and catch-up logic,
-- threshold-signature exchange and protocol behavior,
-- Fair Loss, Stubborn, Perfect, and Authenticated link properties,
-- client shell parsing,
-- config and genesis parsing,
-- block persistence validation,
-- EVM execution semantics,
-- `IST Coin` behavior and approval front-running mitigation,
+- ERC-20 `allowance` front-running mitigation,
+- invalid quorum certificates emitted by a Byzantine leader,
+- leader equivocation, partial broadcast, and post-attack convergence,
+- Byzantine replica liveness across multiple attack modes,
+- forged client success/failure replies by malicious replicas or leaders,
+- replayed client requests and forged client signatures,
+- invalid HMAC packets and replayed authenticated nonces,
+- exactly-once execution under duplicated and reordered network traffic,
+- leader recovery after local persistence failure.
+
+Tests:
+
+1. `QueryAndContractIntegrationTest.approvalFrontRunningScenarioHoldsAtClusterLevel`
+2. `ERC20FrontrunningTest.ApprovalTransitions.directNonZeroToNonZeroAllowanceChangeIsRejected`
+3. `ERC20FrontrunningTest.ZeroResetMitigation.zeroFirstApprovalFlowPreventsDoubleWithdrawalAcrossFrontRunOrdering`
+4. `ByzantineLeaderIntegrationTest.invalidPrepareProposalQcTest`
+5. `ByzantineLeaderIntegrationTest.invalidPreCommitQcTest`
+6. `ByzantineLeaderIntegrationTest.invalidCommitQcTest`
+7. `ByzantineLeaderIntegrationTest.invalidDecideQcTest`
+8. `ByzantineLeaderIntegrationTest.equivocatingPrepareProposalTest`
+9. `ByzantineLeaderIntegrationTest.partialPrepareBroadcastTest`
+10. `ByzantineLeaderIntegrationTest.equivocatingLeaderStillAllowsSubsequentProgressAndHonestConvergence`
+11. `ByzantineReplicaIntegrationTest.replicaAttackDoesNotBreakClusterLiveness`
+12. `MaliciousClientIntegrationTest.colludingByzantineReplicaCannotForgeClientSuccessWithoutHonestReplyQuorum`
+13. `MaliciousClientIntegrationTest.colludingByzantineLeaderCannotForgeClientSuccessWithoutHonestReplyQuorum`
+14. `MaliciousClientIntegrationTest.colludingByzantineReplicaCannotForceClientFailureWithoutHonestFailureQuorum`
+15. `MaliciousClientIntegrationTest.colludingByzantineLeaderCannotForceClientFailureWithoutHonestFailureQuorum`
+16. `HonestClusterIntegrationTest.HappyPath.replayedClientRequestTest`
+17. `HonestClusterIntegrationTest.HappyPath.forgedClientSignatureTest`
+18. `AuthenticatedIngressIntegrationTest.invalidHmacPacketIsDroppedWithoutBreakingSubsequentClientTraffic`
+19. `AuthenticatedIngressIntegrationTest.replayedAuthenticatedNonceIsDroppedWithoutBreakingSubsequentClientTraffic`
+20. `AdversarialNetworkClusterIntegrationTest.ExactlyOnceEffects.duplicatedTransportTrafficDoesNotCauseDoubleExecution`
+21. `PersistenceFailureIntegrationTest.leaderCanReplyBeforeLocalPersistenceAndCatchUpAfterRestart`
 
 ## Notes
 

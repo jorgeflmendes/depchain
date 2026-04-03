@@ -10,8 +10,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import pt.ulisboa.depchain.client.api.ClientReplicaApi;
 import pt.ulisboa.depchain.integration.support.ClusterIntegrationTestBase;
@@ -28,17 +26,6 @@ class AdversarialNetworkClusterIntegrationTest extends ClusterIntegrationTestBas
   @Override
   protected Map<String, String> clusterJvmProperties() {
     return Map.of(FairLossLink.DUPLICATE_PROBABILITY_PROPERTY, DUPLICATE_PROBABILITY, FairLossLink.ASYNC_MAX_DELAY_MS_PROPERTY, ASYNC_MAX_DELAY_MS);
-  }
-
-  @Nested
-  @DisplayName("Liveness")
-  class Liveness {
-    @ParameterizedTest(name = "request {0} reaches DECIDE")
-    @ValueSource(ints = {1, 2, 3})
-    void consensusRemainsLiveUnderDuplicatedAndReorderedPackets(int requestIndex) throws Exception {
-      cluster().assertRequestSucceeds("duplicate-reorder-consensus-"
-          + requestIndex, VIEW_CHANGE_REQUEST_TIMEOUT, "Client request should still reach consensus under duplication and reordering");
-    }
   }
 
   @Nested

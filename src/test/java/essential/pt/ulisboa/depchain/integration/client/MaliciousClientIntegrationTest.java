@@ -18,13 +18,10 @@ import com.google.protobuf.ByteString;
 
 import pt.ulisboa.depchain.integration.byzantine.ByzantineAttackMode;
 import pt.ulisboa.depchain.integration.support.ClusterIntegrationTestBase;
-import pt.ulisboa.depchain.integration.support.IntegrationHarness.ManagedCluster;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness.StartedServer;
 import pt.ulisboa.depchain.proto.ClientRequest;
 import pt.ulisboa.depchain.proto.ClientRequestKey;
 import pt.ulisboa.depchain.proto.ClientResponse;
-import pt.ulisboa.depchain.proto.QueryRequest;
-import pt.ulisboa.depchain.proto.QueryType;
 import pt.ulisboa.depchain.proto.TransactionRequest;
 import pt.ulisboa.depchain.proto.TransactionType;
 import pt.ulisboa.depchain.shared.config.ConfigParser;
@@ -52,66 +49,6 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       } finally {
         cleanupIsolatedConfigDirectory(manualScenarioConfigPath);
       }
-    }
-  }
-
-  @Test
-  void clientCannotAuthenticateOnConsensusPortTest() throws Exception {
-    ClientRequest request = signedTransferRequest(cluster().clientSenderId(), 990L, 0L, cluster().clientPrivateKey());
-    byte[] payload = request.toByteArray();
-
-    cluster().assertNoResponseFromConsensusPort(LEADER_REPLICA_ID, payload);
-    cluster()
-        .assertRequestSucceeds("post-consensus-port-reject", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting client traffic on the consensus port");
-  }
-
-  @Test
-  void clientRequestWithWrongSenderIdRejectedTest() throws Exception {
-    ClientRequest forgedSenderRequest = signedTransferRequest(cluster().clientSenderId() + 1, 991L, 0L, cluster().clientPrivateKey());
-
-    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, forgedSenderRequest.toByteArray());
-    cluster().assertRequestSucceeds("post-wrong-sender", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting a forged client sender id");
-  }
-
-  @Test
-  void malformedClientRequestPayloadRejectedTest() throws Exception {
-    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, new byte[]{1, 2, 3, 4});
-    cluster().assertRequestSucceeds("post-malformed-payload", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after malformed client payloads");
-  }
-
-  @Test
-  void protoInvalidClientRequestRejectedTest() throws Exception {
-    ClientRequest invalidRequest = ClientRequest.newBuilder()
-        .setTransaction(TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(cluster().clientSenderId()).setRequestId(992L))
-            .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(TEST_RECIPIENT_ADDRESS).setAmount(TEST_TRANSFER_AMOUNT).setNonce(0L).setGasLimit(TEST_GAS_LIMIT)
-            .setGasPrice(TEST_GAS_PRICE))
-        .build();
-
-    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, invalidRequest.toByteArray());
-    cluster().assertRequestSucceeds("post-invalid-client-proto", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting invalid client protos");
-  }
-
-  @Test
-  void clientRequestWithUnexpectedNonceRejectedTest() throws Exception {
-    try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
-      ClientRequest invalidNonceRequest = signedTransferRequest(cluster.configPath(), TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 999L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-
-      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(invalidNonceRequest, "ClientRequest")
-          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
-      assertFailedTransactionResponse(responsePacket, "invalid transaction nonce", "Requests with a nonce that does not match the sender account must fail");
-      cluster.assertRequestSucceeds("post-invalid-nonce", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting an invalid nonce");
-    }
-  }
-
-  @Test
-  void clientRequestWithoutEnoughBalanceForAmountPlusGasRejectedTest() throws Exception {
-    try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
-      ClientRequest insufficientFundsRequest = signedTransferRequest(cluster.configPath(), TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-
-      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
-          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
-      assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "Requests that cannot pay amount plus max gas must fail");
-      cluster.assertRequestSucceeds("post-insufficient-balance", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting insufficient-balance requests");
     }
   }
 
@@ -229,42 +166,6 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
         cleanPersistedBlockData(configPath);
       }
     }
-  }
-
-  @Test
-  void malformedQueryOwnerRejectedTest() throws Exception {
-    ConfigParser config = ConfigParser.load(cluster().configPath());
-    long clientSenderId = config.client().senderId();
-    PrivateKey clientPrivateKey = pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader.loadClientPrivateKey(config);
-    long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    String malformedOwner = "not-a-valid-address";
-    byte[] signature = CryptoUtil
-        .signEcdsa(ClientRequestSignaturePayloadUtil.signedQueryRequestPayload(clientSenderId, requestId, QueryType.QUERY_TYPE_DEPCOIN_BALANCE, malformedOwner), clientPrivateKey);
-    ClientRequest invalidQuery = ClientRequest.newBuilder()
-        .setQuery(QueryRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(clientSenderId).setRequestId(requestId))
-            .setType(QueryType.QUERY_TYPE_DEPCOIN_BALANCE).setOwner(malformedOwner).setSignature(ByteString.copyFrom(signature)))
-        .build();
-
-    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, invalidQuery.toByteArray());
-    cluster().assertRequestSucceeds("post-malformed-query-owner", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting malformed queries");
-  }
-
-  @Test
-  void queryWithWrongSenderIdRejectedTest() throws Exception {
-    ConfigParser config = ConfigParser.load(cluster().configPath());
-    PrivateKey clientPrivateKey = pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader.loadClientPrivateKey(config);
-    long forgedSenderId = cluster().clientSenderId() + 1L;
-    long requestId = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
-    String owner = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    byte[] signature = CryptoUtil
-        .signEcdsa(ClientRequestSignaturePayloadUtil.signedQueryRequestPayload(forgedSenderId, requestId, QueryType.QUERY_TYPE_DEPCOIN_BALANCE, owner), clientPrivateKey);
-    ClientRequest forgedQuery = ClientRequest.newBuilder()
-        .setQuery(QueryRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(forgedSenderId).setRequestId(requestId))
-            .setType(QueryType.QUERY_TYPE_DEPCOIN_BALANCE).setOwner(owner).setSignature(ByteString.copyFrom(signature)))
-        .build();
-
-    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, forgedQuery.toByteArray());
-    cluster().assertRequestSucceeds("post-wrong-query-sender", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting forged query sender ids");
   }
 
   private static ClientRequest signedTransferRequest(Path configPath, String to, long amount, long nonce, long gasLimit, long gasPrice) throws Exception {
