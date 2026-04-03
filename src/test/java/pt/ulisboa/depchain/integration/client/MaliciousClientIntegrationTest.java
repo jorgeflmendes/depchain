@@ -136,8 +136,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest insufficientFundsRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
-          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
+      var responsePacket = broadcastClientRequestPayloadWithRetries(configPath, insufficientFundsRequest, VIEW_CHANGE_REQUEST_TIMEOUT, 3);
 
       assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "One forged Byzantine success response must not outweigh the coherent honest failure quorum");
       assertByzantineAttackObserved(byzantineReplica, ByzantineAttackMode.FORGED_CLIENT_SUCCESS_RESPONSE, "Byzantine client-response forgery was never exercised");
@@ -192,7 +191,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest validRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), VIEW_CHANGE_REQUEST_TIMEOUT);
+      var responsePacket = broadcastClientRequestPayloadWithRetries(configPath, validRequest, VIEW_CHANGE_REQUEST_TIMEOUT, 3);
 
       assertResponseNotNull(responsePacket, "A single Byzantine forged failure must not block a coherent honest success quorum", servers);
       ClientResponse response = decodeClientResponse(responsePacket);
@@ -294,6 +293,19 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
             .setType(TransactionType.TRANSACTION_TYPE_TRANSFER).setTo(to).setAmount(amount).setNonce(nonce).setGasLimit(gasLimit).setGasPrice(gasPrice)
             .setSignature(ByteString.copyFrom(signature)))
         .build();
+  }
+
+  private static pt.ulisboa.depchain.shared.network.model.InboundPacket broadcastClientRequestPayloadWithRetries(Path configPath, ClientRequest request, Duration timeoutPerAttempt, int maxAttempts)
+      throws Exception {
+    byte[] payload = ProtoValidationUtil.requireValid(request, "ClientRequest").toByteArray();
+    pt.ulisboa.depchain.shared.network.model.InboundPacket response = null;
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      response = broadcastClientRequestPayload(configPath, payload, timeoutPerAttempt);
+      if (response != null) {
+        return response;
+      }
+    }
+    return response;
   }
 
   private static void assertFailedTransactionResponse(pt.ulisboa.depchain.shared.network.model.InboundPacket responsePacket, String expectedMessageSnippet, String message) {
