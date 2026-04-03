@@ -72,6 +72,14 @@ public abstract class IntegrationHarness {
   private static final AtomicInteger PORT_BLOCK_COUNTER = new AtomicInteger();
   private static final Pattern CONSENSUS_PORT_PATTERN = Pattern.compile("(consensus:\\s+)(\\d+)");
   private static final Pattern CLIENT_PORT_PATTERN = Pattern.compile("(client:\\s+)(\\d+)");
+  private static final Pattern VIEW_CHANGE_TIMEOUT_PATTERN = Pattern.compile("(viewChangeMs:\\s+)(\\d+)");
+  private static final Pattern CLIENT_COMMAND_WAIT_TIMEOUT_PATTERN = Pattern.compile("(clientCommandWaitMs:\\s+)(\\d+)");
+  private static final Pattern THRESHOLD_ROUND_TIMEOUT_PATTERN = Pattern.compile("(thresholdRoundMs:\\s+)(\\d+)");
+  private static final Pattern FETCH_NODE_TIMEOUT_PATTERN = Pattern.compile("(fetchNodeMs:\\s+)(\\d+)");
+  private static final int INTEGRATION_VIEW_CHANGE_TIMEOUT_MS = 1500;
+  private static final int INTEGRATION_CLIENT_COMMAND_WAIT_TIMEOUT_MS = 1100;
+  private static final int INTEGRATION_THRESHOLD_ROUND_TIMEOUT_MS = 1100;
+  private static final int INTEGRATION_FETCH_NODE_TIMEOUT_MS = 500;
   private static final Object POPULATE_LOCK = new Object();
   private static volatile boolean populated;
 
@@ -266,7 +274,11 @@ public abstract class IntegrationHarness {
       List<Integer> availablePorts = reserveAvailableUdpPorts(8);
       AtomicInteger portOffset = new AtomicInteger();
       String configWithConsensusPorts = rewritePorts(baseConfig, CONSENSUS_PORT_PATTERN, availablePorts, portOffset);
-      String isolatedConfig = rewritePorts(configWithConsensusPorts, CLIENT_PORT_PATTERN, availablePorts, portOffset);
+      String configWithClientPorts = rewritePorts(configWithConsensusPorts, CLIENT_PORT_PATTERN, availablePorts, portOffset);
+      String configWithViewTimeout = rewriteScalarValue(configWithClientPorts, VIEW_CHANGE_TIMEOUT_PATTERN, INTEGRATION_VIEW_CHANGE_TIMEOUT_MS);
+      String configWithClientCommandTimeout = rewriteScalarValue(configWithViewTimeout, CLIENT_COMMAND_WAIT_TIMEOUT_PATTERN, INTEGRATION_CLIENT_COMMAND_WAIT_TIMEOUT_MS);
+      String configWithThresholdTimeout = rewriteScalarValue(configWithClientCommandTimeout, THRESHOLD_ROUND_TIMEOUT_PATTERN, INTEGRATION_THRESHOLD_ROUND_TIMEOUT_MS);
+      String isolatedConfig = rewriteScalarValue(configWithThresholdTimeout, FETCH_NODE_TIMEOUT_PATTERN, INTEGRATION_FETCH_NODE_TIMEOUT_MS);
 
       Path targetDirectory = Path.of(System.getProperty("user.dir"), "target", "integration-configs");
       Files.createDirectories(targetDirectory);
@@ -301,6 +313,15 @@ public abstract class IntegrationHarness {
     }
     matcher.appendTail(output);
     return output.toString();
+  }
+
+  private static String rewriteScalarValue(String configContents, Pattern pattern, int value) {
+    Matcher matcher = pattern.matcher(configContents);
+    if (!matcher.find()) {
+      return configContents;
+    }
+
+    return matcher.replaceFirst(Matcher.quoteReplacement(matcher.group(1) + value));
   }
 
   private static InboundPacket sendAuthenticatedPayload(InetSocketAddress targetAddress, long senderId, PrivateKey privateKey, Map<Long, PublicKey> staticPublicKeys, byte[] payload, Duration timeout)

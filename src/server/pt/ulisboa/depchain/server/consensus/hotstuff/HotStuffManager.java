@@ -122,6 +122,7 @@ public class HotStuffManager {
     }
 
     observeMessage(msg);
+    catchUpDecidedBranch(msg);
     messageInbox.offer(msg);
   }
 
@@ -520,6 +521,24 @@ public class HotStuffManager {
     Message response = Message.newBuilder().setViewNumber(viewNumber).setReplicaSenderId(id).setMessageType(ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE)
         .setFetchNodeResponse(FetchNodeResponseMessage.newBuilder().setNode(requestedNode)).build();
     sendToReplica(msg.getReplicaSenderId(), response);
+  }
+
+  private void catchUpDecidedBranch(Message msg) {
+    if (msg == null || msg.getMessageType() != ConsensusMessageType.CONSENSUS_MESSAGE_TYPE_DECIDE || !msg.hasPhaseCertificate()) {
+      return;
+    }
+
+    QuorumCertificate decideQc = msg.getPhaseCertificate().getJustifyQc();
+    if (!verifyQC(decideQc)) {
+      return;
+    }
+
+    try {
+      ensureDeliveredBranch(decideQc.getCertifiedNode(), msg.getReplicaSenderId(), TimeUtil.monotonicDeadlineAfterNow(fetchNodeTimeoutMs));
+      executeCommittedBranch(decideQc.getCertifiedNode());
+    } catch (ConsensusTimeoutException exception) {
+      logger.debug("Ignoring late decide catch-up failure for view {}", msg.getViewNumber(), exception);
+    }
   }
 
   private boolean isValidParentLink(Node childNode, Node parentNode) {
