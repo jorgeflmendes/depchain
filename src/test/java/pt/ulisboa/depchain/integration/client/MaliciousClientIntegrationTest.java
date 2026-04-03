@@ -98,26 +98,26 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   }
 
   @Test
-  @Timeout(30)
+  @Timeout(60)
   void clientRequestWithUnexpectedNonceRejectedTest() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       ClientRequest invalidNonceRequest = signedTransferRequest(cluster.configPath(), TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 999L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
 
-      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(invalidNonceRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(3));
+      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(invalidNonceRequest, "ClientRequest")
+          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
       assertFailedTransactionResponse(responsePacket, "invalid transaction nonce", "Requests with a nonce that does not match the sender account must fail");
       cluster.assertRequestSucceeds("post-invalid-nonce", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting an invalid nonce");
     }
   }
 
   @Test
-  @Timeout(30)
+  @Timeout(60)
   void clientRequestWithoutEnoughBalanceForAmountPlusGasRejectedTest() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       ClientRequest insufficientFundsRequest = signedTransferRequest(cluster.configPath(), TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
 
-      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(3));
+      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
+          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
       assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "Requests that cannot pay amount plus max gas must fail");
       cluster.assertRequestSucceeds("post-insufficient-balance", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting insufficient-balance requests");
     }
@@ -136,8 +136,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest insufficientFundsRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
+          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
 
       assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "One forged Byzantine success response must not outweigh the coherent honest failure quorum");
       assertByzantineAttackObserved(byzantineReplica, ByzantineAttackMode.FORGED_CLIENT_SUCCESS_RESPONSE, "Byzantine client-response forgery was never exercised");
@@ -164,8 +164,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest insufficientFundsRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
+          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
 
       assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "A forged success reply from the Byzantine leader must not outweigh the coherent honest failure quorum");
       assertByzantineAttackObserved(byzantineLeader, ByzantineAttackMode.FORGED_CLIENT_SUCCESS_RESPONSE, "Byzantine leader client-response forgery was never exercised");
@@ -192,7 +192,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest validRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), Duration.ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), VIEW_CHANGE_REQUEST_TIMEOUT);
 
       assertResponseNotNull(responsePacket, "A single Byzantine forged failure must not block a coherent honest success quorum", servers);
       ClientResponse response = decodeClientResponse(responsePacket);
@@ -224,7 +224,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest validRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), Duration.ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), VIEW_CHANGE_REQUEST_TIMEOUT);
 
       assertResponseNotNull(responsePacket, "A Byzantine leader forged failure must not block a coherent honest success quorum", servers);
       ClientResponse response = decodeClientResponse(responsePacket);

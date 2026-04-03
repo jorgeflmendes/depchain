@@ -28,7 +28,6 @@ public final class EvmService {
   private final SimpleWorld world;
   private final Map<Address, AccountKind> accountKinds;
 
-  // TODO: replace placeholder gas defaults with the project gas schedule.
   private static final long DEFAULT_GAS_LIMIT = 10_000_000L;
   private static final long TRANSFER_GAS_USED = 21_000L;
 

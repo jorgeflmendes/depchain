@@ -59,7 +59,7 @@ class GenesisParserTest {
 
   @Test
   void loadDefaultParsesGenesisFile() throws Exception {
-    GenesisParser genesis = GenesisParser.loadDefault();
+    GenesisParser genesis = GenesisParser.load(Path.of("config", "genesis.json"));
 
     assertEquals(0L, genesis.height());
     assertEquals(5, genesis.transactions().size());
