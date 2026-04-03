@@ -49,14 +49,18 @@ final class StubbornContext {
     }
 
     long maxDelayMs = StubbornLink.DEFAULT_MAX_DELAY_MS;
-    long exponentialDelayMs = StubbornLink.DEFAULT_BASE_DELAY_MS * (1L << checkedAttempt);
-    long boundedDelayMs = Math.min(maxDelayMs, exponentialDelayMs);
+    long boundedDelayMs = StubbornLink.DEFAULT_BASE_DELAY_MS;
+    for (int i = 0; i < checkedAttempt && boundedDelayMs < maxDelayMs; i++) {
+      boundedDelayMs = Math.min(maxDelayMs, boundedDelayMs * 2L);
+    }
     long jitterRangeMs = Math.round(boundedDelayMs * StubbornLink.DEFAULT_JITTER_RATIO);
     if (jitterRangeMs == 0L) {
       return boundedDelayMs;
     }
 
-    long jitteredDelayMs = boundedDelayMs + ThreadLocalRandom.current().nextLong(-jitterRangeMs, jitterRangeMs + 1L);
+    long lowerJitterBound = -jitterRangeMs;
+    long upperJitterBoundExclusive = jitterRangeMs + 1L;
+    long jitteredDelayMs = boundedDelayMs + ThreadLocalRandom.current().nextLong(lowerJitterBound, upperJitterBoundExclusive);
     return Math.max(1L, Math.min(maxDelayMs, jitteredDelayMs));
   }
 

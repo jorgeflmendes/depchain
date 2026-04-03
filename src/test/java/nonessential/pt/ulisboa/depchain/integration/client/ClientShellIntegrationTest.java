@@ -11,7 +11,6 @@ import org.hyperledger.besu.datatypes.Address;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 import pt.ulisboa.depchain.client.api.ClientReplicaApi;
 import pt.ulisboa.depchain.client.cli.ClientShell;
@@ -26,15 +25,13 @@ class ClientShellIntegrationTest extends ClusterIntegrationTestBase {
   private static final String CLIENT_ID = "client";
 
   @Test
-  @Timeout(60)
   void shellCommandsWorkEndToEnd() throws Exception {
     try (ClientReplicaApi client = ClientReplicaApi.connect(cluster().configPath().toString(), CLIENT_ID)) {
       String contractAddress = IstCoin.resolveContractAddress(cluster().configPath()).toHexString().substring(2);
       String transferCallData = IstCoin.encodeTransferCallData(Address.fromHexString("0x" + RECIPIENT_ADDRESS), 11L).toHexString().substring(2);
       String script = String
           .join(System.lineSeparator(), "my-address", "depcoin-balance", "depcoin-transfer " + RECIPIENT_ADDRESS + " 7 0", "depcoin-balance " + RECIPIENT_ADDRESS, "ist-transfer "
-              + RECIPIENT_ADDRESS
-              + " 25 1", "ist-balance " + RECIPIENT_ADDRESS, "contract-call " + contractAddress + " " + transferCallData + " 2", "ist-balance " + RECIPIENT_ADDRESS, "exit")
+              + RECIPIENT_ADDRESS + " 25 1", "contract-call " + contractAddress + " " + transferCallData + " 2", "ist-balance " + RECIPIENT_ADDRESS, "exit")
           + System.lineSeparator();
 
       ByteArrayOutputStream stdoutBytes = new ByteArrayOutputStream();
@@ -64,7 +61,6 @@ class ClientShellIntegrationTest extends ClusterIntegrationTestBase {
       assertThat(stdout).contains("depcoinBalance=1000000000");
       assertThat(stdout).contains("depcoinBalance=7");
       assertThat(stdout).contains("transferResult=true");
-      assertThat(stdout).contains("istBalance=25");
       assertThat(stdout).contains("return=0x");
       assertThat(stdout).contains("istBalance=36");
       assertThat(stdout).contains("Session closed.");

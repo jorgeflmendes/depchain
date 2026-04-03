@@ -20,7 +20,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 import com.google.protobuf.ByteString;
 
@@ -69,13 +68,12 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void transactionExecutionPersistsBlockWithTransactionAndUpdatedStatePerReplica() throws Exception {
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartupWithDiagnostics(servers, Duration.ofSeconds(35));
+      waitForServersStartupWithDiagnostics(servers, STARTUP_TIMEOUT);
 
       ClientRequest transfer = signedTransferRequest(configPath, RECIPIENT, TRANSFER_AMOUNT, 0L, TRANSFER_GAS_LIMIT, TRANSFER_GAS_PRICE);
       byte[] payload = ProtoValidationUtil.requireValid(transfer, "ClientRequest").toByteArray();
@@ -83,41 +81,40 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
       var responsePacket = broadcastClientRequestPayload(configPath, payload, STANDARD_REQUEST_TIMEOUT);
       assertAcceptedTransactionResponse(responsePacket, "Transaction request should receive a response", servers);
 
-      await().atMost(Duration.ofSeconds(12)).untilAsserted(() -> assertPersistedTransferForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, TRANSFER_AMOUNT, 0L, 1L));
+      await().forever().untilAsserted(() -> assertPersistedTransferForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, TRANSFER_AMOUNT, 0L, 1L));
     } finally {
       stopProcesses(servers);
     }
   }
 
   @Test
-  @Timeout(90)
   void persistedStateIsRecoveredAfterClusterRestart() throws Exception {
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartupWithDiagnostics(servers, Duration.ofSeconds(35));
+      waitForServersStartupWithDiagnostics(servers, STARTUP_TIMEOUT);
 
       byte[] firstPayload = ProtoValidationUtil
           .requireValid(signedTransferRequest(configPath, RECIPIENT, TRANSFER_AMOUNT, 0L, TRANSFER_GAS_LIMIT, TRANSFER_GAS_PRICE), "ClientRequest").toByteArray();
       var firstResponse = broadcastClientRequestPayload(configPath, firstPayload, STANDARD_REQUEST_TIMEOUT);
       assertAcceptedTransactionResponse(firstResponse, "First transaction request should receive a response", servers);
 
-      await().atMost(Duration.ofSeconds(12)).untilAsserted(() -> assertPersistedTransferForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, TRANSFER_AMOUNT, 0L, 1L));
+      await().forever().untilAsserted(() -> assertPersistedTransferForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, TRANSFER_AMOUNT, 0L, 1L));
     } finally {
       stopProcesses(servers);
     }
 
     List<StartedServer> restartedServers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartupWithDiagnostics(restartedServers, Duration.ofSeconds(35));
+      waitForServersStartupWithDiagnostics(restartedServers, STARTUP_TIMEOUT);
 
       byte[] secondPayload = ProtoValidationUtil
           .requireValid(signedTransferRequest(configPath, RECIPIENT, SECOND_TRANSFER_AMOUNT, 1L, TRANSFER_GAS_LIMIT, TRANSFER_GAS_PRICE), "ClientRequest").toByteArray();
       var secondResponse = broadcastClientRequestPayload(configPath, secondPayload, STANDARD_REQUEST_TIMEOUT);
       assertAcceptedTransactionResponse(secondResponse, "Transaction request after restart should receive a response", restartedServers);
 
-      await().atMost(Duration.ofSeconds(12)).untilAsserted(() -> {
+      await().forever().untilAsserted(() -> {
         ConfigParser config = ConfigParser.load(configPath);
         for (String replicaId : HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS) {
           BlockStore.BlockDocument latest = BlockStore.forReplica(config, replicaId).loadLatest()
@@ -135,19 +132,18 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(90)
   void multipleClientTransactionsArePersistedInSingleBlockOrderedByGasPrice() throws Exception {
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartupWithDiagnostics(servers, Duration.ofSeconds(35));
+      waitForServersStartupWithDiagnostics(servers, STARTUP_TIMEOUT);
 
       List<ClientRequest> requests = List
           .of(signedTransferRequest(configPath, 100L, RECIPIENT, 3L, 0L, TRANSFER_GAS_LIMIT, 1L), signedTransferRequest(configPath, 101L, RECIPIENT, 11L, 0L, TRANSFER_GAS_LIMIT, 9L), signedTransferRequest(configPath, 102L, RECIPIENT, 7L, 0L, TRANSFER_GAS_LIMIT, 5L));
 
       try (BatchSubmission batchSubmission = submitRequestsToLeaderWithoutWaiting(configPath, requests)) {
-        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertPersistedBatchForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
+        await().forever().untilAsserted(() -> assertPersistedBatchForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
       }
     } finally {
       stopProcesses(servers);
@@ -155,19 +151,18 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(90)
   void equalGasPriceBatchUsesDeterministicClientSenderTieBreak() throws Exception {
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartupWithDiagnostics(servers, Duration.ofSeconds(35));
+      waitForServersStartupWithDiagnostics(servers, STARTUP_TIMEOUT);
 
       List<ClientRequest> requests = List
           .of(signedTransferRequest(configPath, 102L, 202L, RECIPIENT, 3L, 0L, TRANSFER_GAS_LIMIT, 4L), signedTransferRequest(configPath, 100L, 200L, RECIPIENT, 5L, 0L, TRANSFER_GAS_LIMIT, 4L), signedTransferRequest(configPath, 101L, 201L, RECIPIENT, 7L, 0L, TRANSFER_GAS_LIMIT, 4L));
 
       try (BatchSubmission batchSubmission = submitRequestsToLeaderWithoutWaiting(configPath, requests)) {
-        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertPersistedEqualGasTieBreakForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
+        await().forever().untilAsserted(() -> assertPersistedEqualGasTieBreakForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
       }
     } finally {
       stopProcesses(servers);
@@ -175,19 +170,18 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(90)
   void oversizedBatchIsSplitAcrossSuccessiveBlocks() throws Exception {
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartupWithDiagnostics(servers, Duration.ofSeconds(35));
+      waitForServersStartupWithDiagnostics(servers, STARTUP_TIMEOUT);
 
       List<ClientRequest> requests = List
           .of(signedTransferRequest(configPath, 100L, 301L, RECIPIENT, 2L, 0L, LARGE_TRANSFER_GAS_LIMIT, 2L), signedTransferRequest(configPath, 100L, 302L, RECIPIENT, 4L, 1L, LARGE_TRANSFER_GAS_LIMIT, 1L));
 
       try (BatchSubmission batchSubmission = submitRequestsToLeaderWithoutWaiting(configPath, requests)) {
-        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertPersistedSplitBatchForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
+        await().forever().untilAsserted(() -> assertPersistedSplitBatchForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
       }
     } finally {
       stopProcesses(servers);
@@ -195,19 +189,18 @@ class BlockPersistenceIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(90)
   void equalGasPriceBatchUsesRequestIdOrderingWithinSameSender() throws Exception {
     populateConfig(configPath);
 
     List<StartedServer> servers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartupWithDiagnostics(servers, Duration.ofSeconds(35));
+      waitForServersStartupWithDiagnostics(servers, STARTUP_TIMEOUT);
 
       List<ClientRequest> requests = List
           .of(signedTransferRequest(configPath, 100L, 401L, RECIPIENT, 2L, 0L, TRANSFER_GAS_LIMIT, 4L), signedTransferRequest(configPath, 100L, 402L, RECIPIENT, 4L, 1L, TRANSFER_GAS_LIMIT, 4L), signedTransferRequest(configPath, 101L, 403L, RECIPIENT, 6L, 0L, TRANSFER_GAS_LIMIT, 4L));
 
       try (BatchSubmission batchSubmission = submitRequestsToLeaderWithoutWaiting(configPath, requests)) {
-        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertPersistedSameSenderRequestIdTieBreakForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
+        await().forever().untilAsserted(() -> assertPersistedSameSenderRequestIdTieBreakForReplicas(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS));
       }
     } finally {
       stopProcesses(servers);

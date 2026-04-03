@@ -55,6 +55,23 @@ class GenesisMaterializerTest {
     assertEquals(lockedGenesis.blockHash(), GenesisParser.loadForConfig(configPath).blockHash());
   }
 
+  @Test
+  void loadOrWriteLockRewritesEmptyGenesisLockFile() throws Exception {
+    Path configPath = configPath();
+    TestKeyMaterialSupport.ensureKeyMaterial(configPath);
+
+    ConfigParser config = ConfigParser.load(configPath);
+    Map<Long, PublicKey> clientPublicKeys = PublicKeyLoader.loadClientPublicKeys(config);
+    Path lockPath = GenesisParser.genesisLockPathForConfig(configPath);
+    Files.createDirectories(lockPath.getParent());
+    Files.writeString(lockPath, "");
+
+    GenesisParser lockedGenesis = GenesisMaterializer.loadOrWriteLock(configPath, config, clientPublicKeys);
+
+    assertTrue(Files.size(lockPath) > 0L);
+    assertEquals(lockedGenesis.blockHash(), GenesisParser.load(lockPath).blockHash());
+  }
+
   private static String decodeTransferRecipient(String input) {
     String hex = input.substring(2);
     return hex.substring(8 + 24, 8 + 64);

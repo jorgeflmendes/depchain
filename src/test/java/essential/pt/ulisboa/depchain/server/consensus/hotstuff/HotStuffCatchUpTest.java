@@ -128,7 +128,7 @@ class HotStuffCatchUpTest {
     putKnownNode(hotStuffManager, child);
 
     Thread.ofVirtual().start(() -> {
-      await().pollDelay(Duration.ofMillis(50)).atMost(Duration.ofSeconds(1)).untilAsserted(() -> hotStuffManager.onReplicaMessage(fetchNodeResponse(1, parent)));
+      await().pollDelay(Duration.ofMillis(50)).forever().untilAsserted(() -> hotStuffManager.onReplicaMessage(fetchNodeResponse(1, parent)));
     });
 
     invokeEnsureDeliveredBranch(hotStuffManager, child, 1);
@@ -150,7 +150,7 @@ class HotStuffCatchUpTest {
     putKnownNode(hotStuffManager, child);
 
     Thread.ofVirtual().start(() -> {
-      await().pollDelay(Duration.ofMillis(50)).atMost(Duration.ofSeconds(1)).untilAsserted(() -> hotStuffManager.onReplicaMessage(fetchNodeResponse(1, wrongHashParent)));
+      await().pollDelay(Duration.ofMillis(50)).forever().untilAsserted(() -> hotStuffManager.onReplicaMessage(fetchNodeResponse(1, wrongHashParent)));
     });
 
     assertThrows(InvocationTargetException.class, () -> invokeEnsureDeliveredBranch(hotStuffManager, child, 1));

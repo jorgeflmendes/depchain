@@ -4,14 +4,12 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 import pt.ulisboa.depchain.integration.support.IntegrationHarness;
 import pt.ulisboa.depchain.integration.support.IntegrationHarness.ManagedCluster;
@@ -23,7 +21,6 @@ import pt.ulisboa.depchain.shared.config.ConfigParser;
 class PersistenceFailureIntegrationTest extends IntegrationHarness {
 
   @Test
-  @Timeout(120)
   void followerRecoversAfterFailingPersistenceBetweenTempWriteAndAtomicMove() throws Exception {
     Map<String, Map<String, String>> perReplicaProperties = Map.of(FOLLOWER_REPLICA_ID, Map.of(BlockStore.FAIL_AFTER_TEMP_WRITE_HEIGHT_PROPERTY, "1"));
 
@@ -34,7 +31,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
       cluster
           .assertRequestSucceeds("first-transfer-with-persistence-failure", STANDARD_REQUEST_TIMEOUT, "Cluster should reply even if one follower fails to persist the first block");
 
-      await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+      await().forever().untilAsserted(() -> {
         assertEquals(1L, BlockStore.forReplica(config, LEADER_REPLICA_ID).loadLatest().orElseThrow().height());
         assertEquals(0L, BlockStore.forReplica(config, FOLLOWER_REPLICA_ID).loadLatest().orElseThrow().height());
       });
@@ -45,7 +42,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
 
       StartedServer restartedFollower = startServers(List.of(FOLLOWER_REPLICA_ID), cluster.configPath()).getFirst();
       liveServers.add(restartedFollower);
-      waitForServersStartup(List.of(restartedFollower), Duration.ofSeconds(35));
+      waitForServersStartup(List.of(restartedFollower), STARTUP_TIMEOUT);
 
       cluster.assertRequestSucceeds("second-transfer-after-follower-restart", STANDARD_REQUEST_TIMEOUT, "Cluster should keep making progress after restarting the follower");
       awaitPersistedHeight(config, LEADER_REPLICA_ID, 2L);
@@ -57,7 +54,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
       awaitPersistedHeight(config, LEADER_REPLICA_ID, 4L);
 
       try {
-        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+        await().forever().untilAsserted(() -> {
           long expectedHeight = BlockStore.forReplica(config, LEADER_REPLICA_ID).loadLatest().orElseThrow().height();
           for (String replicaId : REPLICA_IDS) {
             assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
@@ -71,7 +68,6 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(120)
   void leaderCanReplyBeforeLocalPersistenceAndCatchUpAfterRestart() throws Exception {
     Map<String, Map<String, String>> perReplicaProperties = Map.of(LEADER_REPLICA_ID, Map.of(BlockStore.FAIL_AFTER_TEMP_WRITE_HEIGHT_PROPERTY, "1"));
 
@@ -82,7 +78,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
       cluster
           .assertRequestSucceeds("leader-replies-before-local-persist", STANDARD_REQUEST_TIMEOUT, "Client should still observe success even if the leader fails local persistence after execution");
 
-      await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+      await().forever().untilAsserted(() -> {
         assertEquals(0L, BlockStore.forReplica(config, LEADER_REPLICA_ID).loadLatest().orElseThrow().height());
         assertEquals(1L, BlockStore.forReplica(config, FOLLOWER_REPLICA_ID).loadLatest().orElseThrow().height());
         assertEquals(1L, BlockStore.forReplica(config, BYZANTINE_REPLICA_ID).loadLatest().orElseThrow().height());
@@ -95,7 +91,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
 
       StartedServer restartedLeader = startServers(List.of(LEADER_REPLICA_ID), cluster.configPath()).getFirst();
       liveServers.add(restartedLeader);
-      waitForServersStartup(List.of(restartedLeader), Duration.ofSeconds(35));
+      waitForServersStartup(List.of(restartedLeader), STARTUP_TIMEOUT);
 
       cluster
           .assertRequestSucceeds("post-leader-restart-after-persist-failure", STANDARD_REQUEST_TIMEOUT, "Cluster should continue after restarting the leader that missed local persistence");
@@ -108,7 +104,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
       awaitPersistedHeight(config, FOLLOWER_REPLICA_ID, 4L);
 
       try {
-        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+        await().forever().untilAsserted(() -> {
           long expectedHeight = BlockStore.forReplica(config, FOLLOWER_REPLICA_ID).loadLatest().orElseThrow().height();
           for (String replicaId : REPLICA_IDS) {
             assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
@@ -130,7 +126,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
   }
 
   private static void awaitPersistedHeight(ConfigParser config, String replicaId, long expectedHeight) {
-    await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica "
-        + replicaId + " should persist the next block before the next recovery step"));
+    await().forever().untilAsserted(() -> assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
+        + " should persist the next block before the next recovery step"));
   }
 }

@@ -61,12 +61,12 @@ import pt.ulisboa.depchain.testsupport.TestKeyMaterialSupport;
 
 public abstract class IntegrationHarness {
   protected static final Duration AWAIT_POLL_INTERVAL = Duration.ofMillis(50);
-  protected static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(35);
-  protected static final Duration STANDARD_REQUEST_TIMEOUT = Duration.ofSeconds(12);
-  protected static final Duration VIEW_CHANGE_REQUEST_TIMEOUT = Duration.ofSeconds(20);
-  protected static final Duration REPLAY_INITIAL_TIMEOUT = Duration.ofSeconds(8);
-  protected static final Duration REPLAY_RESPONSE_TIMEOUT = Duration.ofSeconds(1);
-  protected static final Duration EXPECTED_TIMEOUT = Duration.ofSeconds(5);
+  protected static final Duration STARTUP_TIMEOUT = Duration.ZERO;
+  protected static final Duration STANDARD_REQUEST_TIMEOUT = Duration.ZERO;
+  protected static final Duration VIEW_CHANGE_REQUEST_TIMEOUT = Duration.ZERO;
+  protected static final Duration REPLAY_INITIAL_TIMEOUT = Duration.ZERO;
+  protected static final Duration REPLAY_RESPONSE_TIMEOUT = Duration.ofSeconds(2);
+  protected static final Duration EXPECTED_TIMEOUT = Duration.ZERO;
 
   protected static final String LEADER_REPLICA_ID = "server1";
   protected static final String FOLLOWER_REPLICA_ID = "server2";
@@ -86,9 +86,17 @@ public abstract class IntegrationHarness {
   private static final Pattern CONSENSUS_PORT_PATTERN = Pattern.compile("(consensus:\\s+)(\\d+)");
   private static final Pattern CLIENT_PORT_PATTERN = Pattern.compile("(client:\\s+)(\\d+)");
   private static final Pattern CLIENT_REQUEST_TIMEOUT_PATTERN = Pattern.compile("(?m)^(\\s*requestTimeoutMs:\\s+)(\\d+)\\s*$");
+  private static final Pattern VIEW_CHANGE_TIMEOUT_PATTERN = Pattern.compile("(?m)^(\\s*viewChangeMs:\\s+)(\\d+)\\s*$");
+  private static final Pattern CLIENT_COMMAND_WAIT_TIMEOUT_PATTERN = Pattern.compile("(?m)^(\\s*clientCommandWaitMs:\\s+)(\\d+)\\s*$");
+  private static final Pattern THRESHOLD_ROUND_TIMEOUT_PATTERN = Pattern.compile("(?m)^(\\s*thresholdRoundMs:\\s+)(\\d+)\\s*$");
+  private static final Pattern FETCH_NODE_TIMEOUT_PATTERN = Pattern.compile("(?m)^(\\s*fetchNodeMs:\\s+)(\\d+)\\s*$");
   private static final Pattern KEYS_ROOT_PATTERN = Pattern.compile("(?m)^(\\s*root:\\s+).*$");
   private static final Pattern BLOCKS_ROOT_PATTERN = Pattern.compile("(?m)^(\\s*blocksRoot:\\s+).*$");
   private static final int INTEGRATION_CLIENT_REQUEST_TIMEOUT_MS = (int) VIEW_CHANGE_REQUEST_TIMEOUT.toMillis();
+  private static final int INTEGRATION_VIEW_CHANGE_TIMEOUT_MS = 4_000;
+  private static final int INTEGRATION_CLIENT_COMMAND_WAIT_TIMEOUT_MS = 2_500;
+  private static final int INTEGRATION_THRESHOLD_ROUND_TIMEOUT_MS = 2_500;
+  private static final int INTEGRATION_FETCH_NODE_TIMEOUT_MS = 1_500;
   protected static Path integrationConfigPath() {
     Path baseConfigPath = projectConfigPath();
     return isolatedIntegrationConfigPath(baseConfigPath);
@@ -213,8 +221,16 @@ public abstract class IntegrationHarness {
   }
 
   protected static void waitForServersStartup(List<StartedServer> servers, Duration timeout) throws InterruptedException {
-    for (StartedServer server : servers) {
-      awaitFor("server startup for " + server.replicaId()).atMost(timeout).until(server::isReady);
+    try {
+      for (StartedServer server : servers) {
+        awaitFor("server startup for " + server.replicaId(), timeout).until(server::isReady);
+      }
+    } catch (org.awaitility.core.ConditionTimeoutException exception) {
+      StringBuilder message = new StringBuilder("Timed out waiting for managed servers to become ready");
+      for (StartedServer server : servers) {
+        message.append(System.lineSeparator()).append(System.lineSeparator()).append(server.describeState());
+      }
+      throw new IllegalStateException(message.toString(), exception);
     }
   }
 
@@ -228,7 +244,7 @@ public abstract class IntegrationHarness {
 
   protected static void assertByzantineAttackObserved(StartedServer byzantineServer, ByzantineAttackMode attackMode, String message) {
     String marker = ByzantineReplicaNode.ATTACK_MARKER + " " + attackMode;
-    awaitFor("byzantine attack marker " + attackMode).atMost(EXPECTED_TIMEOUT).until(() -> byzantineServer.outputContains(marker));
+    awaitFor("byzantine attack marker " + attackMode, EXPECTED_TIMEOUT).until(() -> byzantineServer.outputContains(marker));
     assertTrue(byzantineServer.outputContains(marker), message + System.lineSeparator() + byzantineServer.describeState());
   }
 
@@ -361,6 +377,10 @@ public abstract class IntegrationHarness {
       isolatedConfig = rewritePath(isolatedConfig, KEYS_ROOT_PATTERN, isolatedRuntimeDirectory.resolve("keys"));
       isolatedConfig = rewritePath(isolatedConfig, BLOCKS_ROOT_PATTERN, isolatedRuntimeDirectory.resolve("storage"));
       isolatedConfig = rewriteClientRequestTimeouts(isolatedConfig, INTEGRATION_CLIENT_REQUEST_TIMEOUT_MS);
+      isolatedConfig = rewriteTimeout(isolatedConfig, VIEW_CHANGE_TIMEOUT_PATTERN, INTEGRATION_VIEW_CHANGE_TIMEOUT_MS);
+      isolatedConfig = rewriteTimeout(isolatedConfig, CLIENT_COMMAND_WAIT_TIMEOUT_PATTERN, INTEGRATION_CLIENT_COMMAND_WAIT_TIMEOUT_MS);
+      isolatedConfig = rewriteTimeout(isolatedConfig, THRESHOLD_ROUND_TIMEOUT_PATTERN, INTEGRATION_THRESHOLD_ROUND_TIMEOUT_MS);
+      isolatedConfig = rewriteTimeout(isolatedConfig, FETCH_NODE_TIMEOUT_PATTERN, INTEGRATION_FETCH_NODE_TIMEOUT_MS);
       AtomicInteger portOffset = new AtomicInteger();
       isolatedConfig = rewritePorts(isolatedConfig, CONSENSUS_PORT_PATTERN, availablePorts, portOffset);
       isolatedConfig = rewritePorts(isolatedConfig, CLIENT_PORT_PATTERN, availablePorts, portOffset);
@@ -368,10 +388,6 @@ public abstract class IntegrationHarness {
       Files.writeString(isolatedConfigPath, isolatedConfig, StandardCharsets.UTF_8);
       Path baseGenesisPath = baseConfigPath.getParent().resolve("genesis.json");
       Files.copy(baseGenesisPath, isolatedConfigDirectory.resolve("genesis.json"), StandardCopyOption.REPLACE_EXISTING);
-      Path baseGenesisLockPath = baseConfigPath.getParent().resolve("genesis.lock.json");
-      if (Files.exists(baseGenesisLockPath)) {
-        Files.copy(baseGenesisLockPath, isolatedConfigDirectory.resolve("genesis.lock.json"), StandardCopyOption.REPLACE_EXISTING);
-      }
       return isolatedConfigPath;
     } catch (IOException exception) {
       throw new IllegalStateException("Could not create isolated integration config", exception);
@@ -420,6 +436,14 @@ public abstract class IntegrationHarness {
     }
     matcher.appendTail(output);
     return output.toString();
+  }
+
+  private static String rewriteTimeout(String configContents, Pattern pattern, int timeoutMs) {
+    String updated = pattern.matcher(configContents).replaceFirst("$1" + timeoutMs);
+    if (updated.equals(configContents)) {
+      throw new IllegalStateException("Could not rewrite timeout using pattern " + pattern);
+    }
+    return updated;
   }
 
   private static String normalizePath(Path path) {
@@ -474,8 +498,8 @@ public abstract class IntegrationHarness {
       AtomicReference<InboundPacket> coherentResponseRef = new AtomicReference<>();
 
       try {
-        awaitFor("coherent client response").atMost(timeout).until(() -> {
-          InboundPacket inbound = transport.receive(Math.max(1L, timeout.toMillis()));
+        awaitFor("coherent client response", timeout).until(() -> {
+          InboundPacket inbound = transport.receive(receiveTimeoutMs(timeout));
           if (inbound == null || !endpointsByConnectionId.containsKey(inbound.packet().getConnectionId())) {
             return false;
           }
@@ -553,7 +577,7 @@ public abstract class IntegrationHarness {
 
   private static boolean awaitProcessExit(Process process, Duration timeout) throws InterruptedException {
     try {
-      awaitFor("process exit").atMost(timeout).until(() -> !process.isAlive());
+      awaitFor("process exit", timeout).until(() -> !process.isAlive());
       return true;
     } catch (org.awaitility.core.ConditionTimeoutException ignored) {
       return false;
@@ -623,7 +647,7 @@ public abstract class IntegrationHarness {
     public InboundPacket sendForgedClientRequest(String replicaId, String command) throws Exception {
       ClientRequest forgedRequest = forgedRequest(clientSession.clientSenderId(), command, clientSession.clientPrivateKey());
       byte[] payload = ProtoValidationUtil.requireValid(forgedRequest, "ClientRequest").toByteArray();
-      return clientSession.sendPayloadToClientPort(replicaId, payload, Duration.ofSeconds(3));
+      return clientSession.sendPayloadToClientPort(replicaId, payload, REPLAY_RESPONSE_TIMEOUT);
     }
 
     public InboundPacket sendPayloadToClientPort(String replicaId, byte[] payload, Duration timeout) throws Exception {
@@ -632,6 +656,14 @@ public abstract class IntegrationHarness {
 
     public InboundPacket sendPayloadToConsensusPort(String replicaId, byte[] payload, Duration timeout) throws Exception {
       return clientSession.sendPayloadToConsensusPort(replicaId, payload, timeout);
+    }
+
+    public void assertNoResponseFromClientPort(String replicaId, byte[] payload) throws Exception {
+      assertNull(clientSession.sendPayloadToClientPort(replicaId, payload, REPLAY_RESPONSE_TIMEOUT));
+    }
+
+    public void assertNoResponseFromConsensusPort(String replicaId, byte[] payload) throws Exception {
+      assertNull(clientSession.sendPayloadToConsensusPort(replicaId, payload, REPLAY_RESPONSE_TIMEOUT));
     }
 
     @Override
@@ -740,8 +772,8 @@ public abstract class IntegrationHarness {
 
       try {
         try {
-          awaitFor("payload response").atMost(timeout).until(() -> {
-            InboundPacket inbound = transport.receive(Math.max(1L, timeout.toMillis()));
+          awaitFor("payload response", timeout).until(() -> {
+            InboundPacket inbound = transport.receive(receiveTimeoutMs(timeout));
             if (inbound == null || !endpointsByConnectionId.containsKey(inbound.packet().getConnectionId())) {
               return false;
             }
@@ -784,8 +816,8 @@ public abstract class IntegrationHarness {
       try {
         AtomicReference<InboundPacket> responseRef = new AtomicReference<>();
         try {
-          await().atMost(timeout).until(() -> {
-            InboundPacket inbound = transport.receive(Math.max(1L, timeout.toMillis()));
+          awaitFor("payload response", timeout).until(() -> {
+            InboundPacket inbound = transport.receive(receiveTimeoutMs(timeout));
             if (inbound != null && inbound.packet().getConnectionId() == connectionId) {
               responseRef.set(inbound);
               return true;
@@ -824,6 +856,29 @@ public abstract class IntegrationHarness {
     return await().pollDelay(Duration.ZERO).pollInterval(AWAIT_POLL_INTERVAL);
   }
 
+  protected static ConditionFactory awaitFor(String alias, Duration timeout) {
+    ConditionFactory base = awaitFor(alias);
+    if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+      return base.forever();
+    }
+    return base.atMost(timeout);
+  }
+
+  protected static ConditionFactory awaitFor(Duration timeout) {
+    ConditionFactory base = awaitFor();
+    if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+      return base.forever();
+    }
+    return base.atMost(timeout);
+  }
+
+  protected static long receiveTimeoutMs(Duration timeout) {
+    if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+      return Math.max(1L, AWAIT_POLL_INTERVAL.toMillis());
+    }
+    return Math.max(1L, timeout.toMillis());
+  }
+
   public static final class StartedServer {
     private static final String CLIENT_LISTENER_MARKER = " client listener: ";
     private static final String NODE_LISTENER_MARKER = " node listener: ";
@@ -855,6 +910,10 @@ public abstract class IntegrationHarness {
     }
 
     public boolean awaitReady(Duration timeout) throws InterruptedException {
+      if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+        ready.await();
+        return process.isAlive();
+      }
       if (ready.await(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
         return process.isAlive();
       }

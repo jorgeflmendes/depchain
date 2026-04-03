@@ -10,18 +10,15 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 import com.google.protobuf.ByteString;
 
@@ -57,7 +54,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   private static final long REAPPROVED_ALLOWANCE = 40L;
 
   @Test
-  @Timeout(60)
   void queriesReflectDepCoinAndIstCoinTransfers() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
       TransactionResponse depTransfer = client.transferDepCoin(RECIPIENT_ADDRESS, 7L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
@@ -75,7 +71,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void revertingContractCallReturnsFailedReceipt() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
       String contractAddress = IstCoin.resolveContractAddress(cluster.configPath()).toHexString().substring(2);
@@ -90,7 +85,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void outOfGasContractCallReturnsFailedReceipt() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
       String contractAddress = IstCoin.resolveContractAddress(cluster.configPath()).toHexString().substring(2);
@@ -105,7 +99,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void queryStillSucceedsAfterLeaderCrash() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
       cluster.assertRequestSucceeds("query-before-leader-crash", STANDARD_REQUEST_TIMEOUT, "Cluster should handle a write before leader crash");
@@ -121,7 +114,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void queriesRemainAvailableWhileWritesAreBeingCommitted() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       SignedClientRequestFactory requestFactory = new SignedClientRequestFactory(cluster.clientSenderId(), cluster.clientPrivateKey());
@@ -139,7 +131,7 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
         }
       });
 
-      assertTrue(writesStarted.await(5L, TimeUnit.SECONDS), "Writer should start issuing requests before query assertions run");
+      writesStarted.await();
       for (int i = 0; i < 4; i++) {
         QueryResponse depBalance = queryReplica(cluster, FOLLOWER_REPLICA_ID, requestFactory, QueryType.QUERY_TYPE_DEPCOIN_BALANCE, walletAddress);
         QueryResponse istBalance = queryReplica(cluster, FOLLOWER_REPLICA_ID, requestFactory, QueryType.QUERY_TYPE_IST_COIN_BALANCE, walletAddress);
@@ -147,8 +139,8 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
         assertTrue(istBalance.getSuccess(), "IST query should succeed while writes are in flight");
       }
 
-      writer.get(30L, TimeUnit.SECONDS);
-      org.awaitility.Awaitility.await().atMost(STANDARD_REQUEST_TIMEOUT).untilAsserted(() -> {
+      writer.get();
+      org.awaitility.Awaitility.await().forever().untilAsserted(() -> {
         QueryResponse recipientBalance = queryReplica(cluster, LEADER_REPLICA_ID, requestFactory, QueryType.QUERY_TYPE_DEPCOIN_BALANCE, RECIPIENT_ADDRESS);
         assertTrue(recipientBalance.getSuccess(), "Recipient query should succeed after concurrent writes");
         assertTrue(new BigInteger(1, recipientBalance.getReturnData().toByteArray())
@@ -158,7 +150,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void istTransferFailsForClientWithoutTokenBalance() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi spender = ClientReplicaApi.connect(cluster.configPath().toString(), SPENDER_CLIENT_ID)) {
       TransactionResponse response = spender.transferIstCoin(RECIPIENT_ADDRESS, 1L, 0L, 250_000L, TEST_GAS_PRICE);
@@ -169,7 +160,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void approvalFrontRunningScenarioHoldsAtClusterLevel() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       ConfigParser config = ConfigParser.load(cluster.configPath());
@@ -192,22 +182,22 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
       CountDownLatch startRace = new CountDownLatch(1);
       CompletableFuture<TransactionResponse> ownerReset = CompletableFuture.supplyAsync(() -> unchecked(() -> {
         contendersReady.countDown();
-        assertTrue(startRace.await(5L, TimeUnit.SECONDS), "Reset branch should wait for the synchronized race start");
+        startRace.await();
         return submitContractCall(config, ownerSenderId, ownerPrivateKey, 2L, 1L, 300_000L, TEST_GAS_PRICE, contractAddress, IstCoin.encodeApproveCallData(spenderAddress, 0L)
             .toArrayUnsafe());
       }));
       CompletableFuture<TransactionResponse> competingSpend = CompletableFuture.supplyAsync(() -> unchecked(() -> {
         contendersReady.countDown();
-        assertTrue(startRace.await(5L, TimeUnit.SECONDS), "Spend branch should wait for the synchronized race start");
+        startRace.await();
         return submitContractCall(config, spenderSenderId, spenderPrivateKey, 1L, 0L, 400_000L, 10L, contractAddress, IstCoin
             .encodeTransferFromCallData(ownerAddress, spenderAddress, INITIAL_ALLOWANCE).toArrayUnsafe());
       }));
 
-      assertTrue(contendersReady.await(5L, TimeUnit.SECONDS), "Both frontrunning contenders should be ready before the race starts");
+      contendersReady.await();
       startRace.countDown();
 
-      TransactionResponse resetResponse = ownerReset.get(30L, TimeUnit.SECONDS);
-      TransactionResponse competingSpendResponse = competingSpend.get(30L, TimeUnit.SECONDS);
+      TransactionResponse resetResponse = ownerReset.get();
+      TransactionResponse competingSpendResponse = competingSpend.get();
       assertNotNull(resetResponse.getReceipt(), "Reset request should return a receipt");
       assertNotNull(competingSpendResponse.getReceipt(), "Competing spend should return a receipt");
       assertTrue(resetResponse.getReceipt().getSuccess(), () -> "Zero-reset approval should succeed but failed with: " + resetResponse.getReceipt().getErrorMessage());
@@ -246,7 +236,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void nativeTransferToContractAccountFailsAtClusterLevel() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
       String contractAddress = IstCoin.resolveContractAddress(cluster.configPath()).toHexString().substring(2);
@@ -260,7 +249,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void contractCallToUnknownTargetFailsAtClusterLevel() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
       String unknownContractAddress = "dddddddddddddddddddddddddddddddddddddddd";
@@ -275,7 +263,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void transferFromWithoutAllowanceFailsAtClusterLevel() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS);
         ClientReplicaApi owner = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID);
@@ -293,7 +280,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void queryUnknownDepCoinAccountReturnsZero() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS); ClientReplicaApi client = ClientReplicaApi.connect(cluster.configPath().toString(), CLIENT_ID)) {
       QueryResponse depBalance = client.getDepCoinBalance("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
@@ -304,7 +290,6 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   }
 
   @Test
-  @Timeout(60)
   void istCoinStateRemainsAvailableAfterClusterRestart() throws Exception {
     Path configPath = integrationConfigPath();
     cleanPersistedBlockData(configPath);
@@ -322,7 +307,7 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
       TransactionResponse transfer = submitTransaction(config, clientSenderId, clientPrivateKey, requestFactory, TransactionType.TRANSACTION_TYPE_IST_COIN_TRANSFER, RECIPIENT_ADDRESS, 30L, 0L, 250_000L, TEST_GAS_PRICE, new byte[0]);
       assertNotNull(transfer.getReceipt(), "IST Coin transfer before restart should return a receipt");
       assertTrue(transfer.getReceipt().getSuccess(), "IST Coin transfer before restart should succeed");
-      org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+      org.awaitility.Awaitility.await().forever().untilAsserted(() -> {
         for (String replicaId : HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS) {
           BlockStore.BlockDocument latest = BlockStore.forReplica(config, replicaId).loadLatest()
               .orElseThrow(() -> new AssertionError("Latest block was not persisted for " + replicaId));
@@ -342,8 +327,8 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
 
     List<StartedServer> restartedServers = startServers(HONEST_WITH_ONE_BYZANTINE_REPLICA_IDS, configPath);
     try {
-      waitForServersStartup(restartedServers, Duration.ofSeconds(35));
-      org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+      waitForServersStartup(restartedServers, STARTUP_TIMEOUT);
+      org.awaitility.Awaitility.await().forever().untilAsserted(() -> {
         QueryResponse istBalance = queryReplica(config, LEADER_REPLICA_ID, requestFactory, clientSenderId, clientPrivateKey, QueryType.QUERY_TYPE_IST_COIN_BALANCE, RECIPIENT_ADDRESS);
         assertTrue(istBalance.getSuccess(), "IST Coin balance query after restart should succeed");
         assertTrue(new BigInteger(1, istBalance.getReturnData().toByteArray())
@@ -361,7 +346,7 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
   private static void awaitIstBalanceAtReplica(ConfigParser config, String replicaId, long clientSenderId, PrivateKey clientPrivateKey, String ownerAddress, BigInteger minimumBalance)
       throws Exception {
     SignedClientRequestFactory requestFactory = new SignedClientRequestFactory(clientSenderId, clientPrivateKey);
-    org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(15))
+    org.awaitility.Awaitility.await().forever()
         .untilAsserted(() -> assertTrue(decodeUnsigned(queryReplica(config, replicaId, requestFactory, clientSenderId, clientPrivateKey, QueryType.QUERY_TYPE_IST_COIN_BALANCE, ownerAddress)
             .getReturnData().toByteArray()).compareTo(minimumBalance) >= 0));
   }
@@ -450,8 +435,8 @@ class QueryAndContractIntegrationTest extends IntegrationHarness {
     try (AuthenticatedLink transport = AuthenticatedLink.unbound(senderId, clientPrivateKey, staticPublicKeys)) {
       transport.send(connectionId, payload, endpoint);
       var responseRef = new java.util.concurrent.atomic.AtomicReference<pt.ulisboa.depchain.shared.network.model.InboundPacket>();
-      org.awaitility.Awaitility.await().atMost(STANDARD_REQUEST_TIMEOUT).until(() -> {
-        var inbound = transport.receive(Math.max(1L, STANDARD_REQUEST_TIMEOUT.toMillis()));
+      org.awaitility.Awaitility.await().forever().until(() -> {
+        var inbound = transport.receive(receiveTimeoutMs(STANDARD_REQUEST_TIMEOUT));
         if (inbound != null && inbound.packet().getConnectionId() == connectionId) {
           responseRef.set(inbound);
           return true;

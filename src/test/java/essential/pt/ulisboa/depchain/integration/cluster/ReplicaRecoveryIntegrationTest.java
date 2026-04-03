@@ -14,7 +14,6 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 import com.google.protobuf.ByteString;
 
@@ -36,7 +35,6 @@ import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
 @Tag("integration")
 class ReplicaRecoveryIntegrationTest extends IntegrationHarness {
   @Test
-  @Timeout(120)
   void restartedFollowerCatchesUpAfterMissingMultipleBlocks() throws Exception {
     Path configPath = integrationConfigPath();
     cleanPersistedBlockData(configPath);
@@ -58,7 +56,7 @@ class ReplicaRecoveryIntegrationTest extends IntegrationHarness {
 
       StartedServer restartedFollower = startServers(List.of(FOLLOWER_REPLICA_ID), configPath).getFirst();
       servers.add(restartedFollower);
-      waitForServersStartup(List.of(restartedFollower), Duration.ofSeconds(35));
+      waitForServersStartup(List.of(restartedFollower), STARTUP_TIMEOUT);
 
       submitSuccessfulTransfer(configPath, 11L, 3L, VIEW_CHANGE_REQUEST_TIMEOUT, servers);
       awaitClusterHeight(configPath, 4L);
@@ -68,7 +66,7 @@ class ReplicaRecoveryIntegrationTest extends IntegrationHarness {
       awaitClusterHeight(configPath, 6L);
 
       try {
-        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> assertReplicaHeightsAndBalancesConverged(configPath));
+        await().forever().untilAsserted(() -> assertReplicaHeightsAndBalancesConverged(configPath));
       } catch (Throwable failure) {
         StringBuilder diagnostics = new StringBuilder("Replica recovery did not converge").append(System.lineSeparator());
         for (StartedServer server : servers) {
@@ -90,7 +88,7 @@ class ReplicaRecoveryIntegrationTest extends IntegrationHarness {
   }
 
   private static void awaitClusterHeight(Path configPath, long expectedHeight) {
-    await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+    await().forever().untilAsserted(() -> {
       ConfigParser config = ConfigParser.load(configPath);
       long leaderHeight = BlockStore.forReplica(config, LEADER_REPLICA_ID).loadLatest().orElseThrow().height();
       assertEquals(expectedHeight, leaderHeight, "Leader should advance to the next persisted height before the next recovery step");

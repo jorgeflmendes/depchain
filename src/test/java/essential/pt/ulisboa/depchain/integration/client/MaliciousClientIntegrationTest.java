@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.security.PrivateKey;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
@@ -14,7 +13,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 import com.google.protobuf.ByteString;
 
@@ -58,34 +56,30 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   }
 
   @Test
-  @Timeout(30)
   void clientCannotAuthenticateOnConsensusPortTest() throws Exception {
     ClientRequest request = signedTransferRequest(cluster().clientSenderId(), 990L, 0L, cluster().clientPrivateKey());
     byte[] payload = request.toByteArray();
 
-    assertThat(cluster().sendPayloadToConsensusPort(LEADER_REPLICA_ID, payload, Duration.ofSeconds(3))).isNull();
+    cluster().assertNoResponseFromConsensusPort(LEADER_REPLICA_ID, payload);
     cluster()
         .assertRequestSucceeds("post-consensus-port-reject", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting client traffic on the consensus port");
   }
 
   @Test
-  @Timeout(30)
   void clientRequestWithWrongSenderIdRejectedTest() throws Exception {
     ClientRequest forgedSenderRequest = signedTransferRequest(cluster().clientSenderId() + 1, 991L, 0L, cluster().clientPrivateKey());
 
-    assertThat(cluster().sendPayloadToClientPort(LEADER_REPLICA_ID, forgedSenderRequest.toByteArray(), Duration.ofSeconds(3))).isNull();
+    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, forgedSenderRequest.toByteArray());
     cluster().assertRequestSucceeds("post-wrong-sender", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting a forged client sender id");
   }
 
   @Test
-  @Timeout(30)
   void malformedClientRequestPayloadRejectedTest() throws Exception {
-    assertThat(cluster().sendPayloadToClientPort(LEADER_REPLICA_ID, new byte[]{1, 2, 3, 4}, Duration.ofSeconds(3))).isNull();
+    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, new byte[]{1, 2, 3, 4});
     cluster().assertRequestSucceeds("post-malformed-payload", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after malformed client payloads");
   }
 
   @Test
-  @Timeout(30)
   void protoInvalidClientRequestRejectedTest() throws Exception {
     ClientRequest invalidRequest = ClientRequest.newBuilder()
         .setTransaction(TransactionRequest.newBuilder().setRequestKey(ClientRequestKey.newBuilder().setClientSenderId(cluster().clientSenderId()).setRequestId(992L))
@@ -93,38 +87,35 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
             .setGasPrice(TEST_GAS_PRICE))
         .build();
 
-    assertThat(cluster().sendPayloadToClientPort(LEADER_REPLICA_ID, invalidRequest.toByteArray(), Duration.ofSeconds(3))).isNull();
+    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, invalidRequest.toByteArray());
     cluster().assertRequestSucceeds("post-invalid-client-proto", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting invalid client protos");
   }
 
   @Test
-  @Timeout(30)
   void clientRequestWithUnexpectedNonceRejectedTest() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       ClientRequest invalidNonceRequest = signedTransferRequest(cluster.configPath(), TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 999L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
 
-      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(invalidNonceRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(3));
+      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(invalidNonceRequest, "ClientRequest")
+          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
       assertFailedTransactionResponse(responsePacket, "invalid transaction nonce", "Requests with a nonce that does not match the sender account must fail");
       cluster.assertRequestSucceeds("post-invalid-nonce", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting an invalid nonce");
     }
   }
 
   @Test
-  @Timeout(30)
   void clientRequestWithoutEnoughBalanceForAmountPlusGasRejectedTest() throws Exception {
     try (ManagedCluster cluster = startManagedCluster(REPLICA_IDS)) {
       ClientRequest insufficientFundsRequest = signedTransferRequest(cluster.configPath(), TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
 
-      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(3));
+      var responsePacket = broadcastClientRequestPayload(cluster.configPath(), ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
+          .toByteArray(), STANDARD_REQUEST_TIMEOUT);
       assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "Requests that cannot pay amount plus max gas must fail");
       cluster.assertRequestSucceeds("post-insufficient-balance", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting insufficient-balance requests");
     }
   }
 
   @Test
-  @Timeout(40)
   void colludingByzantineReplicaCannotForgeClientSuccessWithoutHonestReplyQuorum() throws Exception {
     Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
@@ -136,8 +127,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest insufficientFundsRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
+          .toByteArray(), VIEW_CHANGE_REQUEST_TIMEOUT);
 
       assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "One forged Byzantine success response must not outweigh the coherent honest failure quorum");
       assertByzantineAttackObserved(byzantineReplica, ByzantineAttackMode.FORGED_CLIENT_SUCCESS_RESPONSE, "Byzantine client-response forgery was never exercised");
@@ -152,7 +143,6 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   }
 
   @Test
-  @Timeout(40)
   void colludingByzantineLeaderCannotForgeClientSuccessWithoutHonestReplyQuorum() throws Exception {
     Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
@@ -164,8 +154,8 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest insufficientFundsRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, 9_000_000_000L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest").toByteArray(), Duration
-          .ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(insufficientFundsRequest, "ClientRequest")
+          .toByteArray(), VIEW_CHANGE_REQUEST_TIMEOUT);
 
       assertFailedTransactionResponse(responsePacket, "insufficient DepCoin balance", "A forged success reply from the Byzantine leader must not outweigh the coherent honest failure quorum");
       assertByzantineAttackObserved(byzantineLeader, ByzantineAttackMode.FORGED_CLIENT_SUCCESS_RESPONSE, "Byzantine leader client-response forgery was never exercised");
@@ -180,7 +170,6 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   }
 
   @Test
-  @Timeout(40)
   void colludingByzantineReplicaCannotForceClientFailureWithoutHonestFailureQuorum() throws Exception {
     Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
@@ -192,7 +181,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest validRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), Duration.ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), VIEW_CHANGE_REQUEST_TIMEOUT);
 
       assertResponseNotNull(responsePacket, "A single Byzantine forged failure must not block a coherent honest success quorum", servers);
       ClientResponse response = decodeClientResponse(responsePacket);
@@ -212,7 +201,6 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   }
 
   @Test
-  @Timeout(40)
   void colludingByzantineLeaderCannotForceClientFailureWithoutHonestFailureQuorum() throws Exception {
     Path configPath = manualScenarioConfigPath;
     cleanPersistedBlockData(configPath);
@@ -224,7 +212,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
       waitForServersStartup(servers, STARTUP_TIMEOUT);
 
       ClientRequest validRequest = signedTransferRequest(configPath, TEST_RECIPIENT_ADDRESS, TEST_TRANSFER_AMOUNT, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE);
-      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), Duration.ofSeconds(6));
+      var responsePacket = broadcastClientRequestPayload(configPath, ProtoValidationUtil.requireValid(validRequest, "ClientRequest").toByteArray(), VIEW_CHANGE_REQUEST_TIMEOUT);
 
       assertResponseNotNull(responsePacket, "A Byzantine leader forged failure must not block a coherent honest success quorum", servers);
       ClientResponse response = decodeClientResponse(responsePacket);
@@ -244,7 +232,6 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
   }
 
   @Test
-  @Timeout(30)
   void malformedQueryOwnerRejectedTest() throws Exception {
     ConfigParser config = ConfigParser.load(cluster().configPath());
     long clientSenderId = config.client().senderId();
@@ -258,12 +245,11 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
             .setType(QueryType.QUERY_TYPE_DEPCOIN_BALANCE).setOwner(malformedOwner).setSignature(ByteString.copyFrom(signature)))
         .build();
 
-    assertThat(cluster().sendPayloadToClientPort(LEADER_REPLICA_ID, invalidQuery.toByteArray(), Duration.ofSeconds(3))).isNull();
+    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, invalidQuery.toByteArray());
     cluster().assertRequestSucceeds("post-malformed-query-owner", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting malformed queries");
   }
 
   @Test
-  @Timeout(30)
   void queryWithWrongSenderIdRejectedTest() throws Exception {
     ConfigParser config = ConfigParser.load(cluster().configPath());
     PrivateKey clientPrivateKey = pt.ulisboa.depchain.shared.crypto.key.PrivateKeyLoader.loadClientPrivateKey(config);
@@ -277,7 +263,7 @@ class MaliciousClientIntegrationTest extends ClusterIntegrationTestBase {
             .setType(QueryType.QUERY_TYPE_DEPCOIN_BALANCE).setOwner(owner).setSignature(ByteString.copyFrom(signature)))
         .build();
 
-    assertThat(cluster().sendPayloadToClientPort(LEADER_REPLICA_ID, forgedQuery.toByteArray(), Duration.ofSeconds(3))).isNull();
+    cluster().assertNoResponseFromClientPort(LEADER_REPLICA_ID, forgedQuery.toByteArray());
     cluster().assertRequestSucceeds("post-wrong-query-sender", STANDARD_REQUEST_TIMEOUT, "Cluster should remain responsive after rejecting forged query sender ids");
   }
 

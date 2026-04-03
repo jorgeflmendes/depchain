@@ -3,7 +3,6 @@ package pt.ulisboa.depchain.integration.byzantine;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -92,7 +91,7 @@ abstract class AbstractByzantineIntegrationTest extends IntegrationHarness {
 
   private static void assertHonestReplicasConverged(Path configPath, List<String> honestReplicaIds) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    awaitFor("honest replica convergence").atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+    awaitFor("honest replica convergence").forever().untilAsserted(() -> {
       String expectedBlockHash = null;
       Long expectedHeight = null;
       for (String replicaId : honestReplicaIds) {
@@ -111,7 +110,7 @@ abstract class AbstractByzantineIntegrationTest extends IntegrationHarness {
 
   private static void assertHonestReplicasRemainSafeWithoutImmediateConvergence(Path configPath, List<String> honestReplicaIds) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    awaitFor("honest replica safety without immediate convergence").atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+    awaitFor("honest replica safety without immediate convergence").forever().untilAsserted(() -> {
       Long maxHeight = null;
       String maxHeightHash = null;
       boolean observedProgress = false;

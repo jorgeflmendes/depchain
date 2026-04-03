@@ -1,8 +1,11 @@
 package pt.ulisboa.depchain.server.node;
 
 import java.math.BigInteger;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -30,13 +33,25 @@ final class GenesisMaterializer {
     ValidationUtils.requireNonNull(clientPublicKeys, "clientPublicKeys");
 
     Path lockPath = GenesisParser.genesisLockPathForConfig(configPath);
-    if (Files.exists(lockPath)) {
-      return GenesisParser.load(lockPath);
+    Path lockGuardPath = lockPath.resolveSibling(lockPath.getFileName() + ".lck");
+    Path lockDirectory = lockPath.toAbsolutePath().normalize().getParent();
+    if (lockDirectory != null) {
+      Files.createDirectories(lockDirectory);
     }
 
-    GenesisParser lockedGenesis = materialize(GenesisParser.load(GenesisParser.genesisPathForConfig(configPath)), config, clientPublicKeys);
-    lockedGenesis.write(lockPath);
-    return lockedGenesis;
+    try (FileChannel lockChannel = FileChannel.open(lockGuardPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE); FileLock ignored = lockChannel.lock()) {
+      if (Files.exists(lockPath) && Files.size(lockPath) > 0L) {
+        try {
+          return GenesisParser.load(lockPath);
+        } catch (java.io.IOException ignoredCorruptLock) {
+          Files.deleteIfExists(lockPath);
+        }
+      }
+
+      GenesisParser lockedGenesis = materialize(GenesisParser.load(GenesisParser.genesisPathForConfig(configPath)), config, clientPublicKeys);
+      lockedGenesis.write(lockPath);
+      return lockedGenesis;
+    }
   }
 
   static GenesisParser materialize(GenesisParser template, ConfigParser config, Map<Long, PublicKey> clientPublicKeys) {

@@ -78,8 +78,12 @@ class PerfectLinkTest {
       InboundPacket firstDelivered = receiver.receive(1_000L);
       InboundPacket secondDelivered = receiver.receive(1_000L);
 
+      assertThat(firstDelivered).isNotNull();
       assertThat(firstDelivered.packet().getSequenceNumber()).isZero();
+      assertThat(firstDelivered.payload().toByteArray()).isEqualTo(firstPayload);
+      assertThat(secondDelivered).isNotNull();
       assertThat(secondDelivered.packet().getSequenceNumber()).isEqualTo(1);
+      assertThat(secondDelivered.payload().toByteArray()).isEqualTo(secondPayload);
       assertThat(receiver.receive(200L)).isNull();
     }
   }

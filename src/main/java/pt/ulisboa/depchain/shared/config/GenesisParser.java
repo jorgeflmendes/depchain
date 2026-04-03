@@ -6,8 +6,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigInteger;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,15 +89,24 @@ public record GenesisParser(long height, @JsonProperty("block_hash") String bloc
 
   public void write(Path path) throws IOException {
     ValidationUtils.requireNonNull(path, "path");
-    Path parent = path.toAbsolutePath().normalize().getParent();
+    Path normalizedPath = path.toAbsolutePath().normalize();
+    Path parent = normalizedPath.getParent();
     if (parent != null) {
       Files.createDirectories(parent);
     }
 
-    try (OutputStream output = Files.newOutputStream(path)) {
+    Path tempPath = Files.createTempFile(parent, normalizedPath.getFileName().toString(), ".tmp");
+    try (OutputStream output = Files.newOutputStream(tempPath)) {
       JSON.writeValue(output, this);
+      output.flush();
+      try {
+        Files.move(tempPath, normalizedPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+      } catch (AtomicMoveNotSupportedException exception) {
+        Files.move(tempPath, normalizedPath, StandardCopyOption.REPLACE_EXISTING);
+      }
     } catch (IOException exception) {
-      throw new IOException("Failed to write genesis to " + path, exception);
+      Files.deleteIfExists(tempPath);
+      throw new IOException("Failed to write genesis to " + normalizedPath, exception);
     }
   }
 

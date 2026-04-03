@@ -1,11 +1,13 @@
 package pt.ulisboa.depchain.shared.network.links.authenticated;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -14,7 +16,6 @@ import java.security.KeyPair;
 import java.security.PublicKey;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 
 import javax.crypto.spec.SecretKeySpec;
 
@@ -29,7 +30,7 @@ class AuthenticatedLinkTest {
   private static final long RECEIVER_ID = 2L;
 
   @Test
-  void receiveTimeoutTransitionsFromAsyncHandshakeToDirectReceive() throws Exception {
+  void receiveTransitionsFromAsyncHandshakeToDirectReceiveAfterHandshakeCompletes() throws Exception {
     InetSocketAddress receiverEndpoint = new InetSocketAddress(InetAddress.getLoopbackAddress(), freeUdpPort());
     byte[] requestPayload = "authenticated-test-request".getBytes(StandardCharsets.UTF_8);
     byte[] responsePayload = "authenticated-test-response".getBytes(StandardCharsets.UTF_8);
@@ -51,15 +52,20 @@ class AuthenticatedLinkTest {
         }
       });
 
+      await().forever().until(() -> pendingAsyncHandshakes(sender) > 0);
+
       InboundPacket request = receiver.receive(5_000L);
       assertNotNull(request);
       assertEquals(CONNECTION_ID, request.packet().getConnectionId());
       assertEquals(SENDER_ID, request.authenticatedSenderId());
       assertArrayEquals(requestPayload, request.payload().toByteArray());
 
+      await().forever().until(() -> pendingAsyncHandshakes(sender) == 0);
+      await().forever().until(() -> directReceiveActive(sender));
+
       receiver.send(CONNECTION_ID, responsePayload, request.sender());
 
-      InboundPacket response = responseFuture.get(5L, TimeUnit.SECONDS);
+      InboundPacket response = responseFuture.get();
       assertNotNull(response);
       assertEquals(CONNECTION_ID, response.packet().getConnectionId());
       assertEquals(RECEIVER_ID, response.authenticatedSenderId());
@@ -82,5 +88,29 @@ class AuthenticatedLinkTest {
     try (DatagramSocket socket = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
       return socket.getLocalPort();
     }
+  }
+
+  private static int pendingAsyncHandshakes(AuthenticatedLink link) throws Exception {
+    Object context = readField(link, "context");
+    synchronized (receiveModeLock(context)) {
+      return (int) readField(context, "pendingAsyncHandshakes");
+    }
+  }
+
+  private static boolean directReceiveActive(AuthenticatedLink link) throws Exception {
+    Object context = readField(link, "context");
+    synchronized (receiveModeLock(context)) {
+      return (boolean) readField(context, "directReceiveActive");
+    }
+  }
+
+  private static Object receiveModeLock(Object context) throws Exception {
+    return readField(context, "receiveModeLock");
+  }
+
+  private static Object readField(Object target, String name) throws Exception {
+    Field field = target.getClass().getDeclaredField(name);
+    field.setAccessible(true);
+    return field.get(target);
   }
 }

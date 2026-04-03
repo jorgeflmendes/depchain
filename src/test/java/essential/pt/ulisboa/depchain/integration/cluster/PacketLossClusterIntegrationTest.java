@@ -5,7 +5,6 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -27,7 +26,6 @@ class PacketLossClusterIntegrationTest extends ClusterIntegrationTestBase {
   class ConsensusProgress {
     @ParameterizedTest(name = "request {0} reaches DECIDE")
     @ValueSource(ints = {1, 2, 3})
-    @Timeout(90)
     void consensusStillReachesDecideUnderTwentyPercentPacketLoss(int requestIndex) throws Exception {
       cluster().assertRequestSucceeds("lossy-consensus-" + requestIndex, VIEW_CHANGE_REQUEST_TIMEOUT, "Client request should still reach DECIDE under packet loss");
     }

@@ -58,8 +58,9 @@ class GenesisParserTest {
   }
 
   @Test
-  void loadDefaultParsesGenesisFile() throws Exception {
+  void loadDefaultParsesGenesisFileOrMaterializedLock() throws Exception {
     GenesisParser genesis = GenesisParser.loadDefault();
+    Path defaultLockPath = Path.of("config", "genesis.lock.json");
 
     assertEquals(0L, genesis.height());
     assertEquals(5, genesis.transactions().size());
@@ -68,8 +69,16 @@ class GenesisParserTest {
     assertEquals("TRANSFER", genesis.transactions().get(2).type());
     assertEquals("TRANSFER", genesis.transactions().get(3).type());
     assertEquals("TRANSFER", genesis.transactions().get(4).type());
-    assertEquals(1, genesis.state().size());
     assertEquals("3000000000", genesis.state().get("13579bdf2468ace013579bdf2468ace013579bdf").balance());
+
+    if (Files.exists(defaultLockPath)) {
+      assertEquals(4, genesis.state().size());
+      assertEquals("0", genesis.state().get("f2d847169048558e56460cda7cb4277a43214a89").balance());
+      assertEquals("0", genesis.state().get("6fc3576405473fcf464839212c701987c5cb6446").balance());
+      assertEquals("0", genesis.state().get("c00759b8df7959302c80cac69acb64c834f87eb7").balance());
+    } else {
+      assertEquals(1, genesis.state().size());
+    }
   }
 
   @Test
