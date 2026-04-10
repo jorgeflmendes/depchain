@@ -47,10 +47,6 @@ Thumbs.db
 /runtime/
 /config/keys/
 
-# Local course/reference folders
-/REFS/
-/lab2/
-
 # LaTeX auxiliary files
 *.aux
 *.bbl

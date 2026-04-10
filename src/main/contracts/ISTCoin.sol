@@ -5,7 +5,7 @@ contract ISTCoin {
   string public constant name = "IST Coin";
   string public constant symbol = "IST";
   uint8 public constant decimals = 2;
-  uint256 public constant totalSupply = 100_000_000 * 10**2; // TODO: check this
+  uint256 public constant totalSupply = 100_000_000 * 10**2;
 
   // balances[address] = token balance of that address
   mapping(address => uint256) private balances;

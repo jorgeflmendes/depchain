@@ -5,7 +5,9 @@ on:
     branches:
       - main
       - master
+      - entrega
   pull_request:
+  workflow_dispatch:
 
 jobs:
   verify:

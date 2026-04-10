@@ -4,10 +4,52 @@
   <artifactId>depchain</artifactId>
   <version>0.1.0</version>
   <name>depchain</name>
+  <description>Permissioned Byzantine fault-tolerant blockchain prototype for Highly Dependable Systems.</description>
+  <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <organization>
+    <name>Instituto Superior Tecnico, Universidade de Lisboa</name>
+    <url>https://tecnico.ulisboa.pt/</url>
+  </organization>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>jorgeflmendes</id>
+      <name>Jorge Mendes</name>
+      <url>https://github.com/jorgeflmendes</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/jorgeflmendes/Highly-Dependable-Systems-26.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/jorgeflmendes/Highly-Dependable-Systems-26.git</developerConnection>
+    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26</url>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26/issues</url>
+  </issueManagement>
+
+  <ciManagement>
+    <system>GitHub Actions</system>
+    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26/actions</url>
+  </ciManagement>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <cluster.config.path>config/config.yaml</cluster.config.path>
     <jackson.version>2.21.2</jackson.version>
     <junit.version>6.0.3</junit.version>
     <awaitility.version>4.3.0</awaitility.version>
@@ -304,7 +346,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
+              <mainClass>pt.ulisboa.depchain.tool.keymaterial.KeyMaterialApplication</mainClass>
               <arguments>
                 <argument>${cluster.config.path}</argument>
               </arguments>

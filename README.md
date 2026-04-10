@@ -1,99 +1,65 @@
 # DepChain
 
-DepChain is a permissioned blockchain project for the Highly Dependable Systems course.
-## Prerequisites
+[![Tests](https://img.shields.io/github/actions/workflow/status/jorgeflmendes/Highly-Dependable-Systems-26/tests.yml?branch=main&label=tests)](https://github.com/jorgeflmendes/Highly-Dependable-Systems-26/actions/workflows/tests.yml?query=branch%3Amain)
+[![Java 21](https://img.shields.io/badge/Java-21-blue)](https://adoptium.net/)
+[![Maven](https://img.shields.io/badge/Build-Maven-C71A36)](https://maven.apache.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+DepChain is a permissioned blockchain prototype built for the Highly Dependable Systems course. It implements a Byzantine fault-tolerant replication pipeline with strong focus on safety, liveness under adversarial behavior, and reproducible local experimentation.
+
+## Highlights
+
+- Permissioned replica cluster configured through a single YAML file.
+- HotStuff-inspired consensus flow with threshold-cryptography integration.
+- Deterministic client request handling with replay protection.
+- EVM-based execution path and bundled smart-contract integration.
+- Integration test suite covering honest and Byzantine scenarios.
+
+## Tech Stack
+
+- Java 21
+- Maven 3.6.3+
+- Protocol Buffers
+- Hyperledger Besu EVM libraries
+- JUnit 5 + Failsafe/Surefire
+
+## Repository Layout
+
+- `src/main/java`: replica, client, consensus, networking, and execution logic.
+- `src/main/proto`: protobuf definitions.
+- `src/main/contracts`: Solidity contracts used by execution tests and bootstrap.
+- `src/test/java`: non-integration and integration test suites.
+- `config`: local runtime configuration, genesis templates, and generated addresses.
+- `scripts`: convenience scripts for local cluster startup.
+
+## Quick Start
+
+### 1. Prerequisites
 
 - Java 21 or newer
 - Maven 3.6.3 or newer
-## Configuration
 
-Runtime configuration lives in `config/config.yaml`.
-
-The YAML file defines:
-
-- `system.n` and `system.f`,
-- replicas under `replicas.<id>`,
-- replica consensus and client ports under `replicas.<id>.ports`,
-- clients under `clients.<id>`,
-- client `senderId`, `host`, `requestTimeoutMs`, and `knownReplicas`,
-- timeout values under `timeouts`,
-- the key root under `keys.root`,
-- the block storage root under `storage.blocksRoot`.
-
-With the default configuration:
-
-- the cluster runs with `n = 4` and `f = 1`,
-- the configured replicas are `server1` through `server4`,
-- the configured clients are `client`, `client2`, and `client3`,
-- generated keys are stored under `runtime/keys`,
-- persisted blocks are stored under `runtime/storage/<replicaId>/blocks`.
-
-`ConfigParser` also validates the configuration for:
-
-- `n >= 3f + 1`,
-- unique replica ids, client ids, sender ids, and replica endpoints,
-- known replica references inside every client's `knownReplicas`,
-- valid and non-empty key/storage paths.
-
-## Genesis and Generated Artifacts
-
-The project follows a two-step genesis flow:
-
-1. `config/genesis.json` is the template committed to the repository.
-2. `config/genesis.lock.json` is materialized on first replica startup and becomes the runtime genesis source for that config directory.
-
-`config/genesis.json` is the editable project source of truth.
-`config/genesis.lock.json` is a generated runtime artifact that captures the materialized genesis for a specific config directory and key set.
-If the lock file is present, replicas load it instead of rematerializing from `genesis.json`.
-As a result, genesis changes should be made in `config/genesis.json`, not by manually editing `config/genesis.lock.json`.
-
-During materialization:
-
-- configured client public keys are converted into on-chain wallet addresses,
-- missing client accounts are added to the genesis state as EOAs,
-- bootstrap native transfers are rewritten to the configured client addresses in client order,
-- the initial `IST Coin` bootstrap transfer is rewritten to the first configured client address.
-
-`populate` generates:
-
-- replica public/private key pairs,
-- replica threshold public/share material,
-- client public/private key pairs,
-- `config/addresses.json` with derived client and replica wallet addresses.
-
-`populate` does not create `genesis.lock.json`; that happens when a replica starts.
-
-## Build
-
-From a clean checkout, compile the project before running replicas or clients:
+### 2. Build
 
 ```powershell
-mvn compile
+mvn clean compile
 ```
 
-The `exec:java` Maven entrypoints use the compiled classes in `target/classes`.
-
-## Run Locally
-
-### 1. Generate key material
-
-Run this before starting replicas or clients:
+### 3. Generate key material
 
 ```powershell
 mvn compile exec:java@populate
+```
+
+Optional explicit config path:
+
+```powershell
 mvn compile exec:java@populate "-Dexec.args=config/config.yaml"
 ```
 
-Direct CLI shape:
+### 4. Start replicas
 
-```text
-populate [-c <configPath>]
-populate [configPath]
-```
-
-### 2. Start replicas
-
-Maven entrypoint:
+Run each replica in its own terminal:
 
 ```powershell
 mvn -q exec:java@server "-Dexec.args=server1 config/config.yaml"
@@ -102,32 +68,39 @@ mvn -q exec:java@server "-Dexec.args=server3 config/config.yaml"
 mvn -q exec:java@server "-Dexec.args=server4 config/config.yaml"
 ```
 
-Direct CLI shape:
-
-```text
-server --replica-id <serverId> --config <configPath>
-server <serverId> <configPath>
-```
-
-### 3. Start a client
-
-Maven entrypoint:
+### 5. Start a client shell
 
 ```powershell
 mvn -q exec:java@client "-Dexec.args=--config config/config.yaml --client-id client"
-mvn -q exec:java@client "-Dexec.args=--config config/config.yaml --client-id client2"
 ```
 
-Direct CLI shape:
+## Configuration Model
 
-```text
-client --config <configPath> --client-id <clientId>
-client <configPath> --client-id <clientId>
-```
+Runtime configuration is defined in `config/config.yaml`.
+
+Main sections:
+
+- `system`: cluster size (`n`) and tolerated Byzantine faults (`f`).
+- `replicas`: replica identities, hosts, and consensus/client ports.
+- `clients`: client identity, sender id, and known replica set.
+- `timeouts`: view-change, command wait, threshold rounds, and fetch-node settings.
+- `keys`: key-material root directory.
+- `storage`: block persistence root.
+
+Validation enforces the most important invariants, including `n >= 3f + 1`, unique identities/endpoints, and coherent known-replica references.
+
+## Genesis and Materialization
+
+DepChain uses a two-step genesis process:
+
+1. `config/genesis.json` is the editable project template committed to git.
+2. `config/genesis.lock.json` is generated at runtime on first replica startup for that config directory.
+
+When present, `genesis.lock.json` is treated as the runtime source. For predictable behavior, edit `genesis.json` and regenerate runtime artifacts instead of manually editing lock files.
 
 ## Client Shell Commands
 
-The interactive client exposes:
+The interactive client includes:
 
 ```text
 depcoin-transfer <to> <amount> <nonce> [gasLimit] [gasPrice]
@@ -136,88 +109,49 @@ ist-transfer <to> <rawValue> <nonce> [gasLimit] [gasPrice]
 ist-balance [owner]
 contract-call <to> <inputHex> <nonce> [amount] [gasLimit] [gasPrice]
 my-address
-exit
 help
+exit
 ```
-
-Examples:
-
-- The commands below are intended to be run from the `client` shell on the default local cluster.
-- In the default genesis, `client` starts with both `DepCoin` and `IST Coin`; `client2` starts with `DepCoin` only.
-- The concrete addresses below match the generated artifacts in this workspace. If your `config/addresses.json` differs, replace the addresses accordingly.
-
-```text
-my-address
-depcoin-balance
-ist-balance
-depcoin-transfer 6fc3576405473fcf464839212c701987c5cb6446 25 0
-ist-transfer 6fc3576405473fcf464839212c701987c5cb6446 500 1
-contract-call f87057cb54f163b94e5ae9206878f1a24394fb08 a9059cbb0000000000000000000000006fc3576405473fcf464839212c701987c5cb644600000000000000000000000000000000000000000000000000000000000001f4 2
-```
-
-For reference in the default local setup used above:
-
-- `client` address: `f2d847169048558e56460cda7cb4277a43214a89`
-- `client2` address: `6fc3576405473fcf464839212c701987c5cb6446`
-- `IST Coin` contract address: `f87057cb54f163b94e5ae9206878f1a24394fb08`
-
-Defaults in the shell:
-
-- `depcoin-transfer` defaults to `gasLimit = 21000` and `gasPrice = 1`,
-- `ist-transfer` and `contract-call` default to `gasLimit = 250000` and `gasPrice = 1`.
-
 
 ## Testing
 
-The Maven test setup behaves as follows:
+- `mvn test`: curated non-integration tests.
+- `mvn verify`: non-integration + integration suite (Failsafe).
 
-- `mvn test` runs the curated non-integration subset,
-- `mvn verify` runs that same Surefire phase plus the curated integration subset tagged `integration`.
-
-Test commands:
+Useful commands:
 
 ```powershell
 mvn test
 mvn verify
-mvn clean test
+mvn clean verify
 ```
 
-The test suite covers:
+The integration suite covers, among other topics:
 
-- ERC-20 `allowance` front-running mitigation,
-- invalid quorum certificates emitted by a Byzantine leader,
-- leader equivocation, partial broadcast, and post-attack convergence,
-- Byzantine replica liveness across multiple attack modes,
-- forged client success/failure replies by malicious replicas or leaders,
-- replayed client requests and forged client signatures,
-- invalid HMAC packets and replayed authenticated nonces,
-- exactly-once execution under duplicated and reordered network traffic,
-- leader recovery after local persistence failure.
+- Byzantine leader invalid QC injection and equivocation.
+- Byzantine replica liveness and client-response forgery resistance.
+- Replay protection and authenticated-ingress hardening.
+- Exactly-once behavior under duplicated/reordered traffic.
+- Persistence-failure recovery behavior.
 
-Tests:
+## CI
 
-1. `QueryAndContractIntegrationTest.approvalFrontRunningScenarioHoldsAtClusterLevel`
-2. `ERC20FrontrunningTest.ApprovalTransitions.directNonZeroToNonZeroAllowanceChangeIsRejected`
-3. `ERC20FrontrunningTest.ZeroResetMitigation.zeroFirstApprovalFlowPreventsDoubleWithdrawalAcrossFrontRunOrdering`
-4. `ByzantineLeaderIntegrationTest.invalidPrepareProposalQcTest`
-5. `ByzantineLeaderIntegrationTest.invalidPreCommitQcTest`
-6. `ByzantineLeaderIntegrationTest.invalidCommitQcTest`
-7. `ByzantineLeaderIntegrationTest.invalidDecideQcTest`
-8. `ByzantineLeaderIntegrationTest.equivocatingPrepareProposalTest`
-9. `ByzantineLeaderIntegrationTest.partialPrepareBroadcastTest`
-10. `ByzantineLeaderIntegrationTest.equivocatingLeaderStillAllowsSubsequentProgressAndHonestConvergence`
-11. `ByzantineReplicaIntegrationTest.replicaAttackDoesNotBreakClusterLiveness`
-12. `MaliciousClientIntegrationTest.colludingByzantineReplicaCannotForgeClientSuccessWithoutHonestReplyQuorum`
-13. `MaliciousClientIntegrationTest.colludingByzantineLeaderCannotForgeClientSuccessWithoutHonestReplyQuorum`
-14. `MaliciousClientIntegrationTest.colludingByzantineReplicaCannotForceClientFailureWithoutHonestFailureQuorum`
-15. `MaliciousClientIntegrationTest.colludingByzantineLeaderCannotForceClientFailureWithoutHonestFailureQuorum`
-16. `HonestClusterIntegrationTest.HappyPath.replayedClientRequestTest`
-17. `HonestClusterIntegrationTest.HappyPath.forgedClientSignatureTest`
-18. `AuthenticatedIngressIntegrationTest.invalidHmacPacketIsDroppedWithoutBreakingSubsequentClientTraffic`
-19. `AuthenticatedIngressIntegrationTest.replayedAuthenticatedNonceIsDroppedWithoutBreakingSubsequentClientTraffic`
-20. `AdversarialNetworkClusterIntegrationTest.ExactlyOnceEffects.duplicatedTransportTrafficDoesNotCauseDoubleExecution`
-21. `PersistenceFailureIntegrationTest.leaderCanReplyBeforeLocalPersistenceAndCatchUpAfterRestart`
+GitHub Actions workflow: `.github/workflows/tests.yml`.
+
+It runs `mvn -B clean verify` on pushes and pull requests.
+
+## Security
+
+Please report vulnerabilities privately by following the process in [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
 
 ## Notes
 
-- On Windows, Hyperledger Besu may emit a warning about `gnark_eip_196.dll`. The warning is expected in this setup and does not by itself indicate a failed run.
+- On Windows, Hyperledger Besu may emit a warning related to `gnark_eip_196.dll`. In this project setup, that warning alone does not necessarily indicate failure.
