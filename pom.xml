@@ -4,34 +4,127 @@
   <artifactId>depchain</artifactId>
   <version>0.1.0</version>
   <name>depchain</name>
+  <description>Permissioned Byzantine fault-tolerant blockchain prototype for Highly Dependable Systems.</description>
+  <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <organization>
+    <name>Instituto Superior Tecnico, Universidade de Lisboa</name>
+    <url>https://tecnico.ulisboa.pt/</url>
+  </organization>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>jorgeflmendes</id>
+      <name>Jorge Mendes</name>
+      <url>https://github.com/jorgeflmendes</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/jorgeflmendes/Highly-Dependable-Systems-26.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/jorgeflmendes/Highly-Dependable-Systems-26.git</developerConnection>
+    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26</url>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26/issues</url>
+  </issueManagement>
+
+  <ciManagement>
+    <system>GitHub Actions</system>
+    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26/actions</url>
+  </ciManagement>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <junit.version>5.11.4</junit.version>
-    <surefire.version>3.3.1</surefire.version>
-    <protobuf.version>4.29.3</protobuf.version>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <cluster.config.path>config/config.yaml</cluster.config.path>
+    <jackson.version>2.21.2</jackson.version>
+    <junit.version>6.0.3</junit.version>
+    <awaitility.version>4.3.0</awaitility.version>
+    <assertj.version>3.27.6</assertj.version>
+    <mockito.version>5.20.0</mockito.version>
+    <bytebuddy.version>1.17.7</bytebuddy.version>
+    <picocli.version>4.7.7</picocli.version>
+    <netty.version>4.2.9.Final</netty.version>
+    <surefire.version>3.5.5</surefire.version>
+    <protobuf.version>4.34.1</protobuf.version>
     <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
     <os.maven.version>1.7.1</os.maven.version>
-    <protovalidate.version>1.0.0</protovalidate.version>
-    <threshold.sig.version>1.2</threshold.sig.version>
+    <protovalidate.version>1.1.1</protovalidate.version>
+    <threshold.sig.version>1.3</threshold.sig.version>
     <curve25519.elisabeth.version>0.1.5</curve25519.elisabeth.version>
     <slf4j.version>2.0.17</slf4j.version>
-    <logback.version>1.5.17</logback.version>
-    <bouncycastle.version>1.81</bouncycastle.version>
-    <cluster.config.path>config/config.yaml</cluster.config.path>
+    <logback.version>1.5.32</logback.version>
+    <bouncycastle.version>1.83</bouncycastle.version>
+    <besu.evm.version>25.6.0</besu.evm.version>
+    <besu.datatypes.version>25.6.0</besu.datatypes.version>
+    <tuweni.version>2.3.1</tuweni.version>
+    <jdt.annotation.version>2.4.100</jdt.annotation.version>
+    <compiler.plugin.version>3.15.0</compiler.plugin.version>
+    <impsort.plugin.version>1.13.0</impsort.plugin.version>
+    <enforcer.plugin.version>3.6.2</enforcer.plugin.version>
+    <exec.plugin.version>3.6.3</exec.plugin.version>
   </properties>
+
+  <repositories>
+    <repository>
+      <id>hyperledger-besu</id>
+      <url>https://hyperledger.jfrog.io/artifactory/besu-maven/</url>
+    </repository>
+  </repositories>
 
   <dependencies>
     <dependency>
       <groupId>com.fasterxml.jackson.dataformat</groupId>
       <artifactId>jackson-dataformat-yaml</artifactId>
-      <version>2.18.3</version>
+      <version>${jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
       <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.awaitility</groupId>
+      <artifactId>awaitility</artifactId>
+      <version>${awaitility.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <version>${assertj.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-junit-jupiter</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy-agent</artifactId>
+      <version>${bytebuddy.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -77,7 +170,37 @@
     <dependency>
       <groupId>org.eclipse.jdt</groupId>
       <artifactId>org.eclipse.jdt.annotation</artifactId>
-      <version>2.3.100</version>
+      <version>${jdt.annotation.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.hyperledger.besu</groupId>
+      <artifactId>evm</artifactId>
+      <version>${besu.evm.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.hyperledger.besu</groupId>
+      <artifactId>besu-datatypes</artifactId>
+      <version>${besu.datatypes.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tuweni</groupId>
+      <artifactId>tuweni-bytes</artifactId>
+      <version>${tuweni.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tuweni</groupId>
+      <artifactId>tuweni-units</artifactId>
+      <version>${tuweni.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>info.picocli</groupId>
+      <artifactId>picocli</artifactId>
+      <version>${picocli.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-all</artifactId>
+      <version>${netty.version}</version>
     </dependency>
   </dependencies>
 
@@ -91,23 +214,24 @@
       </plugin>
 
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>build-helper-maven-plugin</artifactId>
-        <version>3.6.0</version>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>${enforcer.plugin.version}</version>
         <executions>
           <execution>
-            <id>add-main-sources</id>
-            <phase>generate-sources</phase>
+            <id>enforce-toolchain</id>
             <goals>
-              <goal>add-source</goal>
+              <goal>enforce</goal>
             </goals>
             <configuration>
-              <sources>
-                <source>src/populate</source>
-                <source>src/server</source>
-                <source>src/client</source>
-                <source>src/shared</source>
-              </sources>
+              <rules>
+                <requireMavenVersion>
+                  <version>[3.6.3,)</version>
+                </requireMavenVersion>
+                <requireJavaVersion>
+                  <version>[21,)</version>
+                </requireJavaVersion>
+              </rules>
             </configuration>
           </execution>
         </executions>
@@ -116,7 +240,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.13.0</version>
+        <version>${compiler.plugin.version}</version>
         <configuration>
           <release>${maven.compiler.release}</release>
         </configuration>
@@ -128,7 +252,7 @@
         <version>${protobuf.plugin.version}</version>
         <configuration>
           <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
-          <protoSourceRoot>${project.basedir}/proto</protoSourceRoot>
+          <protoSourceRoot>${project.basedir}/src/main/proto</protoSourceRoot>
           <checkStaleness>true</checkStaleness>
         </configuration>
         <executions>
@@ -145,13 +269,10 @@
       <plugin>
         <groupId>net.revelc.code</groupId>
         <artifactId>impsort-maven-plugin</artifactId>
-        <version>1.12.0</version>
+        <version>${impsort.plugin.version}</version>
         <configuration>
           <directories>
-            <directory>${project.basedir}/src/populate</directory>
-            <directory>${project.basedir}/src/server</directory>
-            <directory>${project.basedir}/src/client</directory>
-            <directory>${project.basedir}/src/shared</directory>
+            <directory>${project.basedir}/src/main/java</directory>
             <directory>${project.basedir}/src/test/java</directory>
           </directories>
           <removeUnused>true</removeUnused>
@@ -173,42 +294,13 @@
       </plugin>
 
       <plugin>
-        <groupId>net.revelc.code.formatter</groupId>
-        <artifactId>formatter-maven-plugin</artifactId>
-        <version>2.24.1</version>
-        <configuration>
-          <directories>
-            <directory>${project.basedir}/src/populate</directory>
-            <directory>${project.basedir}/src/server</directory>
-            <directory>${project.basedir}/src/client</directory>
-            <directory>${project.basedir}/src/shared</directory>
-            <directory>${project.basedir}/src/test/java</directory>
-          </directories>
-          <configFile>${project.basedir}/eclipse-java-formatter.xml</configFile>
-          <lineEnding>LF</lineEnding>
-          <excludes>
-            <exclude>target/generated-sources/**/*.java</exclude>
-            <exclude>target/generated-test-sources/**/*.java</exclude>
-          </excludes>
-        </configuration>
-        <executions>
-          <execution>
-            <id>format-java</id>
-            <phase>validate</phase>
-            <goals>
-              <goal>format</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-
-      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>${surefire.version}</version>
         <configuration>
+          <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -XX:+EnableDynamicAgentLoading</argLine>
           <includes>
-            <include>**/*Test.java</include>
+            <include>**/ERC20FrontrunningTest.java</include>
           </includes>
           <excludedGroups>integration</excludedGroups>
         </configuration>
@@ -219,8 +311,16 @@
         <artifactId>maven-failsafe-plugin</artifactId>
         <version>${surefire.version}</version>
         <configuration>
+          <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -XX:+EnableDynamicAgentLoading</argLine>
           <includes>
-            <include>**/*Test.java</include>
+            <include>**/ByzantineLeaderIntegrationTest.java</include>
+            <include>**/ByzantineReplicaIntegrationTest.java</include>
+            <include>**/AuthenticatedIngressIntegrationTest.java</include>
+            <include>**/MaliciousClientIntegrationTest.java</include>
+            <include>**/AdversarialNetworkClusterIntegrationTest.java</include>
+            <include>**/HonestClusterIntegrationTest.java</include>
+            <include>**/PersistenceFailureIntegrationTest.java</include>
+            <include>**/QueryAndContractIntegrationTest.java</include>
           </includes>
           <groups>integration</groups>
         </configuration>
@@ -237,7 +337,7 @@
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
-        <version>3.5.0</version>
+        <version>${exec.plugin.version}</version>
         <executions>
           <execution>
             <id>populate-test-keys</id>
@@ -246,7 +346,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
+              <mainClass>pt.ulisboa.depchain.tool.keymaterial.KeyMaterialApplication</mainClass>
               <arguments>
                 <argument>${cluster.config.path}</argument>
               </arguments>
@@ -258,7 +358,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.populate.Populate</mainClass>
+              <mainClass>pt.ulisboa.depchain.tool.keymaterial.KeyMaterialApplication</mainClass>
             </configuration>
           </execution>
           <execution>
@@ -267,7 +367,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.server.Main</mainClass>
+              <mainClass>pt.ulisboa.depchain.server.bootstrap.ServerApplication</mainClass>
             </configuration>
           </execution>
           <execution>
@@ -276,27 +376,7 @@
               <goal>java</goal>
             </goals>
             <configuration>
-              <mainClass>pt.ulisboa.depchain.client.Main</mainClass>
-            </configuration>
-          </execution>
-          <execution>
-            <id>open-local-cluster</id>
-            <goals>
-              <goal>exec</goal>
-            </goals>
-            <configuration>
-              <executable>powershell</executable>
-              <arguments>
-                <argument>-NoProfile</argument>
-                <argument>-ExecutionPolicy</argument>
-                <argument>Bypass</argument>
-                <argument>-File</argument>
-                <argument>${project.basedir}/scripts/open-local-cluster.ps1</argument>
-                <argument>-ProjectDir</argument>
-                <argument>${project.basedir}</argument>
-                <argument>-ConfigPath</argument>
-                <argument>${cluster.config.path}</argument>
-              </arguments>
+              <mainClass>pt.ulisboa.depchain.client.bootstrap.ClientApplication</mainClass>
             </configuration>
           </execution>
         </executions>
@@ -304,4 +384,5 @@
 
     </plugins>
   </build>
+
 </project>

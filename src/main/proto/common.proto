@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package depchain;
+
+option java_multiple_files = true;
+option java_package = "pt.ulisboa.depchain.proto";
+
+import "buf/validate/validate.proto";
+
+message ClientRequestKey {
+  optional uint64 client_sender_id = 1 [(buf.validate.field).required = true];
+  optional uint64 request_id = 2 [(buf.validate.field).required = true];
+}

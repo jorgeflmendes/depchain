@@ -1,0 +1,203 @@
+syntax = "proto3";
+
+package depchain;
+
+option java_multiple_files = true;
+option java_package = "pt.ulisboa.depchain.proto";
+
+import "buf/validate/validate.proto";
+import "common.proto";
+
+enum TransactionType {
+  TRANSACTION_TYPE_UNSPECIFIED = 0;
+  TRANSACTION_TYPE_TRANSFER = 1;
+  TRANSACTION_TYPE_IST_COIN_TRANSFER = 4;
+  TRANSACTION_TYPE_CONTRACT_CALL = 5;
+}
+
+message TransactionRequest {
+  option (buf.validate.message).cel = {
+    id: "transaction.type.specified"
+    message: "transaction type must be specified"
+    expression: "this.type != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.to.shape"
+    message: "to must be a lowercase 40-hex-character address"
+    expression: "this.to.matches('^[0-9a-f]{40}$')"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.transfer.requires-positive-amount"
+    message: "transfer transactions must use a positive amount"
+    expression: "this.type == 1 ? this.amount > 0u : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.transfer.disallows-data"
+    message: "transfer transactions must not include input data"
+    expression: "this.type == 1 ? (!has(this.input) || size(this.input) == 0) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.contract-call.requires-input"
+    message: "contract call transactions must include input data"
+    expression: "this.type == 5 ? (has(this.input) && size(this.input) > 0) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.ist-transfer.requires-positive-amount"
+    message: "IST Coin transfers must use a positive amount"
+    expression: "this.type == 4 ? this.amount > 0u : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.ist-transfer.disallows-data"
+    message: "IST Coin transfers must not include input data"
+    expression: "this.type == 4 ? (!has(this.input) || size(this.input) == 0) : true"
+  };
+
+  ClientRequestKey request_key = 1 [(buf.validate.field).required = true];
+
+  optional TransactionType type = 2 [(buf.validate.field).required = true];
+
+  optional string to = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional uint64 amount = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gte = 0
+  ];
+  optional uint64 nonce = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gte = 0
+  ];
+  optional uint64 gas_limit = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gt = 0
+  ];
+  optional uint64 gas_price = 7 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gt = 0
+  ];
+
+  optional bytes input = 8;
+
+  optional bytes signature = 9 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.min_len = 1
+  ];
+}
+
+message TransactionReceipt {
+  option (buf.validate.message).cel = {
+    id: "transaction.receipt.transaction-hash.shape"
+    message: "transaction_hash must be a 64-char lowercase SHA-256 hex string"
+    expression: "this.transaction_hash.matches('^[0-9a-f]{64}$')"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.receipt.node-hash.shape"
+    message: "node_hash must be a 64-char lowercase SHA-256 hex string"
+    expression: "this.node_hash.matches('^[0-9a-f]{64}$')"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.receipt.error-message-on-failure"
+    message: "failed receipts should include an error message"
+    expression: "this.success ? true : has(this.error_message)"
+  };
+  option (buf.validate.message).cel = {
+    id: "transaction.receipt.error-message-only-on-failure"
+    message: "successful receipts must not include an error message"
+    expression: "this.success ? !has(this.error_message) : true"
+  };
+
+  optional string transaction_hash = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional string node_hash = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional bool success = 3 [(buf.validate.field).required = true];
+  optional uint64 gas_used = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint64.gte = 0
+  ];
+  optional string error_message = 5 [(buf.validate.field).string.min_len = 1];
+
+  optional bytes return_data = 6 [(buf.validate.field).bytes.min_len = 1];
+}
+
+message TransactionResponse {
+  optional string message = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional TransactionReceipt receipt = 2;
+}
+
+enum QueryType {
+  QUERY_TYPE_UNSPECIFIED = 0;
+  QUERY_TYPE_DEPCOIN_BALANCE = 1;
+  QUERY_TYPE_IST_COIN_BALANCE = 2;
+}
+
+message QueryRequest {
+  option (buf.validate.message).cel = {
+    id: "query.type.specified"
+    message: "query type must be specified"
+    expression: "this.type != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "query.owner.shape"
+    message: "owner must be a lowercase 40-hex-character address"
+    expression: "this.owner.matches('^[0-9a-f]{40}$')"
+  };
+
+  ClientRequestKey request_key = 1 [(buf.validate.field).required = true];
+  optional QueryType type = 2 [(buf.validate.field).required = true];
+  optional string owner = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional bytes signature = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.min_len = 1
+  ];
+}
+
+message QueryResponse {
+  option (buf.validate.message).cel = {
+    id: "query.response.error-message-on-failure"
+    message: "failed query responses should include an error message"
+    expression: "this.success ? true : has(this.error_message)"
+  };
+  option (buf.validate.message).cel = {
+    id: "query.response.error-message-only-on-failure"
+    message: "successful query responses must not include an error message"
+    expression: "this.success ? !has(this.error_message) : true"
+  };
+
+  optional bool success = 1 [(buf.validate.field).required = true];
+  optional string message = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+  optional bytes return_data = 3 [(buf.validate.field).bytes.min_len = 1];
+  optional string error_message = 4 [(buf.validate.field).string.min_len = 1];
+}
+
+message ClientRequest {
+  reserved 1;
+  oneof body {
+    option (buf.validate.oneof).required = true;
+    TransactionRequest transaction = 2;
+    QueryRequest query = 3;
+  }
+}
+
+message ClientResponse {
+  reserved 1;
+  oneof body {
+    option (buf.validate.oneof).required = true;
+    TransactionResponse transaction = 2;
+    QueryResponse query = 3;
+  }
+}

@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package depchain;
+
+option java_multiple_files = true;
+option java_package = "pt.ulisboa.depchain.proto";
+
+import "buf/validate/validate.proto";
+
+enum AuthOpcode {
+  AUTH_OPCODE_UNSPECIFIED = 0;
+  AUTH_OPCODE_INIT = 1;
+  AUTH_OPCODE_REPLY = 2;
+  AUTH_OPCODE_DATA = 3;
+}
+
+message AuthenticatedHandshakeEnvelope {
+  option (buf.validate.message).cel = {
+    id: "authenticated.handshake.opcode"
+    message: "handshake envelope must use INIT or REPLY opcode"
+    expression: "this.auth_opcode == 1 || this.auth_opcode == 2"
+  };
+
+  optional AuthOpcode auth_opcode = 1 [(buf.validate.field).required = true];
+  optional uint64 sender_id = 2 [(buf.validate.field).required = true];
+  optional bytes ephemeral_public_key_bytes = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.min_len = 1
+  ];
+  optional bytes signature = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.min_len = 1
+  ];
+}
+
+message AuthenticatedDataEnvelope {
+  option (buf.validate.message).cel = {
+    id: "authenticated.data.opcode"
+    message: "authenticated data envelope must use DATA opcode"
+    expression: "this.auth_opcode == 3"
+  };
+
+  optional AuthOpcode auth_opcode = 1 [(buf.validate.field).required = true];
+  optional bytes application_payload = 2 [(buf.validate.field).required = true];
+  optional uint64 nonce = 3 [(buf.validate.field).required = true];
+  optional bytes hmac = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).bytes.len = 32
+  ];
+}

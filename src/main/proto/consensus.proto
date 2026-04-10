@@ -1,0 +1,219 @@
+syntax = "proto3";
+
+package depchain;
+
+import "buf/validate/validate.proto";
+import "client.proto";
+
+option java_multiple_files = true;
+option java_package = "pt.ulisboa.depchain.proto";
+
+enum ConsensusMessageType {
+  CONSENSUS_MESSAGE_TYPE_UNSPECIFIED = 0;
+  CONSENSUS_MESSAGE_TYPE_NEW_VIEW = 1;
+  CONSENSUS_MESSAGE_TYPE_PREPARE = 2;
+  CONSENSUS_MESSAGE_TYPE_PRE_COMMIT = 3;
+  CONSENSUS_MESSAGE_TYPE_COMMIT = 4;
+  CONSENSUS_MESSAGE_TYPE_DECIDE = 5;
+  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_REQUEST = 6;
+  CONSENSUS_MESSAGE_TYPE_FETCH_NODE_RESPONSE = 7;
+}
+
+message TransactionBatchNodeCommand {
+  repeated depchain.ClientRequest client_requests = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+  }];
+}
+
+message NoOpCommand {}
+
+message GenesisCommand {}
+
+message NodeCommand {
+  reserved 1, 4;
+  oneof body {
+    option (buf.validate.oneof).required = true;
+    NoOpCommand no_op = 2;
+    GenesisCommand genesis = 3;
+    TransactionBatchNodeCommand transaction_batch = 5;
+  }
+}
+
+message Node {
+  option (buf.validate.message).cel = {
+    id: "node.parent-hash.shape"
+    message: "parent_node_hash must be the genesis marker '0' or a 64-char lowercase SHA-256 hex string"
+    expression: "this.parent_node_hash == '0' || this.parent_node_hash.matches('^[0-9a-f]{64}$')"
+  };
+  option (buf.validate.message).cel = {
+    id: "node.hash.shape"
+    message: "node_hash must be the genesis marker '0' or a 64-char lowercase SHA-256 hex string"
+    expression: "this.node_hash == '0' || this.node_hash.matches('^[0-9a-f]{64}$')"
+  };
+  option (buf.validate.message).cel = {
+    id: "node.genesis.layout"
+    message: "genesis nodes must use the genesis command and the fixed parent/hash markers"
+    expression: "has(this.command.genesis) ? (this.parent_node_hash == '0' && this.node_hash == '0' && this.view_number == 0) : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "node.non-genesis.hashes"
+    message: "non-genesis nodes must use SHA-256-shaped hashes"
+    expression: "!has(this.command.genesis) ? (this.node_hash.matches('^[0-9a-f]{64}$') && (this.parent_node_hash == '0' || this.parent_node_hash.matches('^[0-9a-f]{64}$'))) : true"
+  };
+
+  string parent_node_hash = 1 [(buf.validate.field).string.min_len = 1];
+  string node_hash = 2 [(buf.validate.field).string.min_len = 1];
+  optional int32 view_number = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  NodeCommand command = 4 [(buf.validate.field).required = true];
+  optional uint64 gas_used = 5;
+}
+
+message NodeHashPayload {
+  string parent_node_hash = 1 [(buf.validate.field).string.min_len = 1];
+  optional int32 view_number = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  NodeCommand command = 3 [(buf.validate.field).required = true];
+}
+
+message QuorumCertificate {
+  option (buf.validate.message).cel = {
+    id: "qc.type.specified"
+    message: "quorum certificate phase must be specified"
+    expression: "this.message_type != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "qc.genesis.shape"
+    message: "the genesis quorum certificate must be DECIDE at view -1 with no signature"
+    expression: "this.view_number == -1 ? (this.message_type == 5 && has(this.certified_node.command.genesis) && size(this.quorum_signature) == 0) : true"
+  };
+
+  optional ConsensusMessageType message_type = 1 [(buf.validate.field).required = true];
+  optional int32 view_number = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = -1
+  ];
+  Node certified_node = 3 [(buf.validate.field).required = true];
+  optional bytes quorum_signature = 4 [(buf.validate.field).bytes.len = 64];
+}
+
+message ThresholdVotePayload {
+  option (buf.validate.message).cel = {
+    id: "threshold.vote.type.specified"
+    message: "threshold vote payload type must be specified"
+    expression: "this.message_type in [2, 3, 4]"
+  };
+
+  optional ConsensusMessageType message_type = 1 [(buf.validate.field).required = true];
+  optional int32 view_number = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  Node voted_node = 3 [(buf.validate.field).required = true];
+}
+
+message ThresholdSignatureContext {
+  bytes aggregated_commitment = 1 [(buf.validate.field).bytes.len = 32];
+  repeated uint32 participant_replica_indexes = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    unique: true
+  }];
+}
+
+message ProposalMessage {
+  Node proposed_node = 1 [(buf.validate.field).required = true];
+  QuorumCertificate justify_qc = 2 [(buf.validate.field).required = true];
+}
+
+message PhaseCertificateMessage {
+  QuorumCertificate justify_qc = 1 [(buf.validate.field).required = true];
+}
+
+message VoteMessage {
+  Node voted_node = 1 [(buf.validate.field).required = true];
+  bytes threshold_signature_share = 2 [(buf.validate.field).bytes.len = 32];
+  bytes aggregated_commitment = 3 [(buf.validate.field).bytes.len = 32];
+}
+
+message CommitmentMessage {
+  Node voted_node = 1 [(buf.validate.field).required = true];
+  bytes threshold_signature_commitment = 2 [(buf.validate.field).bytes.len = 32];
+}
+
+message ThresholdContextMessage {
+  Node voted_node = 1 [(buf.validate.field).required = true];
+  ThresholdSignatureContext threshold_signature_context = 2 [(buf.validate.field).required = true];
+}
+
+message FetchNodeRequestMessage {
+  string node_hash = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message FetchNodeResponseMessage {
+  Node node = 1 [(buf.validate.field).required = true];
+}
+
+message Message {
+  option (buf.validate.message).cel = {
+    id: "replica.message.type.specified"
+    message: "replica message type must be specified"
+    expression: "this.message_type != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.proposal"
+    message: "proposal bodies must use PREPARE"
+    expression: "has(this.proposal) ? this.message_type == 2 : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.phase-certificate"
+    message: "phase certificate bodies must use NEW_VIEW, PRE_COMMIT, COMMIT, or DECIDE"
+    expression: "has(this.phase_certificate) ? this.message_type in [1, 3, 4, 5] : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.vote"
+    message: "vote bodies must use PREPARE, PRE_COMMIT, or COMMIT"
+    expression: "has(this.vote) ? this.message_type in [2, 3, 4] : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.commitment"
+    message: "commitment bodies must use PREPARE, PRE_COMMIT, or COMMIT"
+    expression: "has(this.commitment) ? this.message_type in [2, 3, 4] : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.threshold-context"
+    message: "threshold context bodies must use PREPARE, PRE_COMMIT, or COMMIT"
+    expression: "has(this.threshold_context) ? this.message_type in [2, 3, 4] : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.fetch-node-request"
+    message: "fetch node request bodies must use FETCH_NODE_REQUEST"
+    expression: "has(this.fetch_node_request) ? this.message_type == 6 : true"
+  };
+  option (buf.validate.message).cel = {
+    id: "replica.message.body.fetch-node-response"
+    message: "fetch node response bodies must use FETCH_NODE_RESPONSE"
+    expression: "has(this.fetch_node_response) ? this.message_type == 7 : true"
+  };
+
+  optional int32 view_number = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  optional uint32 replica_sender_id = 2 [(buf.validate.field).required = true];
+  optional ConsensusMessageType message_type = 3 [(buf.validate.field).required = true];
+
+  oneof body {
+    option (buf.validate.oneof).required = true;
+    ProposalMessage proposal = 4;
+    PhaseCertificateMessage phase_certificate = 5;
+    VoteMessage vote = 6;
+    CommitmentMessage commitment = 7;
+    ThresholdContextMessage threshold_context = 8;
+    FetchNodeRequestMessage fetch_node_request = 9;
+    FetchNodeResponseMessage fetch_node_response = 10;
+  }
+}
