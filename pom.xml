@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <name>depchain</name>
   <description>Permissioned Byzantine fault-tolerant blockchain prototype for Highly Dependable Systems.</description>
-  <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26</url>
+  <url>https://github.com/jorgeflmendes/depchain</url>
   <inceptionYear>2026</inceptionYear>
 
   <organization>
@@ -30,19 +30,19 @@
   </developers>
 
   <scm>
-    <connection>scm:git:https://github.com/jorgeflmendes/Highly-Dependable-Systems-26.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com/jorgeflmendes/Highly-Dependable-Systems-26.git</developerConnection>
-    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26</url>
+    <connection>scm:git:https://github.com/jorgeflmendes/depchain.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/jorgeflmendes/depchain.git</developerConnection>
+    <url>https://github.com/jorgeflmendes/depchain</url>
   </scm>
 
   <issueManagement>
     <system>GitHub Issues</system>
-    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26/issues</url>
+    <url>https://github.com/jorgeflmendes/depchain/issues</url>
   </issueManagement>
 
   <ciManagement>
     <system>GitHub Actions</system>
-    <url>https://github.com/jorgeflmendes/Highly-Dependable-Systems-26/actions</url>
+    <url>https://github.com/jorgeflmendes/depchain/actions</url>
   </ciManagement>
 
   <properties>
