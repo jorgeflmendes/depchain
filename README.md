@@ -44,17 +44,17 @@ replication, and blockchain-inspired consistency mechanisms.
 
 ## Architecture
 
-```text
-Client
-  | signed request
-  v
-Replica ingress -> HotStuff-inspired consensus -> Ordered block
-  |                                               |
-  | authenticated replica links                   v
-  +----------------------------------------> EVM execution
-                                                  |
-                                                  v
-                                           Persistent state
+```mermaid
+flowchart LR
+    CLIENT["Client shell / API"] -->|"signed request"| INGRESS["Replica ingress"]
+    INGRESS --> CONSENSUS["HotStuff-inspired consensus"]
+    CONSENSUS --> BLOCK["Ordered block"]
+    BLOCK --> EXEC["Deterministic EVM execution"]
+    EXEC --> STORE["Persistent block and state storage"]
+
+    CONSENSUS <--> LINKS["Authenticated replica links"]
+    LINKS --> QUORUM["Quorum certificates and threshold signatures"]
+    QUORUM --> CONSENSUS
 ```
 
 The main implementation areas are:
@@ -65,6 +65,9 @@ The main implementation areas are:
 - `server/execution`: EVM execution and contract integration
 - `server/node`: replica lifecycle, block storage, and genesis materialization
 - `shared/config`: configuration and genesis validation
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the request path,
+network stack, storage boundary, and adversarial test harness.
 
 ## Tech Stack
 
