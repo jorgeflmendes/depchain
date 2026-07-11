@@ -143,10 +143,11 @@ public final class EvmService {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance for amount plus gas fee");
     }
 
+    senderAccount.decrementBalance(maxFee);
+    senderAccount.incrementNonce();
+    world.updater().commit();
+
     if (gasLimit < TRANSFER_GAS_USED) {
-      Wei chargedFee = calculateFee(gasPrice, gasLimit, gasLimit);
-      senderAccount.decrementBalance(chargedFee);
-      senderAccount.incrementNonce();
       return new TransactionResult(false, gasLimit, Bytes.EMPTY, "insufficient gas for native transfer");
     }
 
@@ -157,8 +158,11 @@ public final class EvmService {
     TransactionResult execution = execute(sender, recipient, recipient, Bytes.EMPTY, Bytes.EMPTY, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
     long effectiveGasUsed = Math.max(TRANSFER_GAS_USED, execution.gasUsed());
     Wei chargedFee = calculateFee(gasPrice, gasLimit, effectiveGasUsed);
-    senderAccount.decrementBalance(chargedFee);
-    senderAccount.incrementNonce();
+    Wei refund = Wei.of(maxFee.toBigInteger().subtract(chargedFee.toBigInteger()));
+    if (refund.compareTo(Wei.ZERO) > 0) {
+      MutableAccount postExecutionAccount = account(sender);
+      postExecutionAccount.incrementBalance(refund);
+    }
     if (!execution.success()) {
       return new TransactionResult(false, effectiveGasUsed, execution.returnData(), execution.errorMessage());
     }
@@ -195,11 +199,18 @@ public final class EvmService {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance for amount plus gas fee");
     }
 
+    senderAccount.decrementBalance(maxFee);
+    senderAccount.incrementNonce();
+    world.updater().commit();
+
     TransactionResult execution = execute(sender, contractAddress, contractAddress, contractAccount
         .getCode(), callData, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
     Wei chargedFee = calculateFee(gasPrice, gasLimit, execution.gasUsed());
-    senderAccount.decrementBalance(chargedFee);
-    senderAccount.incrementNonce();
+    Wei refund = Wei.of(maxFee.toBigInteger().subtract(chargedFee.toBigInteger()));
+    if (refund.compareTo(Wei.ZERO) > 0) {
+      MutableAccount postExecutionAccount = account(sender);
+      postExecutionAccount.incrementBalance(refund);
+    }
     if (!execution.success()) {
       return new TransactionResult(false, execution.gasUsed(), execution.returnData(), execution.errorMessage());
     }
