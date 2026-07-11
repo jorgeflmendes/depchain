@@ -12,9 +12,15 @@ import java.util.Set;
 import pt.ulisboa.depchain.shared.validation.ValidationUtils;
 
 public final class QuorumAccumulator<S, K, V> {
+  private static final int MAX_GROUPS = 1000;
   private final Set<S> allowedSenders;
   private final Set<S> acceptedSenders;
-  private final Map<K, Group<S, V>> groups = new LinkedHashMap<>();
+  private final Map<K, Group<S, V>> groups = new LinkedHashMap<>() {
+    @Override
+    protected boolean removeEldestEntry(Map.Entry<K, Group<S, V>> eldest) {
+      return size() > MAX_GROUPS;
+    }
+  };
 
   public QuorumAccumulator() {
     this.allowedSenders = null;
@@ -99,6 +105,9 @@ public final class QuorumAccumulator<S, K, V> {
 
   private boolean accepts(S sender) {
     if (allowedSenders != null && !allowedSenders.contains(sender)) {
+      return false;
+    }
+    if (acceptedSenders.size() >= 10000 && !acceptedSenders.contains(sender)) {
       return false;
     }
     return acceptedSenders.add(sender);

@@ -35,6 +35,7 @@ final class ReplicaBlockPersistence {
   private final Address istCoinContractAddress;
   // The professor asked for a normal in-memory block chain during runtime.
   // Disk persistence is kept only for restart and crash recovery.
+  private static final int MAX_IN_MEMORY_BLOCKS = 5000;
   private final ArrayList<BlockStore.BlockDocument> inMemoryBlockChain = new ArrayList<>();
 
   private BlockStore.BlockDocument latestBlock;
@@ -77,6 +78,9 @@ final class ReplicaBlockPersistence {
 
     blockStore.append(nextBlock);
     inMemoryBlockChain.add(nextBlock);
+    if (inMemoryBlockChain.size() > MAX_IN_MEMORY_BLOCKS) {
+      inMemoryBlockChain.remove(0); // Evict oldest block
+    }
     latestBlock = nextBlock;
     return nextBlock;
   }

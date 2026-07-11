@@ -51,7 +51,11 @@ final class StubbornSender {
     synchronized (context.retryLock) {
       context.ensureOpen();
       tracked.scheduleRetryAfterNanos(context.retryDelayNanos(0));
-      context.getOrCreateRetryState(remoteEndpoint).trackedMessagesByKey.put(key, tracked);
+      EndpointRetryState retryState = context.getOrCreateRetryState(remoteEndpoint);
+      if (retryState.trackedMessagesByKey.size() >= EndpointRetryState.MAX_TRACKED_MESSAGES_PER_ENDPOINT) {
+        throw new IllegalStateException("Exceeded maximum tracked messages for endpoint: " + remoteEndpoint);
+      }
+      retryState.trackedMessagesByKey.put(key, tracked);
     }
 
     try {
