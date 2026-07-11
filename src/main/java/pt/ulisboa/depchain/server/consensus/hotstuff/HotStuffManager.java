@@ -183,7 +183,7 @@ public class HotStuffManager {
   }
 
   public void onClientRequest(ClientRequest request, ConnectionKey key) {
-    clientApi.registerClientRequest(request, key, isLeader());
+    clientApi.registerClientRequest(request, key, isLeader(), viewNumber, id, thresholdProtocol.genesisQC());
   }
 
   public void onClientQuery(ClientRequest request, ConnectionKey key) {
@@ -212,12 +212,9 @@ public class HotStuffManager {
 
       long commandDeadlineNanos = TimeUtil.boundedMonotonicDeadlineAfterNow(viewDeadlineNanos, clientCommandWaitTimeoutMs);
       List<ClientRequest> batch = clientApi.awaitNextPendingBatch(commandDeadlineNanos, BlockStore.MAX_BLOCK_GAS_LIMIT, MAX_TRANSACTIONS_PER_BLOCK);
-      if (batch.isEmpty()) {
-        throw new ConsensusTimeoutException("Timed out waiting for client command batch");
-      }
-      batch = fitBatchToProposalTransportBudget(selectedPrepareQc, batch);
-      if (batch.isEmpty()) {
-        throw new ConsensusTimeoutException("No pending client command fits the UDP proposal transport budget");
+
+      if (!batch.isEmpty()) {
+        batch = fitBatchToProposalTransportBudget(selectedPrepareQc, batch);
       }
 
       NodeCommand command = nodeCommandForBatch(batch);

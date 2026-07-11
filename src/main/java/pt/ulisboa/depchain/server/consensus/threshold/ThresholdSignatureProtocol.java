@@ -161,6 +161,8 @@ public final class ThresholdSignatureProtocol {
     return config.requireReplicaIndexForSenderId(senderId);
   }
 
+  private static final int MAX_COMBINATIONS = 100;
+
   private List<CommitmentBatch> buildCandidateCommitmentBatches(byte[] localCommitment, List<ThresholdSignatureExchange.RemoteCommitment> remoteCommitments) {
     List<CommitmentBatch> candidateBatches = new ArrayList<>();
     buildCommitmentBatchCombinations(localCommitment, remoteCommitments, 0, new ArrayList<>(), candidateBatches);
@@ -168,6 +170,10 @@ public final class ThresholdSignatureProtocol {
   }
 
   private void buildCommitmentBatchCombinations(byte[] localCommitment, List<ThresholdSignatureExchange.RemoteCommitment> remoteCommitments, int nextIndex, List<ThresholdSignatureExchange.RemoteCommitment> selectedRemoteCommitments, List<CommitmentBatch> candidateBatches) {
+    if (candidateBatches.size() >= MAX_COMBINATIONS) {
+      return;
+    }
+
     if (selectedRemoteCommitments.size() == threshold - 1) {
       candidateBatches.add(createCommitmentBatch(localCommitment, selectedRemoteCommitments));
       return;
@@ -178,6 +184,10 @@ public final class ThresholdSignatureProtocol {
       selectedRemoteCommitments.add(remoteCommitments.get(i));
       buildCommitmentBatchCombinations(localCommitment, remoteCommitments, i + 1, selectedRemoteCommitments, candidateBatches);
       selectedRemoteCommitments.remove(selectedRemoteCommitments.size() - 1);
+
+      if (candidateBatches.size() >= MAX_COMBINATIONS) {
+        return;
+      }
     }
   }
 

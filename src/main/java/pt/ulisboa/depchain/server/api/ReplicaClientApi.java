@@ -20,12 +20,18 @@ import pt.ulisboa.depchain.proto.ClientResponse;
 import pt.ulisboa.depchain.proto.Node;
 import pt.ulisboa.depchain.proto.NodeCommand;
 import pt.ulisboa.depchain.proto.QueryRequest;
+import pt.ulisboa.depchain.proto.QuorumCertificate;
+import pt.ulisboa.depchain.proto.TransactionBatchNodeCommand;
+import pt.ulisboa.depchain.proto.TransactionReceipt;
 import pt.ulisboa.depchain.proto.TransactionRequest;
+import pt.ulisboa.depchain.proto.TransactionResponse;
 import pt.ulisboa.depchain.server.consensus.ConsensusTimeoutException;
+import pt.ulisboa.depchain.server.consensus.hotstuff.HotStuffSupport;
 import pt.ulisboa.depchain.server.node.BlockStore;
 import pt.ulisboa.depchain.shared.crypto.ClientRequestSignaturePayloadUtil;
 import pt.ulisboa.depchain.shared.crypto.CryptoUtil;
 import pt.ulisboa.depchain.shared.network.links.authenticated.AuthenticatedLink;
+import pt.ulisboa.depchain.shared.network.links.fairloss.FairLossLink;
 import pt.ulisboa.depchain.shared.network.model.ConnectionKey;
 import pt.ulisboa.depchain.shared.time.TimeUtil;
 import pt.ulisboa.depchain.shared.validation.ProtoValidationUtil;
@@ -55,7 +61,27 @@ public final class ReplicaClientApi {
     this.clientTransport = clientTransport;
   }
 
-  public void registerClientRequest(ClientRequest request, ConnectionKey key, boolean isLeader) {
+  public void registerClientRequest(ClientRequest request, ConnectionKey key, boolean isLeader, int viewNumber, int replicaId, QuorumCertificate genesisQc) {
+    if (request != null && request.hasTransaction()) {
+      NodeCommand testCommand = NodeCommand.newBuilder().setTransactionBatch(TransactionBatchNodeCommand.newBuilder().addClientRequests(request)).build();
+      if (HotStuffSupport.estimatePrepareProposalDatagramSize(testCommand, genesisQc, viewNumber, replicaId) > FairLossLink.MAX_PACKET_SIZE) {
+        if (key != null) {
+          TransactionResponse txResponse = TransactionResponse.newBuilder()
+              .setMessage("Transaction exceeds transport budget")
+              .setReceipt(TransactionReceipt.newBuilder()
+                  .setTransactionHash(CryptoUtil.sha256Hex(request.toByteArray()))
+                  .setNodeHash("a".repeat(64))
+                  .setSuccess(false)
+                  .setGasUsed(0)
+                  .setErrorMessage("Transaction exceeds UDP maximum packet size and cannot be included in a proposal")
+                  .build())
+              .build();
+          sendClientResponse(key, ClientResponse.newBuilder().setTransaction(txResponse).build());
+        }
+        return;
+      }
+    }
+
     ClientRequest acceptedRequest = registerKnownRequest(request, key);
     if (acceptedRequest != null && isLeader) {
       enqueueIfNotQueued(acceptedRequest);
