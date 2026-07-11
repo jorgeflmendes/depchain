@@ -90,12 +90,18 @@ public final class EvmService {
     Address contractAddress = Address.contractAddress(sender, senderAccount.getNonce());
     Bytes initCode = Bytes.concatenate(creationBytecode, constructorArguments);
 
-    Bytes runtimeBytecode = execute(sender, contractAddress, contractAddress, initCode, Bytes.EMPTY, Wei.ZERO, DEFAULT_GAS_LIMIT, Wei.ZERO, MessageFrame.Type.CONTRACT_CREATION)
+    org.hyperledger.besu.evm.worldstate.WorldUpdater updater = world.updater();
+    Bytes runtimeBytecode = execute(updater, sender, contractAddress, contractAddress, initCode, Bytes.EMPTY, Wei.ZERO, DEFAULT_GAS_LIMIT, Wei.ZERO, MessageFrame.Type.CONTRACT_CREATION)
         .returnData();
-    MutableAccount contractAccount = ValidationUtils.requirePresent(account(contractAddress), "contract deployment did not create account: " + contractAddress);
+        
+    MutableAccount updaterSenderAccount = updater.getAccount(sender);
+    updaterSenderAccount.incrementNonce();
+    
+    MutableAccount contractAccount = ValidationUtils.requirePresent(updater.getAccount(contractAddress), "contract deployment did not create account: " + contractAddress);
     contractAccount.setCode(ValidationUtils.requireNonNull(runtimeBytecode, "runtimeBytecode"));
     accountKinds.put(contractAddress, AccountKind.CONTRACT);
-    senderAccount.incrementNonce();
+    
+    updater.commit();
     return contractAddress;
   }
 
@@ -107,8 +113,11 @@ public final class EvmService {
     ValidationUtils.requireNonNull(contractAddress, "contractAddress");
     MutableAccount contractAccount = requireAccount(contractAddress, AccountKind.CONTRACT, "contractAddress");
 
-    return execute(sender, contractAddress, contractAddress, contractAccount.getCode(), ValidationUtils
-        .requireNonNull(callData, "callData"), Wei.ZERO, DEFAULT_GAS_LIMIT, Wei.ZERO, MessageFrame.Type.MESSAGE_CALL).returnData();
+    org.hyperledger.besu.evm.worldstate.WorldUpdater updater = world.updater();
+    pt.ulisboa.depchain.server.execution.EvmService.TransactionResult result = execute(updater, sender, contractAddress, contractAddress, contractAccount.getCode(), ValidationUtils
+        .requireNonNull(callData, "callData"), Wei.ZERO, DEFAULT_GAS_LIMIT, Wei.ZERO, MessageFrame.Type.MESSAGE_CALL);
+    updater.commit();
+    return result.returnData();
   }
 
   public TransactionResult getNativeBalance(Address address) {
@@ -143,11 +152,10 @@ public final class EvmService {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance for amount plus gas fee");
     }
 
-    senderAccount.decrementBalance(maxFee);
-    senderAccount.incrementNonce();
-    world.updater().commit();
-
     if (gasLimit < TRANSFER_GAS_USED) {
+      Wei chargedFee = calculateFee(gasPrice, gasLimit, gasLimit);
+      senderAccount.decrementBalance(chargedFee);
+      senderAccount.incrementNonce();
       return new TransactionResult(false, gasLimit, Bytes.EMPTY, "insufficient gas for native transfer");
     }
 
@@ -155,14 +163,17 @@ public final class EvmService {
       createAccount(recipient, 0L, Wei.ZERO, AccountKind.EOA);
     }
 
-    TransactionResult execution = execute(sender, recipient, recipient, Bytes.EMPTY, Bytes.EMPTY, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
+    org.hyperledger.besu.evm.worldstate.WorldUpdater updater = world.updater();
+    TransactionResult execution = execute(updater, sender, recipient, recipient, Bytes.EMPTY, Bytes.EMPTY, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
+    
     long effectiveGasUsed = Math.max(TRANSFER_GAS_USED, execution.gasUsed());
     Wei chargedFee = calculateFee(gasPrice, gasLimit, effectiveGasUsed);
-    Wei refund = Wei.of(maxFee.toBigInteger().subtract(chargedFee.toBigInteger()));
-    if (refund.compareTo(Wei.ZERO) > 0) {
-      MutableAccount postExecutionAccount = account(sender);
-      postExecutionAccount.incrementBalance(refund);
-    }
+    
+    MutableAccount updaterSenderAccount = updater.getAccount(sender);
+    updaterSenderAccount.decrementBalance(chargedFee);
+    updaterSenderAccount.incrementNonce();
+    
+    updater.commit();
     if (!execution.success()) {
       return new TransactionResult(false, effectiveGasUsed, execution.returnData(), execution.errorMessage());
     }
@@ -199,18 +210,17 @@ public final class EvmService {
       return new TransactionResult(false, 0L, Bytes.EMPTY, "insufficient DepCoin balance for amount plus gas fee");
     }
 
-    senderAccount.decrementBalance(maxFee);
-    senderAccount.incrementNonce();
-    world.updater().commit();
-
-    TransactionResult execution = execute(sender, contractAddress, contractAddress, contractAccount
+    org.hyperledger.besu.evm.worldstate.WorldUpdater updater = world.updater();
+    TransactionResult execution = execute(updater, sender, contractAddress, contractAddress, contractAccount
         .getCode(), callData, amount, gasLimit, gasPrice, MessageFrame.Type.MESSAGE_CALL);
+        
     Wei chargedFee = calculateFee(gasPrice, gasLimit, execution.gasUsed());
-    Wei refund = Wei.of(maxFee.toBigInteger().subtract(chargedFee.toBigInteger()));
-    if (refund.compareTo(Wei.ZERO) > 0) {
-      MutableAccount postExecutionAccount = account(sender);
-      postExecutionAccount.incrementBalance(refund);
-    }
+    
+    MutableAccount updaterSenderAccount = updater.getAccount(sender);
+    updaterSenderAccount.decrementBalance(chargedFee);
+    updaterSenderAccount.incrementNonce();
+    
+    updater.commit();
     if (!execution.success()) {
       return new TransactionResult(false, execution.gasUsed(), execution.returnData(), execution.errorMessage());
     }
@@ -252,9 +262,9 @@ public final class EvmService {
     return Bytes.wrap(raw);
   }
 
-  private TransactionResult execute(Address sender, Address receiver, Address contractAddress, Bytes code, Bytes callData, Wei value, long gasLimit, Wei gasPrice, MessageFrame.Type frameType) {
+  private TransactionResult execute(org.hyperledger.besu.evm.worldstate.WorldUpdater updater, Address sender, Address receiver, Address contractAddress, Bytes code, Bytes callData, Wei value, long gasLimit, Wei gasPrice, MessageFrame.Type frameType) {
     ValidationUtils
-        .requireAllNonNull(named("sender", sender), named("receiver", receiver), named("contractAddress", contractAddress), named("code", code), named("callData", callData), named("value", value), named("gasPrice", gasPrice), named("frameType", frameType));
+        .requireAllNonNull(named("updater", updater), named("sender", sender), named("receiver", receiver), named("contractAddress", contractAddress), named("code", code), named("callData", callData), named("value", value), named("gasPrice", gasPrice), named("frameType", frameType));
     ValidationUtils.requirePositiveLong(gasLimit, "gasLimit");
 
     OutputCapturingTracer tracer = new OutputCapturingTracer();
@@ -270,8 +280,7 @@ public final class EvmService {
     executor.gasPriceGWei(gasPrice);
     executor.messageFrameType(frameType);
     executor.tracer(tracer);
-    executor.worldUpdater(world.updater());
-    executor.commitWorldState();
+    executor.worldUpdater(updater);
     Bytes executionResult = executor.execute();
     return tracer.snapshotOrFallback(executionResult, gasLimit);
   }
