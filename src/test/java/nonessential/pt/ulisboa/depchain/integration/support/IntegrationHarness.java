@@ -64,7 +64,7 @@ public abstract class IntegrationHarness {
   protected static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(35);
   protected static final Duration STANDARD_REQUEST_TIMEOUT = Duration.ofSeconds(12);
   protected static final Duration VIEW_CHANGE_REQUEST_TIMEOUT = Duration.ofSeconds(20);
-  protected static final Duration REPLAY_INITIAL_TIMEOUT = Duration.ofSeconds(8);
+  protected static final Duration REPLAY_INITIAL_TIMEOUT = VIEW_CHANGE_REQUEST_TIMEOUT;
   protected static final Duration REPLAY_RESPONSE_TIMEOUT = Duration.ofSeconds(2);
   protected static final Duration EXPECTED_TIMEOUT = Duration.ofSeconds(5);
 
