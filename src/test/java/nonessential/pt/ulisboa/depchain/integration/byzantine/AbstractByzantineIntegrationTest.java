@@ -91,7 +91,7 @@ abstract class AbstractByzantineIntegrationTest extends IntegrationHarness {
 
   private static void assertHonestReplicasConverged(Path configPath, List<String> honestReplicaIds) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    awaitFor("honest replica convergence").forever().untilAsserted(() -> {
+    awaitFor("honest replica convergence", VIEW_CHANGE_REQUEST_TIMEOUT).untilAsserted(() -> {
       String expectedBlockHash = null;
       Long expectedHeight = null;
       for (String replicaId : honestReplicaIds) {
@@ -110,7 +110,7 @@ abstract class AbstractByzantineIntegrationTest extends IntegrationHarness {
 
   private static void assertHonestReplicasRemainSafeWithoutImmediateConvergence(Path configPath, List<String> honestReplicaIds) throws Exception {
     ConfigParser config = ConfigParser.load(configPath);
-    awaitFor("honest replica safety without immediate convergence").forever().untilAsserted(() -> {
+    awaitFor("honest replica safety without immediate convergence", VIEW_CHANGE_REQUEST_TIMEOUT).untilAsserted(() -> {
       Long maxHeight = null;
       String maxHeightHash = null;
       boolean observedProgress = false;

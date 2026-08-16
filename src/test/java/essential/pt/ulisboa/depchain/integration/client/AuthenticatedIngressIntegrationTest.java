@@ -1,6 +1,5 @@
 package pt.ulisboa.depchain.integration.client;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.lang.reflect.Field;
@@ -88,8 +87,8 @@ class AuthenticatedIngressIntegrationTest extends IntegrationHarness {
 
   private static void primeAuthenticatedSession(AuthenticatedLink transport, InetSocketAddress endpoint, long connectionId) throws Exception {
     transport.send(connectionId, "seed-authenticated-session".getBytes(StandardCharsets.UTF_8), endpoint);
-    await().forever().until(() -> sharedSecretForConnection(transport, endpoint, connectionId) != null);
-    await().forever().until(() -> nextSequenceForConnection(transport, endpoint, connectionId) >= 2);
+    awaitFor("authenticated session secret", STANDARD_REQUEST_TIMEOUT).until(() -> sharedSecretForConnection(transport, endpoint, connectionId) != null);
+    awaitFor("authenticated session sequence", STANDARD_REQUEST_TIMEOUT).until(() -> nextSequenceForConnection(transport, endpoint, connectionId) >= 2);
   }
 
   private static void sendRawDpchPacket(AuthenticatedLink transport, InetSocketAddress endpoint, long connectionId, int sequenceNumber, byte[] payload) throws Exception {

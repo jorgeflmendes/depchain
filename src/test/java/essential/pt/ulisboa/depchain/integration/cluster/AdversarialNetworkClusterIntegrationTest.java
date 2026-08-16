@@ -1,7 +1,6 @@
 package pt.ulisboa.depchain.integration.cluster;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
 
 import java.math.BigInteger;
 import java.util.Map;
@@ -37,7 +36,7 @@ class AdversarialNetworkClusterIntegrationTest extends ClusterIntegrationTestBas
       try (ClientReplicaApi client = ClientReplicaApi.connect(cluster().configPath().toString(), EXACTLY_ONCE_CLIENT_ID)) {
         assertThat(client.transferDepCoin(EXACTLY_ONCE_RECIPIENT, 1L, 0L, TEST_GAS_LIMIT, TEST_GAS_PRICE).getReceipt().getSuccess()).isTrue();
 
-        await().forever().untilAsserted(() -> {
+        awaitFor("exactly-once recipient balance", STANDARD_REQUEST_TIMEOUT).untilAsserted(() -> {
           BigInteger recipientBalance = new BigInteger(1, client.getDepCoinBalance(EXACTLY_ONCE_RECIPIENT).getReturnData().toByteArray());
           assertThat(recipientBalance).as("duplicated transport traffic must not execute the same logical request twice").isEqualTo(BigInteger.ONE);
         });

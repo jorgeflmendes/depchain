@@ -1,6 +1,5 @@
 package pt.ulisboa.depchain.integration.cluster;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -31,7 +30,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
       cluster
           .assertRequestSucceeds("leader-replies-before-local-persist", STANDARD_REQUEST_TIMEOUT, "Client should still observe success even if the leader fails local persistence after execution");
 
-      await().forever().untilAsserted(() -> {
+      awaitFor("leader persistence failure state", VIEW_CHANGE_REQUEST_TIMEOUT).untilAsserted(() -> {
         assertEquals(0L, BlockStore.forReplica(config, LEADER_REPLICA_ID).loadLatest().orElseThrow().height());
         assertEquals(1L, BlockStore.forReplica(config, FOLLOWER_REPLICA_ID).loadLatest().orElseThrow().height());
         assertEquals(1L, BlockStore.forReplica(config, BYZANTINE_REPLICA_ID).loadLatest().orElseThrow().height());
@@ -57,7 +56,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
       awaitPersistedHeight(config, FOLLOWER_REPLICA_ID, 4L);
 
       try {
-        await().forever().untilAsserted(() -> {
+        awaitFor("replica convergence after leader restart", VIEW_CHANGE_REQUEST_TIMEOUT).untilAsserted(() -> {
           long expectedHeight = BlockStore.forReplica(config, FOLLOWER_REPLICA_ID).loadLatest().orElseThrow().height();
           for (String replicaId : REPLICA_IDS) {
             assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
@@ -79,7 +78,7 @@ class PersistenceFailureIntegrationTest extends IntegrationHarness {
   }
 
   private static void awaitPersistedHeight(ConfigParser config, String replicaId, long expectedHeight) {
-    await().forever().untilAsserted(() -> assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
+    awaitFor("persisted height at " + replicaId, VIEW_CHANGE_REQUEST_TIMEOUT).untilAsserted(() -> assertEquals(expectedHeight, BlockStore.forReplica(config, replicaId).loadLatest().orElseThrow().height(), "Replica " + replicaId
         + " should persist the next block before the next recovery step"));
   }
 }

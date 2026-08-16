@@ -1,6 +1,5 @@
 package pt.ulisboa.depchain.integration.byzantine;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.nio.file.Path;
@@ -62,7 +61,7 @@ class ByzantineLeaderIntegrationTest extends AbstractByzantineIntegrationTest {
       assertByzantineAttackObserved(byzantineLeader, ByzantineAttackMode.EQUIVOCATING_PREPARE_PROPOSAL, "Byzantine leader equivocation was never exercised");
 
       ConfigParser config = ConfigParser.load(configPath);
-      await().forever().untilAsserted(() -> {
+      awaitFor("honest replica agreement after equivocation", VIEW_CHANGE_REQUEST_TIMEOUT).untilAsserted(() -> {
         Long expectedHeight = null;
         String expectedHash = null;
         for (String replicaId : HONEST_WITH_BYZANTINE_LEADER_REPLICA_IDS) {
